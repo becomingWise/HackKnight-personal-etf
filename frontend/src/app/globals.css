@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #070a10;
+  --color-panel: #0d1119;
+  --color-panel-2: #121826;
+  --color-line: #1d2433;
+  --color-line-2: #2a3346;
+  --color-text: #e6ebf5;
+  --color-muted: #8590a6;
+  --color-dim: #5b6479;
+  --color-up: #34d399;
+  --color-down: #f87171;
+  --color-brand: #7c6cff;
+  --color-brand-2: #36c2ff;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgb(124 108 255 / 0.12), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgb(54 194 255 / 0.08), transparent 60%),
+    var(--color-ink);
+  color: var(--color-text);
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Range inputs styled to match the terminal look. */
+input[type="range"] {
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-line-2);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--color-text);
+  border: 3px solid var(--color-brand);
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--color-text);
+  border: 3px solid var(--color-brand);
+  cursor: pointer;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.live-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
