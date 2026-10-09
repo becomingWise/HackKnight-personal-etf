@@ -1,0 +1,8 @@
+[
+  { "id": "SOLAR_DEMO", "symbol": "SUN", "name": "Sunbeam Solar", "interest": "clean-energy", "price": 100, "description": "Imaginary solar technology company." },
+  { "id": "TECH_DEMO", "symbol": "NIM", "name": "Nimbus Cloud", "interest": "technology", "price": 50, "description": "Imaginary cloud software company." },
+  { "id": "HEALTH_DEMO", "symbol": "PLS", "name": "Pulse Health", "interest": "healthcare", "price": 20, "description": "Imaginary health technology company." },
+  { "id": "TIDAL_DEMO", "symbol": "TID", "name": "Tidal Power", "interest": "clean-energy", "price": 80, "description": "Imaginary ocean energy company." },
+  { "id": "BYTE_DEMO", "symbol": "BYT", "name": "Byteworks", "interest": "technology", "price": 40, "description": "Imaginary computing hardware company." },
+  { "id": "VITAL_DEMO", "symbol": "VTL", "name": "Vital Labs", "interest": "healthcare", "price": 60, "description": "Imaginary medical research company." }
+]
