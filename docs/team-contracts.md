@@ -2,12 +2,12 @@
 
 | Owner | Owns | Handoff |
 | --- | --- | --- |
-| Shaun — framework | Controller, routing/wiring, mocks, validation, framework tests, architecture docs | Working flow with stable service ports and state snapshots |
-| Website teammate | Reference screen markup, styling, rendering, accessibility | Use controller snapshots and methods; preserve the service ports |
+| Shaun — framework | Controller, mocks, validation, framework tests, architecture docs | Working flow with stable service ports and state snapshots |
+| Website teammate | All screen markup, styling, rendering, accessibility, navigation, and app wiring | Use controller snapshots and methods; preserve the service ports |
 | Google API teammate | Backend Gemini calls, stock verification, frontend stock adapter | Implement `findStocks` |
 | Polymarket teammate | Relevant market matching, weighting methodology, frontend weighting adapter | Implement `adjustWeights` |
 
-Framework files are `js/controller.js`, `js/services.js`, `js/app.js`, and the demo fixtures. Website files are `index.html`, `css/styles.css`, and `js/ui.js`. Real stock and weighting adapters should live in separate modules owned by their teammates; coordinate the final import change in `js/app.js` with Shaun. Use separate feature branches and PRs into `main`.
+Framework files are `js/controller.js`, `js/services.js`, the demo fixtures, and the CLI demo/tests. The website teammate owns `index.html`, `css/styles.css`, `js/ui.js`, `js/app.js`, and browser routing. This framework PR leaves those website files at the shared main baseline. Real stock and weighting adapters should live in separate modules owned by their teammates; coordinate adapter imports in `js/app.js` with the website teammate. Use separate feature branches and PRs into `main`.
 
 ## Stock selection port
 
@@ -64,4 +64,4 @@ GitHub Pages serves static frontend files only. A live backend needs a separate 
 - Polymarket adapter: provide a reviewed methodology, relevant evidence when present, normalized weights, and an unchanged response when no relevant markets exist.
 - Framework: tests cover flow, retry, duplicate submission, validation, baseline fallback, cancellation, and stale responses. Existing calculation tests keep passing.
 
-Run `npm test` and preview with `npm start`. After review and merge, `python3 scripts/publish_pages.py` publishes the committed `main` website; it now includes the controller, adapters, and fixture file. Do not deploy an unmerged local branch using this script.
+Run `npm test` and `npm run demo:framework -- "I care about clean energy"` to exercise the framework without a website. `npm start` previews only the existing portfolio website until the website teammate connects the framework. That teammate must update the publishing manifest to include `js/controller.js`, `js/services.js`, `data/chat-demo.json`, and any new runtime files their website imports. After review and merge, `python3 scripts/publish_pages.py` publishes the committed main website. Do not deploy unmerged local work using that script.
