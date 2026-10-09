@@ -1,0 +1,77 @@
+{
+  "series": [
+    {
+      "id": "fed_cut_next",
+      "label": "Fed cuts at the next meeting",
+      "queries": ["Fed decision in", "Fed Interest Rates"],
+      "event_title": "^(Fed Interest Rates: \\w+ 20\\d\\d|Fed [Dd]ecision in \\w+\\?)$",
+      "markets": "decrease",
+      "min_days_to_expiry": 1,
+      "betas": {
+        "TLT": 0.6, "IEF": 0.4, "HYG": 0.3, "LQD": 0.3,
+        "JPM": -0.3, "BAC": -0.3, "SCHW": -0.2,
+        "IBIT": 0.4, "COIN": 0.4, "MSTR": 0.5, "MARA": 0.5, "HOOD": 0.3,
+        "ORCL": 0.2
+      }
+    },
+    {
+      "id": "taiwan",
+      "label": "China invades Taiwan",
+      "queries": ["China invade Taiwan"],
+      "event_title": "^Will China invade Taiwan (in 20\\d\\d|by .+)\\?$",
+      "markets": "invade taiwan",
+      "legs": "each",
+      "min_days_to_expiry": 30,
+      "betas": {
+        "TSM": -1.0, "NVDA": -0.5, "AMD": -0.5, "AVGO": -0.4, "ASML": -0.5, "MU": -0.4, "INTC": 0.5,
+        "AAPL": -0.6,
+        "LMT": 0.6, "RTX": 0.6, "NOC": 0.6, "GD": 0.4, "LHX": 0.5, "PLTR": 0.4,
+        "TLT": 0.3, "IEF": 0.2, "HYG": -0.3
+      }
+    },
+    {
+      "id": "ukraine_ceasefire",
+      "label": "Russia-Ukraine ceasefire",
+      "queries": ["Russia Ukraine ceasefire", "Russia x Ukraine ceasefire", "Russia x Ukraine ceasefire agreement"],
+      "event_title": "^Russia x Ukraine [Cc]easefire (agreement )?(in 20\\d\\d|in \\w+|by.+|before.+)\\??\\s*$",
+      "markets": "ceasefire",
+      "legs": "each",
+      "min_days_to_expiry": 14,
+      "betas": {
+        "LMT": -0.6, "RTX": -0.5, "NOC": -0.5, "GD": -0.6, "LHX": -0.5, "PLTR": -0.3,
+        "XOM": -0.2, "CVX": -0.2
+      }
+    },
+    {
+      "id": "recession",
+      "label": "US recession",
+      "queries": ["US recession"],
+      "event_title": "^US recession (in 20\\d\\d|by end of 20\\d\\d)\\?$",
+      "markets": "recession",
+      "legs": "each",
+      "min_days_to_expiry": 30,
+      "betas": {
+        "TLT": 0.7, "IEF": 0.5, "SHY": 0.2, "HYG": -0.6,
+        "JPM": -0.4, "BAC": -0.4, "GS": -0.5, "MS": -0.4, "SCHW": -0.3,
+        "XOM": -0.3, "CVX": -0.3, "COP": -0.4, "OXY": -0.4, "SLB": -0.4,
+        "AMZN": -0.3, "META": -0.3, "MU": -0.4,
+        "COIN": -0.4, "HOOD": -0.4
+      }
+    },
+    {
+      "id": "trump_2024",
+      "label": "Trump wins the 2024 election",
+      "queries": ["Presidential Election Winner 2024"],
+      "event_title": "^Presidential Election Winner 2024$",
+      "markets": "donald trump",
+      "min_days_to_expiry": 0,
+      "betas": {
+        "XOM": 0.3, "CVX": 0.3, "COP": 0.3, "OXY": 0.3, "FSLR": -0.8,
+        "LMT": 0.2, "RTX": 0.2, "GD": 0.2, "PLTR": 0.4,
+        "JPM": 0.4, "BAC": 0.4, "GS": 0.5, "MS": 0.4, "SCHW": 0.3,
+        "IBIT": 0.6, "COIN": 0.8, "MSTR": 0.9, "MARA": 0.8, "HOOD": 0.6,
+        "TLT": -0.3, "IEF": -0.2
+      }
+    }
+  ]
+}
