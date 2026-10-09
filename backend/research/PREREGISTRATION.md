@@ -66,3 +66,10 @@ Primary metric: max drawdown during spike windows (spike day through +10 days) v
 1. *Partial survivorship fix.* The constituents table includes each stock's date added to the index. Research code ignores a stock before that date. This removes the bias from stocks that grew into the index, not from stocks that were removed.
 2. *Return capping.* Daily stock returns are capped at ±20% in H2 regressions so a single event (e.g. MRNA +177% on 2026-08-19, unverified) can't drive a date's slope. H1 and H3 use uncapped returns.
 3. *Stale prices.* Runs of 5+ consecutive zero-return days (e.g. SW's 2024 listing) are treated as missing.
+
+**2026-10-09, after inspecting the first exposure fits (development data only), before any H1–H3 test:**
+
+4. *Market-model abnormal returns.* "Stock minus SPY" made every low-beta stock look exposed to the recession series (269 FDR discoveries): recession odds rise on down-market days, and defensives simply fall less. Abnormal return is now stock − β_mkt × SPY, with β_mkt from the prior 252 trading days (no lookahead). This applies to exposures, H1, H2 and H3.
+5. *Pooling estimator.* The first method-of-moments version left Taiwan βs at the ±1.5 cap with t ≈ 0 (heavy-tailed noise inflated the between-industry variance). τ² and ω² now use the DerSimonian–Laird estimator, the standard method-of-moments estimator for random effects.
+6. *Return cap also applies to exposure estimation,* so estimates and tests use the same cleaned data.
+
