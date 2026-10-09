@@ -61,4 +61,8 @@ Primary metric: max drawdown during spike windows (spike day through +10 days) v
 
 ## Amendment log
 
-_None yet._
+**2026-10-09, after building the universe and running data-quality checks, before any H1–H3 test:**
+
+1. *Partial survivorship fix.* The constituents table includes each stock's date added to the index. Research code ignores a stock before that date. This removes the bias from stocks that grew into the index, not from stocks that were removed.
+2. *Return capping.* Daily stock returns are capped at ±20% in H2 regressions so a single event (e.g. MRNA +177% on 2026-08-19, unverified) can't drive a date's slope. H1 and H3 use uncapped returns.
+3. *Stale prices.* Runs of 5+ consecutive zero-return days (e.g. SW's 2024 listing) are treated as missing.
