@@ -78,17 +78,24 @@ uv run --directory backend python -m polyslice_api.eventstudy
 
 Spikes are daily odds changes of at least 2.5σ (vs. the prior 30 days) and 3 points, from contracts with $1M+ volume that are at least 7 days old, with a 3-day cooldown. For each spike, every stock with a β gets a market-adjusted return (stock minus SPY), signed so that positive means it moved the way the β predicted, and weighted by |β|. Scores are averaged per date and tested with a t-test, a binomial hit rate, and a placebo that moves the same spikes to 500 random dates.
 
-**Results (61 spikes on 58 dates, 2023–2026):**
+The same spikes are scored under three sets of βs. "Data" and "blend" βs are refit monthly from the prior 12 months only (`betas.py`), so they never see the future: data = estimates alone, blend = estimates shrunk toward the hand-picked guesses by confidence.
 
-| Window | Mean | t | Hit rate | Placebo p |
-| --- | --- | --- | --- | --- |
-| 5 days before | +51 bp | 1.48 | 57% | 0.22 |
-| Spike day | +27 bp | 1.38 | 62% | 0.13 |
-| **Next day** | **+54 bp** | **2.86** | **66%** | **0.002** |
-| Next 5 days | +81 bp | 2.10 | 64% | 0.05 |
-| Next 10 days | +87 bp | 1.49 | 57% | 0.11 |
+**Results (61 spikes on 58 dates, 2023–2026).** Mean is the |β|-weighted return vs. SPY, positive = the predicted direction; p is the random-date placebo.
 
-Stocks keep moving in the predicted direction the day after a spike, and random dates almost never do that well. The 5 days before are positive but not significant, so stocks may sometimes move first. Caveats: 58 dates is a small sample, several windows were tested, the βs were hand-picked with hindsight, and market adjustment makes anything less risky than SPY look like it "rose" on bad news. The report also regresses each stock on each series to check the guessed βs; several signs are wrong (e.g. defense on Taiwan odds).
+| Window | Hand βs | Data βs (walk-forward) | Blend βs (walk-forward) |
+| --- | --- | --- | --- |
+| 5 days before | +51 bp (t 1.5, p 0.22) | +22 bp (t 0.6, p 0.65) | +36 bp (t 1.2, p 0.33) |
+| **Spike day** | +27 bp (t 1.4, p 0.13) | **+59 bp (t 2.6, p 0.002)** | **+37 bp (t 2.4, p 0.01)** |
+| Next day | +54 bp (t 2.9, p 0.002) | −16 bp (t −0.8, p 0.40) | +20 bp (t 1.3, p 0.20) |
+| Next 5 days | +81 bp (t 2.1, p 0.05) | +10 bp (t 0.2, p 0.81) | +35 bp (t 1.1, p 0.34) |
+
+What holds up:
+
+- **Same-day reaction is real.** With βs estimated only from past data, stocks move in the predicted direction on the spike day 69% of the time, and random dates almost never match it. Polymarket spikes are a valid real-time read on event risk.
+- **Next-day predictability doesn't survive.** It only shows up with the hand-picked βs and disappears with walk-forward ones, so it is likely hindsight in how the βs were chosen. Don't claim alpha.
+- **Ukraine ceasefire → defense** is the one topic where the next-5-day drift holds under all three (t 3.7 / 1.7 / 3.1), but it's 12–16 dates mostly from 2025 peace-talk news.
+
+Caveats: small sample, several windows tested, and market adjustment makes anything less risky than SPY look like it "rose" on bad news.
 
 ## Layout
 
@@ -100,6 +107,7 @@ Stocks keep moving in the predicted direction the day after a spike, and random 
 | `backend/src/polyslice_api/backtest.py` | Daily replay of the dynamic basket vs. the same basket at base weights; continuous and spike modes (tested in `backend/tests`) |
 | `backend/src/polyslice_api/history.py`, `data/series.json` | Long odds series chained from resolved + live contracts (tested in `backend/tests`) |
 | `backend/src/polyslice_api/eventstudy.py` | Spike detection, signed abnormal returns, placebo test, empirical βs (tested in `backend/tests`) |
+| `backend/src/polyslice_api/betas.py` | Walk-forward βs: monthly regressions on the prior 12 months, capped and shrunk toward the guesses (tested in `backend/tests`) |
 | `backend/src/polyslice_api/prices.py` | Last close and daily history via yfinance |
 | `backend/src/polyslice_api/main.py` | FastAPI routes: `/api/sectors`, `/api/signals`, `/api/signals/{id}/history`, `/api/feed`, `/api/basket`, `/api/ticket`, `/api/backtest` |
 | `frontend/src/components/` | Dashboard, scope picker, allocation donut, holdings table, signal cards with what-if sliders, trade ticket |
@@ -110,5 +118,5 @@ To add a signal, add an entry to `universe.json` and check it resolves at `/api/
 
 - **Gemini**: prompt-to-basket (pick tickers + βs), map unmapped `/api/feed` markets to sectors, plain-English "why it rebalanced" notes.
 - **Tiger Data (Postgres/Timescale)**: persist odds and weight snapshots for history charts and faster backtests.
-- **Fix the βs** using the event study's empirical regressions (estimated on past data only), then rerun the backtest in spike mode on the long series.
+- **Use walk-forward βs in the live app** (the event study prints the current blended ones), and frame the product around real-time event-risk detection rather than alpha.
 - **Backtest chart** in the frontend for `/api/backtest`.

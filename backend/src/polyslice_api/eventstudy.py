@@ -24,7 +24,9 @@ import bisect
 import math
 import random
 from datetime import date
-from typing import Any
+from typing import Any, Callable
+
+Betas = dict[str, dict[str, float]] | Callable[[str, date], dict[str, float]]
 
 # (label, first day, last day) relative to the spike date's trading day index.
 WINDOWS = [
@@ -97,9 +99,13 @@ def window_return(closes: dict[date, float], calendar: list[date], i0: int, a: i
     return end / start - 1 if start and end else None
 
 
+def _betas_for(betas: Betas, series_id: str, d: date) -> dict[str, float]:
+    return betas(series_id, d) if callable(betas) else betas[series_id]
+
+
 def event_scores(
     spikes: list[dict[str, Any]],
-    betas: dict[str, dict[str, float]],
+    betas: Betas,
     closes: dict[str, dict[date, float]],
     market: str = "SPY",
 ) -> list[dict[str, Any]]:
@@ -111,11 +117,12 @@ def event_scores(
         if i0 is None:
             continue
         direction = 1.0 if spike["dp"] > 0 else -1.0
+        spike_betas = _betas_for(betas, spike["series"], date.fromisoformat(spike["date"]))
         scores = {}
         for label, a, b in WINDOWS:
             m = window_return(closes[market], calendar, i0, a, b)
             num = den = 0.0
-            for symbol, beta in betas[spike["series"]].items():
+            for symbol, beta in spike_betas.items():
                 r = window_return(closes.get(symbol, {}), calendar, i0, a, b)
                 if r is None or m is None:
                     continue
@@ -180,7 +187,7 @@ def summarize(events: list[dict[str, Any]], placebo: list[list[dict[str, Any]]] 
 def placebo_runs(
     spikes: list[dict[str, Any]],
     series_list: list[dict[str, Any]],
-    betas: dict[str, dict[str, float]],
+    betas: Betas,
     closes: dict[str, dict[date, float]],
     runs: int = 500,
     seed: int = 7,
@@ -235,26 +242,43 @@ def empirical_betas(
 
 
 async def run(placebo: int = 500, **spike_kwargs) -> dict[str, Any]:
+    """Event study under three sets of βs: hand-picked, data-only and blended (both walk-forward)."""
+    import json
+    from importlib import resources
+
     from . import history, prices
+    from .betas import BetaModel
 
+    universe = json.loads(resources.files(__package__).joinpath("data/universe.json").read_text())
     series_list = await history.load_all()
-    betas = {s["id"]: s["betas"] for s in series_list}
-    symbols = sorted({sym for b in betas.values() for sym in b} | {"SPY"})
+    hand = {s["id"]: s["betas"] for s in series_list}
+    symbols = sorted({h["symbol"] for sec in universe["sectors"] for h in sec["holdings"]} | {sym for b in hand.values() for sym in b})
     start = min(s["rows"][0]["date"] for s in series_list if s["rows"])
-    closes = await prices.daily_closes(symbols, start)
+    closes = await prices.daily_closes(symbols + ["SPY"], start)
 
+    models: dict[str, Betas] = {
+        "hand": hand,
+        "data": BetaModel(series_list, closes, symbols, prior="none").at,
+        "blend": BetaModel(series_list, closes, symbols, prior="blend").at,
+    }
     spikes = [sp for s in series_list for sp in find_spikes(s, **spike_kwargs)]
-    events = event_scores(spikes, betas, closes)
-    nulls = placebo_runs(spikes, series_list, betas, closes, runs=placebo) if placebo else None
+    by_model = {}
+    for name, betas in models.items():
+        events = event_scores(spikes, betas, closes)
+        nulls = placebo_runs(spikes, series_list, betas, closes, runs=placebo) if placebo else None
+        by_model[name] = {
+            "summary": summarize(events, nulls),
+            "per_series": {s["id"]: summarize([e for e in events if e["series"] == s["id"]]) for s in series_list},
+            "events": events,
+        }
+    blend = models["blend"]
     return {
         "spikes": len(spikes),
         "by_series": {s["id"]: sum(1 for sp in spikes if sp["series"] == s["id"]) for s in series_list},
-        "summary": summarize(events, nulls),
-        "per_series": {
-            s["id"]: summarize([e for e in events if e["series"] == s["id"]]) for s in series_list
-        },
-        "events": events,
+        "models": by_model,
         "empirical_betas": {s["id"]: empirical_betas(s, closes) for s in series_list},
+        # Latest walk-forward blended βs: what the live app should use.
+        "current_betas": {s["id"]: blend(s["id"], date.today()) for s in series_list},
     }
 
 
@@ -266,19 +290,18 @@ def _print(report: dict[str, Any]) -> None:
             print(f"    {r['window']:<14}{r['dates']:>6}{r['mean_bp']:>7.0f}bp{r['t']:>7.2f}"
                   f"{r['hit_rate']:>7.0%}{r['binom_p']:>9.3f}{pp:>11}")
 
-    print(f"{report['spikes']} spikes: {report['by_series']}\n")
-    print("All series (score > 0 = moved the way β predicted):")
-    table(report["summary"])
-    for sid, rows in report["per_series"].items():
-        print(f"\n  {sid}")
-        table(rows)
-    print("\nEmpirical same-day sensitivity vs. guessed β (sign agreement):")
-    for sid, rows in report["empirical_betas"].items():
-        agree = [r for r in rows.values() if math.copysign(1, r["slope"]) == math.copysign(1, r["beta_guess"])]
-        strong = {s: r for s, r in rows.items() if abs(r["t"]) >= 2}
-        print(f"  {sid:<18} signs agree {len(agree)}/{len(rows)}; |t|≥2: " + ", ".join(
-            f"{s} {r['slope'] * 100:+.0f}bp/pt (guess {r['beta_guess']:+.1f}, t {r['t']:.1f})"
-            for s, r in sorted(strong.items(), key=lambda kv: -abs(kv[1]['t']))) or "none")
+    print(f"{report['spikes']} spikes: {report['by_series']}")
+    for name, m in report["models"].items():
+        print(f"\n=== βs: {name} (score > 0 = moved the way β predicted)")
+        table(m["summary"])
+        for sid, rows in m["per_series"].items():
+            post = next((r for r in rows if r["window"].startswith("post +1..+5")), None)
+            if post:
+                print(f"      {sid:<18} next 5d {post['mean_bp']:>5.0f}bp  t {post['t']:>5.2f}  hit {post['hit_rate']:.0%}  (n={post['dates']})")
+    print("\nCurrent blended βs (largest per series):")
+    for sid, b in report["current_betas"].items():
+        top = sorted(b.items(), key=lambda kv: -abs(kv[1]))[:8]
+        print(f"  {sid:<18} " + ", ".join(f"{s} {v:+.2f}" for s, v in top))
 
 
 if __name__ == "__main__":
