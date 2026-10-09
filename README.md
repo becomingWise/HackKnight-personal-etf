@@ -2,6 +2,8 @@
 
 A HackKnight demo for building a personal investment basket with fictional companies and mock prices. Choose interests, select three to five companies, adjust weights and a pretend budget, then explore hypothetical price changes.
 
+Website: [MyETF](https://becomingwise.github.io/HackKnight-personal-etf/)
+
 The app is an educational simulator. It does not create or trade an ETF, connect to a brokerage, or use live market data.
 
 ## Run it
@@ -35,7 +37,35 @@ Prices and companies are made up. Units are fractional; the simulation ignores t
 | Portfolio calculations | `js/portfolio.js`, `tests/portfolio.test.js` | Validation, allocation, equal weights and scenario calculations |
 | Integration and sample data | `js/app.js`, `data/assets.json` | App state, events, loading and export |
 
-This starter was built locally on `shaun-branch`. Agree on individual owners before editing overlapping files. Use a pull request to combine reviewed work into the team's integration branch.
+The shared source lives on `main`. Agree on individual owners before editing overlapping files. Use a pull request to combine reviewed work into `main`.
+
+## Start collaborating
+
+Each teammate accepts the private repository invitation, then clones it once:
+
+```sh
+git clone https://github.com/becomingWise/HackKnight-personal-etf.git
+cd HackKnight-personal-etf
+git fetch origin
+git switch -c your-feature-name origin/main
+```
+
+Replace `your-feature-name` with a task name such as `improve-company-cards`. Edit your assigned files, run the app locally, and check the flow. Save and upload the files you changed, for example:
+
+```sh
+git add css/styles.css js/ui.js
+git commit -m "Improve company cards"
+git push -u origin HEAD
+```
+
+Open a pull request with `main` as the base, describe what changed, and include a screenshot. Have a teammate review it before merging. After a shared change merges, update your own branch with:
+
+```sh
+git fetch origin
+git merge origin/main
+```
+
+The public website is for trying the app. Editing and collaboration happen in this repository; the localhost preview runs separately on each person's computer.
 
 ## Calculation checks
 
@@ -60,4 +90,14 @@ Basket inputs use `{ budget, holdings: [{ assetId, weightPct }] }`. Catalog asse
 
 The app is static HTML, CSS and JavaScript. It can run on GitHub Pages without a build step. All asset URLs are relative so it also works under `/HackKnight-personal-etf/`.
 
-The repository already has a `gh-pages` deployment branch. Coordinate publishing with the repository owner and confirm the source in **Settings → Pages** before replacing deployed files. Keep API keys out of client code and commits. An optional AI explainer would need a separate server endpoint to hold its key.
+The repository publishes from `gh-pages`. After merging a reviewed update into `main`, a teammate with push access can publish it from their local repository:
+
+```sh
+python3 scripts/publish_pages.py
+```
+
+The script fetches the latest `main`, copies only the website files to a temporary deployment checkout, and pushes a normal commit to `gh-pages`. It leaves your working branch and uncommitted changes alone. Publishing is a separate step after merging; updates to `main` do not automatically update the website.
+
+GitHub Pages then builds the site. Wait for the Pages deployment to finish, open the public website, and repeat the demo flow. `version.json` records the source commit used by the deployed version. The existing deployment history and previous unrelated assets are preserved.
+
+Keep API keys out of client code and commits. An optional AI explainer would need a separate server endpoint to hold its key.
