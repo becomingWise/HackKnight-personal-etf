@@ -12,10 +12,11 @@ Run `uv run python -m polyslice_api.history` to (re)build the on-disk cache.
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import re
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,9 @@ from .polymarket import CLOB, GAMMA, HEADERS
 SERIES = json.loads(resources.files(__package__).joinpath("data/series.json").read_text())["series"]
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "series"
 CACHE_TTL = 6 * 3600
+DAY = 86_400
+CHUNK = 14 * DAY  # longest window the CLOB serves at hourly fidelity
+CLOSE_UTC = dtime(20, 0)
 
 
 async def _events(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]:
@@ -44,20 +48,47 @@ async def _events(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]
 
 
 async def _daily_prices(client: httpx.AsyncClient, token: str, sem: asyncio.Semaphore) -> dict[date, float]:
-    """Last print of each UTC day for one outcome token."""
+    """One price per calendar day: the last hourly print at or before the US close (20:00 UTC).
+
+    Sampling at the close lines each day's odds change up with that day's stock
+    close-to-close return. The CLOB only serves hourly data in short windows, so
+    first find the token's lifespan from the coarse history, then page through it.
+    """
     async with sem:
-        r = await client.get(f"{CLOB}/prices-history", params={"market": token, "interval": "max", "fidelity": 720})
+        r = await client.get(f"{CLOB}/prices-history", params={"market": token, "interval": "max", "fidelity": 1440})
     r.raise_for_status()
-    prints: dict[date, float] = {}
-    for h in sorted(r.json().get("history") or [], key=lambda h: h["t"]):
-        prints[datetime.fromtimestamp(h["t"], timezone.utc).date()] = float(h["p"])
+    coarse = r.json().get("history") or []
+    if not coarse:
+        return {}
+    first, last = min(h["t"] for h in coarse) - DAY, max(h["t"] for h in coarse) + DAY
+
+    async def chunk(start: int) -> list[dict[str, float]]:
+        for attempt in range(3):
+            try:
+                async with sem:
+                    r = await client.get(f"{CLOB}/prices-history", params={
+                        "market": token, "startTs": start, "endTs": min(start + CHUNK, last), "fidelity": 60,
+                    })
+                r.raise_for_status()
+                return r.json().get("history") or []
+            except httpx.HTTPError:
+                await asyncio.sleep(1 + attempt)
+        return []
+
+    pages = await asyncio.gather(*(chunk(t) for t in range(first, last, CHUNK)))
+    prints = sorted({h["t"]: h["p"] for page in pages for h in page}.items())
     if not prints:
         return {}
-    # Carry the last price over days without a print, between the first and last print.
-    out, day, last = {}, min(prints), None
-    while day <= max(prints):
-        last = prints.get(day, last)
-        out[day] = last
+
+    out: dict[date, float] = {}
+    day = datetime.fromtimestamp(prints[0][0], timezone.utc).date()
+    end_day = datetime.fromtimestamp(prints[-1][0], timezone.utc).date()
+    times = [t for t, _ in prints]
+    while day <= end_day:
+        cutoff = datetime.combine(day, CLOSE_UTC, tzinfo=timezone.utc).timestamp()
+        i = bisect.bisect_right(times, cutoff)
+        if i:
+            out[day] = float(prints[i - 1][1])
         day += timedelta(days=1)
     return out
 
@@ -82,7 +113,7 @@ async def contracts(spec: dict[str, Any], client: httpx.AsyncClient) -> list[dic
         elif markets:
             groups.append((e["title"].strip(), e["slug"], e["endDate"], markets))
 
-    sem = asyncio.Semaphore(8)
+    sem = asyncio.Semaphore(12)
     out = []
     for name, slug, end, markets in groups:
         legs = await asyncio.gather(*(_daily_prices(client, json.loads(m["clobTokenIds"])[0], sem) for m in markets))
@@ -93,6 +124,7 @@ async def contracts(spec: dict[str, Any], client: httpx.AsyncClient) -> list[dic
             out.append({
                 "event": name,
                 "slug": slug,
+                "volume": sum(float(m.get("volume") or 0) for m in markets),
                 "end": datetime.fromisoformat(end.replace("Z", "+00:00")).date(),
                 "prices": prices,
             })
@@ -140,7 +172,7 @@ async def build(spec: dict[str, Any]) -> dict[str, Any]:
         "betas": spec["betas"],
         "built_at": time.time(),
         "contracts": [
-            {"event": c["event"], "slug": c["slug"], "end": c["end"].isoformat(),
+            {"event": c["event"], "slug": c["slug"], "end": c["end"].isoformat(), "volume": c["volume"],
              "first": min(c["prices"]).isoformat(), "days": len(c["prices"])}
             for c in cs
         ],
@@ -177,7 +209,7 @@ def as_history(series: dict[str, Any]) -> list[dict[str, float]]:
     level, path = rows[-1]["p"], []
     for row in reversed(rows):
         d = date.fromisoformat(row["date"])
-        path.append({"t": int(datetime(d.year, d.month, d.day, 23, 59, tzinfo=timezone.utc).timestamp()), "p": level})
+        path.append({"t": int(datetime.combine(d, CLOSE_UTC, tzinfo=timezone.utc).timestamp()), "p": level})
         level -= row["dp"] or 0.0
     return path[::-1]
 

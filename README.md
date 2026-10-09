@@ -66,7 +66,29 @@ Build or refresh the cache (`backend/.cache/series/`, about 6 seconds):
 uv run --directory backend python -m polyslice_api.history
 ```
 
-Known issues: thinly traded contracts produce fake spikes (e.g. Fed March 2024), so add a volume filter before testing. The Ukraine series mixes "ceasefire" and "ceasefire agreement" questions.
+Odds are sampled from hourly data at the US close (20:00 UTC), so each day's odds change covers the same span as that day's close-to-close stock return. The Ukraine series mixes "ceasefire" and "ceasefire agreement" questions.
+
+## Event study
+
+Do Polymarket spikes predict the stocks they should move?
+
+```sh
+uv run --directory backend python -m polyslice_api.eventstudy
+```
+
+Spikes are daily odds changes of at least 2.5σ (vs. the prior 30 days) and 3 points, from contracts with $1M+ volume that are at least 7 days old, with a 3-day cooldown. For each spike, every stock with a β gets a market-adjusted return (stock minus SPY), signed so that positive means it moved the way the β predicted, and weighted by |β|. Scores are averaged per date and tested with a t-test, a binomial hit rate, and a placebo that moves the same spikes to 500 random dates.
+
+**Results (61 spikes on 58 dates, 2023–2026):**
+
+| Window | Mean | t | Hit rate | Placebo p |
+| --- | --- | --- | --- | --- |
+| 5 days before | +51 bp | 1.48 | 57% | 0.22 |
+| Spike day | +27 bp | 1.38 | 62% | 0.13 |
+| **Next day** | **+54 bp** | **2.86** | **66%** | **0.002** |
+| Next 5 days | +81 bp | 2.10 | 64% | 0.05 |
+| Next 10 days | +87 bp | 1.49 | 57% | 0.11 |
+
+Stocks keep moving in the predicted direction the day after a spike, and random dates almost never do that well. The 5 days before are positive but not significant, so stocks may sometimes move first. Caveats: 58 dates is a small sample, several windows were tested, the βs were hand-picked with hindsight, and market adjustment makes anything less risky than SPY look like it "rose" on bad news. The report also regresses each stock on each series to check the guessed βs; several signs are wrong (e.g. defense on Taiwan odds).
 
 ## Layout
 
@@ -77,6 +99,7 @@ Known issues: thinly traded contracts produce fake spikes (e.g. Fed March 2024),
 | `backend/src/polyslice_api/polymarket.py` | Gamma search → live market per signal, CLOB price history, trending feed |
 | `backend/src/polyslice_api/backtest.py` | Daily replay of the dynamic basket vs. the same basket at base weights; continuous and spike modes (tested in `backend/tests`) |
 | `backend/src/polyslice_api/history.py`, `data/series.json` | Long odds series chained from resolved + live contracts (tested in `backend/tests`) |
+| `backend/src/polyslice_api/eventstudy.py` | Spike detection, signed abnormal returns, placebo test, empirical βs (tested in `backend/tests`) |
 | `backend/src/polyslice_api/prices.py` | Last close and daily history via yfinance |
 | `backend/src/polyslice_api/main.py` | FastAPI routes: `/api/sectors`, `/api/signals`, `/api/signals/{id}/history`, `/api/feed`, `/api/basket`, `/api/ticket`, `/api/backtest` |
 | `frontend/src/components/` | Dashboard, scope picker, allocation donut, holdings table, signal cards with what-if sliders, trade ticket |
@@ -87,5 +110,5 @@ To add a signal, add an entry to `universe.json` and check it resolves at `/api/
 
 - **Gemini**: prompt-to-basket (pick tickers + βs), map unmapped `/api/feed` markets to sectors, plain-English "why it rebalanced" notes.
 - **Tiger Data (Postgres/Timescale)**: persist odds and weight snapshots for history charts and faster backtests.
-- **Event study**: for every spike in the long series, compare affected stocks' next 1/5/10-day returns with their sector, with t-stats clustered by date, a placebo test on random dates, and a check on whether stocks moved first.
+- **Fix the βs** using the event study's empirical regressions (estimated on past data only), then rerun the backtest in spike mode on the long series.
 - **Backtest chart** in the frontend for `/api/backtest`.
