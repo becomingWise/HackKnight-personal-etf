@@ -32,10 +32,16 @@ Read this before any change. It decides who owns what. Details per area live in 
 
 Run the tests for every area you touched before opening a PR. CI (`.github/workflows/ci.yml`) runs all of them on every PR; a red check means fix it before merging.
 
+## Tasks are GitHub issues
+
+- Every task is an issue with an owner and a "Done when". Start an AI session with "work on issue #N" and paste the issue (or read it with `gh issue view N`).
+- Do only what the issue asks. Anything else you notice becomes a new issue, not part of this PR.
+- Put `Closes #N` in the PR description so merging closes the issue.
+
 ## Git
 
-- One short branch per task (`feat/…`, `fix/…`). `git pull` on `main` before you start.
-- Small PRs, merged to `main` every few hours. Never push straight to `main`.
+- One short branch per task (`feat/…`, `fix/…`), one issue per branch. `git pull` on `main` before you start.
+- Small PRs, merged to `main` every few hours. `main` is protected: PRs only, CI must pass, and the branch must be up to date with `main`.
 - Never merge, rebase or delete someone else's branch.
 
 ## Never
