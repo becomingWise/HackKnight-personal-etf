@@ -1,5 +1,7 @@
 import { timed } from "./db/client";
+import { env } from "./env";
 import { sponsorStatus } from "./flags";
+import { analystMode } from "./pipeline/run";
 
 type DbInfo = { postgres: string; timescaledb: string | null; migrations: number };
 export type DbHealth = ({ ok: true; latency_ms: number } & DbInfo) | { ok: false; error: string };
@@ -23,5 +25,12 @@ export async function checkDb(): Promise<DbHealth> {
 
 export async function getHealth() {
   const database = await checkDb();
-  return { ok: database.ok, time: new Date().toISOString(), database, sponsors: sponsorStatus() };
+  return {
+    ok: database.ok,
+    time: new Date().toISOString(),
+    database,
+    sponsors: sponsorStatus(),
+    // Which analyst writes the evidence packet, and whether the checker's LLM review is on.
+    pipeline: { analystMode: analystMode(), checkerLlm: env().CHECKER_LLM },
+  };
 }

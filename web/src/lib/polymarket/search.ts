@@ -31,6 +31,8 @@ export const gammaMarket = z.looseObject({
   lastTradePrice: numeric,
   liquidityNum: numeric,
   volumeNum: numeric,
+  volume24hr: numeric,
+  oneDayPriceChange: numeric,
   oneWeekPriceChange: numeric,
   endDate: z.string().nullish(),
   description: z.string().nullish(),
@@ -61,12 +63,18 @@ export type MarketCandidate = {
   /** Reference price of YES in [0,1]: the market's implied probability. */
   probability: number;
   change7d: number | null;
+  change24h?: number | null;
   endDate: string | null;
   volume: number;
+  /** US dollars; absent when Polymarket does not report them. */
+  volume24h?: number | null;
+  liquidity?: number | null;
   /** Outcome token of "Yes", needed to load price history. */
   yesTokenId: string | null;
   /** Tickers the weighting backend links to this market (empty for free-text search hits). */
   linkedSymbols: string[];
+  /** The weighting backend's name for the event behind the link, e.g. "China invades Taiwan". */
+  linkedLabel?: string;
   /** The weighting backend's sensitivity of each linked ticker to this market. */
   linkedBetas?: Record<string, number>;
 };
@@ -149,8 +157,11 @@ export function parseSearch(payload: unknown, perEvent = 3): MarketCandidate[] {
           url: `https://polymarket.com/event/${event.data.slug}`,
           probability: Math.round(probability * 10000) / 10000,
           change7d: m.oneWeekPriceChange ?? null,
+          change24h: m.oneDayPriceChange ?? null,
           endDate: m.endDate ?? null,
           volume: m.volumeNum ?? 0,
+          volume24h: m.volume24hr ?? null,
+          liquidity: m.liquidityNum ?? null,
           yesTokenId: yesTokenId(m),
           linkedSymbols: [],
         }),

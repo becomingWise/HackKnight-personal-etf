@@ -3,7 +3,7 @@
 import { z } from "zod";
 import type { Basket } from "../baskets/schema";
 import { ThinkingLevel, type GenerateJson } from "../sponsors/gemini";
-import { formatOdds } from "../stocks/findStocks";
+import { formatOdds } from "../stocks/contract";
 
 export const MAX_WORDS = 120;
 const MAX_CHARS = 1200;

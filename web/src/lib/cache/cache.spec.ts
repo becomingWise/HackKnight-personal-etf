@@ -1,9 +1,9 @@
 // Response caching for /api/stocks and /api/weights, and the demo warm-up job.
 import { describe, expect, it, vi } from "vitest";
 import { DEMO_IDEAS, stalestIdea, warmIdea, type WarmDeps } from "../demo/warm";
-import type { MarketCandidate } from "../polymarket/search";
+import { createStocksHandler, type HandlerDeps } from "../pipeline/handler";
+import type { EvidencePacket } from "../analyst/packet";
 import type { GenerateJson } from "../sponsors/gemini";
-import { createStocksHandler, type HandlerDeps } from "../stocks/handler";
 import type { Signal } from "../weights/engine";
 import { createWeightsHandler } from "../weights/handler";
 import {
@@ -14,36 +14,63 @@ import {
   weightsCacheKey,
 } from "./apiCache";
 
-const MARKET: MarketCandidate = {
-  id: "1633611",
-  question: "Will China invade Taiwan by December 31, 2027?",
-  eventTitle: "Taiwan",
-  url: "https://polymarket.com/event/taiwan",
-  probability: 0.105,
-  change7d: -0.01,
-  endDate: null,
-  volume: 1000,
-  yesTokenId: "tok",
-  linkedSymbols: [],
-};
+/** What the analyst stage hands over: two usable markets and three linked tickers. */
+const packet = (idea: string): EvidencePacket => ({
+  idea,
+  generatedAt: new Date().toISOString(),
+  markets: [
+    ["1633611", "Will China invade Taiwan by December 31, 2027?", 0.105],
+    ["1426260", "Will AI-chip export licensing become law this year?", 0.21],
+  ].map(([id, question, probability]) => ({
+    id: String(id),
+    question: String(question),
+    url: `https://polymarket.com/event/${id}`,
+    probability: Number(probability),
+    change24h: 0,
+    change7d: -0.01,
+    volume24h: 1000,
+    liquidity: 100000,
+    endDate: null,
+    relevance: 0.8,
+    signal: "neutral" as const,
+    analystNote: "",
+  })),
+  themes: [],
+  tickerSignals: ["TSM", "NVDA", "AMD"].map((symbol) => ({
+    symbol,
+    impact: 0.1,
+    marketIds: ["1633611"],
+    why: "An invasion would disrupt chip supply.",
+  })),
+  warnings: [],
+});
 
 const PICK = {
   summary: "Chip makers are exposed to Taiwan risk, so this market matters.",
   stocks: ["TSM", "NVDA", "AMD"].map((symbol) => ({
     symbol,
-    market_id: "1633611",
+    marketIds: ["1633611"],
     reason: "Polymarket gives 10.5% that China invades Taiwan, a key risk for this company.",
-    link: "An invasion would disrupt chip supply.",
   })),
 };
 
-/** Gemini mock: plan first, then the pick (or an error when `down` is set). */
+/** Gemini mock: the decision (or an error when `down` is set). */
 function gemini(state: { down: boolean } = { down: false }): GenerateJson {
-  return vi.fn(async ({ prompt }) => {
+  return vi.fn(async () => {
     if (state.down) throw new Error("429 quota");
-    return prompt.startsWith("Sector ids") ? { queries: ["taiwan"], sectors: ["semis"] } : PICK;
+    return PICK;
   });
 }
+
+/** Everything the stocks handler needs besides the cache. */
+const pipeline = (generate: GenerateJson) => ({
+  generate,
+  search: async () => [],
+  rateLimit: allow,
+  mode: "mock" as const,
+  checkerLlm: false,
+  analysts: { mock: async (idea: string) => packet(idea) },
+});
 
 const allow = async () => ({ allowed: true, retryAfterSeconds: 0 });
 
@@ -51,13 +78,7 @@ function stocksApi(over: Partial<HandlerDeps> = {}) {
   let clock = Date.parse("2026-10-10T12:00:00Z");
   const cache = memoryApiCache(() => clock);
   const generate = gemini();
-  const { POST } = createStocksHandler({
-    generate,
-    search: async () => [MARKET],
-    rateLimit: allow,
-    cache,
-    ...over,
-  });
+  const { POST } = createStocksHandler({ ...pipeline(generate), cache, ...over });
   const post = (idea: string) =>
     POST(
       new Request("https://api.test/api/stocks", {
@@ -92,7 +113,7 @@ describe("POST /api/stocks caching", () => {
     const firstBody = await first.json();
     expect(first.headers.get("X-Cache")).toBe("MISS");
     expect(firstBody).toMatchObject({ source: "gemini", cached: false, cachedAt: null });
-    expect(api.generate).toHaveBeenCalledTimes(2);
+    expect(api.generate).toHaveBeenCalledTimes(1);
 
     api.advance(90);
     const second = await api.post("  ai chips and taiwan risk. ");
@@ -103,7 +124,7 @@ describe("POST /api/stocks caching", () => {
     expect(secondBody).toMatchObject({ cached: true, cachedAt: "2026-10-10T12:00:00.000Z" });
     expect(secondBody.stocks).toEqual(firstBody.stocks);
     expect(secondBody.summary).toBe(firstBody.summary);
-    expect(api.generate).toHaveBeenCalledTimes(2); // no new Gemini calls
+    expect(api.generate).toHaveBeenCalledTimes(1); // no new Gemini calls
   });
 
   it("expires after 15 minutes", async () => {
@@ -113,7 +134,7 @@ describe("POST /api/stocks caching", () => {
     expect((await api.post("chips")).headers.get("X-Cache")).toBe("HIT");
     api.advance(2);
     expect((await api.post("chips")).headers.get("X-Cache")).toBe("MISS");
-    expect(api.generate).toHaveBeenCalledTimes(4);
+    expect(api.generate).toHaveBeenCalledTimes(2);
   });
 
   it("never caches a keyword fallback", async () => {
@@ -231,7 +252,7 @@ describe("demo warm-up", () => {
     const deps: WarmDeps = {
       cache,
       signals: async () => SIGNALS,
-      stocks: { generate: gemini(state), search: async () => [MARKET], rateLimit: allow },
+      stocks: pipeline(gemini(state)),
     };
     return { cache, deps, state, advance: (seconds: number) => (clock += seconds * 1000) };
   }

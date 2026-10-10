@@ -21,7 +21,8 @@
     "try:odds": "tsx --env-file-if-exists=.env.local scripts/try-odds.mts",
     "demo:warm": "tsx --env-file-if-exists=.env.local scripts/demo-warm.mts",
     "try:letter": "tsx --env-file-if-exists=.env.local scripts/try-letter.mts",
-    "try:narrate": "tsx --env-file-if-exists=.env.local scripts/try-narrate.mts"
+    "try:narrate": "tsx --env-file-if-exists=.env.local scripts/try-narrate.mts",
+    "eval:decider": "tsx --env-file-if-exists=.env.local scripts/eval-decider.mts"
   },
   "dependencies": {
     "@google/genai": "^2.28.0",

@@ -1,5 +1,5 @@
 // POST /api/findstock — alias of POST /api/stocks.
-import { createStocksHandler } from "@/lib/stocks/handler";
+import { createStocksHandler } from "@/lib/pipeline/handler";
 
 export const maxDuration = 30;
 

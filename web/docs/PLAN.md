@@ -4,7 +4,9 @@
 Polymarket odds moves (`POST /api/weights`), with the odds behind it saved, tracked and charted in Tiger.
 The older plan (paper ETFs made of Polymarket outcomes, NAV, leaderboard) is dropped.
 
-Lucas owns the backend; a teammate owns the frontend. No UI pages are built here. Every endpoint goes into
+Roles since 2026-10-10: Lucas owns the **decider** (Gemini makes the final stock decision), a backend teammate
+owns the **analyst** (Polymarket data → evidence packet, see `docs/HANDOFF.md`), a frontend teammate owns the
+UI. No UI pages are built here. Every endpoint goes into
 `docs/API.md` with request and response examples.
 
 After each step: tests, `npx vercel --prod --yes` from `/web`, update `docs/API.md` + `/CLAUDE.md` + this
@@ -55,7 +57,24 @@ file, and a short note Lucas can forward to the frontend teammate.
 - [x] Measured free-tier limits: `gemini-3.5-flash` 5 requests/minute, `gemini-3.5-flash-lite` 15/minute (daily limits only visible in AI Studio)
 - [ ] **Lucas:** check the daily request limits at https://aistudio.google.com/rate-limit
 
+## Step 3c — Decision workflow: analyst → gate → decider → checker (done, live)
+
+Follows Anthropic's "Building effective agents": a workflow (fixed code path), not an autonomous agent.
+
+- [x] `EvidencePacket` contract: zod + type in `src/lib/analyst/packet.ts`, `docs/API.md` section 1b, `docs/HANDOFF.md` with a full example and the two integration options
+- [x] `src/lib/pipeline/`: `gate.ts`, `decider.ts` (the prompt), `checker.ts`, `run.ts` (the workflow), `handler.ts` (HTTP)
+- [x] Mock analyst from existing code (Polymarket search, universe links, Tiger odds history), no LLM; `ANALYST_MODE=mock|module|tiger`; a failing real analyst falls back to the mock
+- [x] Migration `0007_analyst.sql`: `analyst_packets`, `market_analysis` (HANDOFF option B)
+- [x] `/api/stocks` runs the workflow; response unchanged plus `trace`; `422 not_enough_evidence` from the gate
+- [x] `POST /api/analyze` (packet only) and `POST /api/decide` (idea + packet)
+- [x] Quota: 1 Gemini call per uncached request, 2 at most; 8 uncached requests per minute may reach Gemini (worst case 16 calls per minute); `CHECKER_LLM=false`
+- [x] `pnpm eval:decider`: 10 ideas with fixed packets; baseline on 2026-10-10: 9/9 first-answer pass, 9/9 grounded, gate case stopped, median 2.9 s
+- [ ] **Teammate:** choose option A (TypeScript module) or B (Python job → Tiger) and build the real analyst
+- [ ] **Lucas:** when the real analyst is ready, set `ANALYST_MODE` on Vercel (`npx vercel env add ANALYST_MODE production`) and redeploy
+
 ## Step 4 — Sponsor APIs (each behind a flag with a mock)
+
+**Solana (b) and Presage (d) are on hold until the decision workflow has its real analyst (Lucas, 2026-10-10).**
 
 Sponsors in use: Tiger Data, Gemini, ElevenLabs, Solana, Presage (plus the GoDaddy domain). **Snowflake is
 not used**: no keys, no endpoint, not listed in `/api/built-with`, and it must not appear in the Devpost text.

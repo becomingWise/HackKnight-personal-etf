@@ -9,7 +9,7 @@ import {
   type ApiCache,
 } from "../cache/apiCache";
 import { equalWeights } from "../baskets/schema";
-import { computeStocks, defaultStocksDeps, type HandlerDeps } from "../stocks/handler";
+import { computeStocks, defaultStocksDeps, type HandlerDeps } from "../pipeline/handler";
 import { adjustWeights } from "../weights/adjustWeights";
 import type { Signal } from "../weights/engine";
 import { liveSignals } from "../weights/signals";

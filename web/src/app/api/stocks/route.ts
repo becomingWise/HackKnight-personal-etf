@@ -1,5 +1,5 @@
 // POST /api/stocks — the team's findStocks port. Contract: docs/API.md section 1.
-import { createStocksHandler } from "@/lib/stocks/handler";
+import { createStocksHandler } from "@/lib/pipeline/handler";
 
 export const maxDuration = 30;
 

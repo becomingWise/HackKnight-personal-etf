@@ -1,31 +1,40 @@
-// Manual check of the findStocks pipeline against real Gemini and live Polymarket:
-//   pnpm try:findstocks "AI chips and Taiwan risk"
-import { searchMarkets } from "../src/lib/polymarket/search";
-import { geminiGenerateJson, type GenerateJson } from "../src/lib/sponsors/gemini";
-import { findStocks } from "../src/lib/stocks/findStocks";
+// Manual check of the decision workflow against real Gemini, live Polymarket and Tiger:
+//   pnpm try:findstocks "AI chips and Taiwan risk"            the whole workflow (1 to 2 Gemini calls)
+//   pnpm try:findstocks --packet "AI chips and Taiwan risk"   analyst and gate only, no Gemini
+import { db } from "../src/lib/db/client";
+import { gate } from "../src/lib/pipeline/gate";
+import { defaultStocksDeps } from "../src/lib/pipeline/handler";
+import { analystMode, defaultAnalysts, runAnalyst, runPipeline } from "../src/lib/pipeline/run";
 
-const idea = process.argv.slice(2).join(" ") || "AI chips and Taiwan risk";
+const args = process.argv.slice(2);
+const packetOnly = args.includes("--packet");
+const idea = args.filter((a) => a !== "--packet").join(" ") || "AI chips and Taiwan risk";
 
-const timedGenerate: GenerateJson = async (args) => {
-  const started = Date.now();
-  try {
-    const out = await geminiGenerateJson(args);
-    console.log(`gemini ok in ${Date.now() - started} ms`);
-    return out;
-  } catch (err) {
-    console.log(`gemini FAILED in ${Date.now() - started} ms: ${String(err).slice(0, 300)}`);
-    throw err;
-  }
-};
-
+const analysts = defaultAnalysts({
+  search: defaultStocksDeps.search,
+  pastOdds: defaultStocksDeps.pastOdds,
+});
+const log = (e: string, d?: Record<string, unknown>) => console.log(e, JSON.stringify(d));
 const started = Date.now();
-const result = await findStocks(
-  { idea },
-  {
-    generate: timedGenerate,
-    search: searchMarkets,
-    log: (e, d) => console.log(e, JSON.stringify(d)),
-  },
-);
-console.log(JSON.stringify(result, null, 2));
-console.log(`total ${Date.now() - started} ms, source ${result.source}`);
+
+if (packetOnly) {
+  const { packet, step } = await runAnalyst(idea, { analysts, mode: analystMode(), log });
+  console.log(JSON.stringify(packet, null, 2));
+  console.log(`analyst: ${step.summary} (${step.ms} ms)`);
+  console.log(`gate: ${gate(packet).summary}`);
+} else {
+  const result = await runPipeline(idea, {
+    generate: defaultStocksDeps.generate,
+    analysts,
+    mode: analystMode(),
+    checkerLlm: process.env.CHECKER_LLM === "true",
+    log,
+  });
+  console.log(JSON.stringify(result.ok ? result.response : result, null, 2));
+  const trace = result.ok ? (result.response.trace ?? []) : result.trace;
+  for (const t of trace) console.log(`${t.step}: ${t.status}, ${t.summary} (${t.ms} ms)`);
+  if (result.ok)
+    console.log(`source ${result.response.source}, ${result.geminiCalls} Gemini calls`);
+}
+console.log(`total ${Date.now() - started} ms`);
+await db().end({ timeout: 5 });

@@ -38,7 +38,7 @@ export function signalsForSectors(sectorIds: string[]): UniverseSignal[] {
   return SIGNALS.filter((signal) => Object.keys(signal.betas).some((sym) => symbols.has(sym)));
 }
 
-// Used when Gemini is unavailable: plain keyword → sector matching. English, Chinese, Spanish,
+// Used by the mock analyst: plain keyword → sector matching. English, Chinese, Spanish,
 // mirroring the languages the team's mock adapter recognizes.
 const SECTOR_KEYWORDS: Record<string, string[]> = {
   semis: [
@@ -173,6 +173,15 @@ function hasKeyword(text: string, keyword: string): boolean {
   if (/[^\p{Script=Latin}\s.-]/u.test(keyword)) return text.includes(keyword);
   const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "u").test(text);
+}
+
+/** The Latin-script sector keywords found in the idea, usable as Polymarket search queries. */
+export function keywordHits(idea: string): string[] {
+  const text = idea.toLocaleLowerCase();
+  const latin = Object.values(SECTOR_KEYWORDS)
+    .flat()
+    .filter((k) => k.length >= 4 && /^[\p{Script=Latin} .-]+$/u.test(k));
+  return [...new Set(latin.filter((k) => hasKeyword(text, k)))];
 }
 
 /** Sector ids whose keywords appear in the idea, best match first. */
