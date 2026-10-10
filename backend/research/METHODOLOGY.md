@@ -49,9 +49,33 @@ Walk-forward means a β used on date d is fit only on data before the first of d
 
 Newest first. "Tests run" counts distinct statistical tests behind each claim, for multiple-testing context.
 
-**2026-10-10: H2 implemented, not yet run.** `crosssection.py`, `tests/test_crosssection.py`. On synthetic data with loadings inside the β cap, the pipeline recovered a slope of 1.15 (planted 1.0). With no planted volume effect, H2c came out t 2.4 but placebo p 0.16, a reminder that a modest t on ~13 dates isn't reliable on its own. No real results yet (same network block as H1).
+**2026-10-10: H2 (development period): the exposure ranking does not predict the cross-section.** 57 daily spikes, 39 dates with fitted βs. Day-0 abnormal returns (capped) regressed on β × Δp across ~490 stocks, one slope per date:
 
-**2026-10-10: H1 implemented, not yet run.** Code and tests are in place (`intraday.py`, `tests/test_intraday.py`). An end-to-end run on synthetic data recovered a planted +1..+3-bar effect and found no lead where none was planted. No real results yet: the session that built it could not reach Polymarket or Yahoo. Next: build the hourly caches and run on the development period.
+| Test | Statistic | t | Placebo p | Verdict |
+| --- | --- | --- | --- | --- |
+| H2a (primary) | mean slope 1.29 | 1.74 | 0.47 | not supported |
+| H2b | top − bottom quintile +15 bp | 1.25 | 0.21 | not supported |
+| H2c | high − low volume slope −3.1 (0.17 vs 3.28) | −1.68 | 0.42 | not supported |
+
+- The point estimate is near calibrated (1.0) but too noisy to tell from zero, and the random-date placebo produces slopes this large half the time.
+- H2c points the wrong way: high-volume spikes show *smaller* slopes. Not significant either way.
+- Read with H1 and the event study: the top-exposed stocks react, but the full-universe ranking adds no detectable information beyond them.
+- Tests run: 3, each with a 500-run placebo.
+
+**2026-10-10: H1 (development period): suggestive post-spike drift, no lead.** 51 hourly spikes; 33 scored (the other 18 fall in months with no estimable βs, mostly Ukraine and recession contracts with short histories). Hourly bars from 2024-10-11.
+
+| Test | Mean | t | Hit | Placebo p | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| H1a (primary): bars +1..+6 | +49 bp | 2.41 | 70% | 0.002 | suggestive |
+| H1b: bars −6..−1 | +5 bp | 0.30 | 48% | 0.75 | not supported |
+
+- **Stocks don't lead the odds.** Nothing before the spike.
+- **There is drift after the spike, during trading hours.** Bars that stay within one session carry +52 bp of the +49 bp; bars that open after an overnight gap carry −2 bp. So the drift happens while markets are open, not overnight, which is what "time to act" needs.
+- **It leans on one week.** The largest contributions are 2025-04-03 and 04-04 (+478 bp and +282 bp, Fed odds falling during the tariff sell-off). Without those two dates: +28 bp, t 1.95. Median spike +33 bp. Fed spikes: +55 bp (t 1.82, 22 dates); all others: +38 bp (t 2.66, 11 dates).
+- Below the pre-registered t > 3 bar, so this is a lead to confirm on the holdout, not a finding. The holdout has only 2 hourly spikes so far, so confirming it needs data from after 2026-10-09 accumulating, or more series.
+- Tests run: 2 pre-registered, each with a 500-run placebo. The trimmed, without-April and per-series numbers above are descriptive checks run after seeing the result, not additional tests.
+
+**Run details (both).** Daily and hourly odds and prices built 2026-10-10 for the 2026-10-09 constituent list (`sp500.json` not refreshed). Daily spike detection reproduced the earlier 61 spikes on 58 dates. Holdout not touched.
 
 **2026-10-09: Universe-wide exposures (development data, fit as of 2026-04-01).** Stocks with raw |t| > 2 vs. ~22 expected by chance among 489:
 - Fed cut odds: 44; 6 FDR discoveries: homebuilders (DHI, LEN), IEF, SHY, ALGN, RMD. Economically sensible (rate-sensitive).
