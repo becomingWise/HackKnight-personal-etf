@@ -70,6 +70,16 @@ export function createBaskets({ baseUrl = DEFAULT_BASKETS_API, fetch: fetchFn = 
       return parse(await fetchFn(url, { signal }), "The odds history could not be loaded");
     },
 
+    /**
+     * The "manager's note" for a saved basket: a short letter (at most 120 words) explaining it.
+     * Resolves to { id, letter, words, source: "gemini" | "fallback", cached, ... }.
+     * The first call for a basket takes a few seconds; later calls are instant.
+     */
+    async getBasketLetter(id, { signal } = {}) {
+      const response = await fetchFn(`${root}/${encodeURIComponent(id)}/letter`, { method: "POST", signal });
+      return parse(response, "The letter could not be written");
+    },
+
     /** Odds history of one Polymarket market (a marketId). range: "1d" | "7d" | "30d". */
     async getMarketHistory(marketId, range = "7d", { signal } = {}) {
       const url = `${api}/markets/${encodeURIComponent(marketId)}/history?range=${encodeURIComponent(range)}`;
@@ -79,4 +89,4 @@ export function createBaskets({ baseUrl = DEFAULT_BASKETS_API, fetch: fetchFn = 
 }
 
 /** Ready-to-use functions pointing at the deployed backend. */
-export const { saveBasket, getBasket, getBasketOdds, getMarketHistory } = createBaskets();
+export const { saveBasket, getBasket, getBasketOdds, getBasketLetter, getMarketHistory } = createBaskets();

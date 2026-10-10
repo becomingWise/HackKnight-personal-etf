@@ -234,11 +234,11 @@ Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/weights" -C
 
 Two ready-made modules implement the controller's ports. Neither is wired into the app.
 
-| Port                              | Module                   | Calls                                                                                                                               |
-| --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `findStocks`                      | `/js/stocks-adapter.js`  | `POST /api/stocks`                                                                                                                  |
-| `adjustWeights`                   | `/js/weights-adapter.js` | `POST /api/weights`                                                                                                                 |
-| save / open a basket, odds charts | `/js/baskets-adapter.js` | `POST /api/baskets`, `GET /api/baskets/{id}` (section 3), `GET /api/baskets/{id}/odds`, `GET /api/markets/{id}/history` (section 4) |
+| Port                                              | Module                   | Calls                                                                                                                                                                             |
+| ------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `findStocks`                                      | `/js/stocks-adapter.js`  | `POST /api/stocks`                                                                                                                                                                |
+| `adjustWeights`                                   | `/js/weights-adapter.js` | `POST /api/weights`                                                                                                                                                               |
+| save / open a basket, odds charts, manager's note | `/js/baskets-adapter.js` | `POST /api/baskets`, `GET /api/baskets/{id}` (section 3), `GET /api/baskets/{id}/odds`, `GET /api/markets/{id}/history` (section 4), `POST /api/baskets/{id}/letter` (section 4b) |
 
 **How to switch (5 lines):**
 
@@ -545,6 +545,56 @@ Invoke-RestMethod "https://prophetf.vercel.app/api/baskets/dfxt3jwb/odds?range=3
 
 ---
 
+## 4b. Manager's note — LIVE
+
+`POST /api/baskets/{id}/letter`
+
+A short letter (at most 120 words) explaining a saved basket: what it bets on, which holdings carry the
+most weight and why, and which Polymarket markets back it. Written by Gemini from the basket's own data.
+No request body.
+
+```json
+{
+  "id": "dfxt3jwb",
+  "letter": "This basket bets on the expansion of AI hardware and semiconductor technology while tracking geopolitical risks in Taiwan. NVDA carries the highest weight at 27.49%, followed closely by AMD at 26.58%… These market odds reflect event probabilities rather than financial returns.",
+  "words": 108,
+  "source": "gemini",
+  "generatedAt": "2026-10-10T03:05:12.000Z",
+  "cached": false,
+  "cachedAt": null
+}
+```
+
+| Field                | Meaning                                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `letter`             | Plain text, one or two paragraphs, in the language of the idea. Show it as text, not HTML                                    |
+| `words`              | Word count of the letter                                                                                                     |
+| `source`             | `"gemini"`, or `"fallback"` when Gemini failed or timed out and a template built from the basket's data was returned instead |
+| `generatedAt`        | When the letter was written                                                                                                  |
+| `cached`, `cachedAt` | Same meaning as on `/api/stocks`; also in the `X-Cache` and `X-Cache-Age` headers                                            |
+
+- A basket never changes, so its letter is written once and then served from the cache (kept 30 days).
+  The first call takes 2 to 5 seconds, later calls about 0.1 seconds. Calling it again is safe.
+- Every percentage in the letter is checked against the basket's weights and the odds saved with it; a
+  letter with any other percentage, or over 120 words, is rejected and rewritten once, then the template is
+  used. Fallback letters are not cached.
+- It uses the same models as `/api/stocks` (main model first, backup on quota errors), so a new letter
+  counts as one more Gemini request against the per-minute quota.
+
+| Status | `error.code`    | When                                                                               |
+| ------ | --------------- | ---------------------------------------------------------------------------------- |
+| 404    | `not_found`     | No basket with this id                                                             |
+| 429    | `rate_limited`  | More than 20 requests per minute from one IP, or 400 new letters in a day in total |
+| 503    | `storage_error` | The database is unreachable                                                        |
+
+From the frontend: `getBasketLetter(id)` in `/js/baskets-adapter.js`.
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/baskets/dfxt3jwb/letter" | ConvertTo-Json
+```
+
+---
+
 ## 5. `GET /api/built-with` — LIVE (Tiger and Gemini; other sponsors arrive with step 4)
 
 Live proof per sponsor, as JSON for the frontend to render. No parameters.
@@ -595,18 +645,23 @@ Live proof per sponsor, as JSON for the frontend to render. No parameters.
     "mode": "live",
     "model": "gemini-3.5-flash",
     "backupModel": "gemini-3.5-flash-lite",
-    "usedFor": "…"
+    "usedFor": ["POST /api/stocks: …", "POST /api/baskets/{id}/letter: …"],
+    "cachedStockAnswers": 4,
+    "lastStockAnswerAt": "2026-10-10T02:38:44.028Z",
+    "lettersWritten": 2,
+    "lastLetterAt": "2026-10-10T03:05:12.000Z",
+    "demoIdeasCached": 4,
+    "demoIdeas": 4
   },
   "elevenlabs": { "enabled": false, "configured": false, "mode": "mock" },
   "solana": { "enabled": false, "configured": false, "mode": "mock" },
-  "snowflake": { "enabled": false, "configured": false, "mode": "mock" },
   "presage": { "enabled": false, "configured": false, "mode": "mock" }
 }
 ```
 
 `queryLatencyMs` values are measured on each request by running the same queries the chart endpoints use.
 `lastTickAt` is the time of the latest tick-job reading; `trackedMarkets` is how many markets saved baskets
-cite. The fields under `elevenlabs`, `solana`, `snowflake` and `presage` will grow in step 4.
+cite. Under `gemini`, `cachedStockAnswers` and `lettersWritten` count live cache entries and `demoIdeasCached` shows how many of the demo ideas are currently warm. The fields under `elevenlabs`, `solana` and `presage` will grow in step 4. Only sponsors the project actually uses are listed.
 
 ---
 
@@ -679,13 +734,12 @@ No parameters. `200` when the database is reachable, `503` otherwise.
   },
   "sponsors": {
     "tiger": { "enabled": true, "configured": true, "mode": "live" },
-    "gemini": { "enabled": true, "configured": true, "mode": "live" },
-    "snowflake": { "enabled": false, "configured": false, "mode": "mock" }
+    "gemini": { "enabled": true, "configured": true, "mode": "live" }
   }
 }
 ```
 
-`sponsors` has one entry each for `tiger`, `gemini`, `snowflake`, `elevenlabs`, `solana`, `presage`, `ws`.
+`sponsors` has one entry each for `tiger`, `gemini`, `elevenlabs`, `solana`, `presage`, `ws`.
 
 ---
 

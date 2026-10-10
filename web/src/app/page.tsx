@@ -5,7 +5,6 @@ import { getHealth } from "@/lib/health";
 const SPONSOR_LABELS = {
   tiger: "Tiger Data",
   gemini: "Gemini",
-  snowflake: "Snowflake Cortex",
   elevenlabs: "ElevenLabs",
   solana: "Solana devnet",
   presage: "Presage",

@@ -1,5 +1,6 @@
 // GET /api/built-with — live proof per sponsor, as JSON for the frontend to render.
 import { connection } from "next/server";
+import { geminiProof } from "@/lib/builtwith/gemini";
 import { tigerProof } from "@/lib/builtwith/tiger";
 import { sponsorStatus } from "@/lib/flags";
 import { preflight } from "@/lib/http/cors";
@@ -20,11 +21,14 @@ export async function GET(request: Request) {
         ...status.gemini,
         model: GEMINI_MODEL,
         backupModel: GEMINI_LITE_MODEL,
-        usedFor: "POST /api/stocks: plans Polymarket searches, then picks and explains stocks",
+        usedFor: [
+          "POST /api/stocks: plans Polymarket searches, then picks and explains stocks",
+          "POST /api/baskets/{id}/letter: writes the manager's note for a saved basket",
+        ],
+        ...(await geminiProof()),
       },
       elevenlabs: status.elevenlabs,
       solana: status.solana,
-      snowflake: status.snowflake,
       presage: status.presage,
     });
   } catch (err) {

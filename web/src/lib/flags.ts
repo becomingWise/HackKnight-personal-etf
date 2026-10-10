@@ -1,7 +1,6 @@
 import { env, type Env } from "./env";
 
-export type SponsorKey =
-  "tiger" | "gemini" | "snowflake" | "elevenlabs" | "solana" | "presage" | "ws";
+export type SponsorKey = "tiger" | "gemini" | "elevenlabs" | "solana" | "presage" | "ws";
 
 export type SponsorStatus = {
   /** The feature flag is on (core integrations are always on). */
@@ -22,10 +21,6 @@ export function sponsorStatus(e: Env = env()): Record<SponsorKey, SponsorStatus>
   return {
     tiger: status(true, !!e.DATABASE_URL),
     gemini: status(true, !!e.GEMINI_API_KEY),
-    snowflake: status(
-      e.FEATURE_SNOWFLAKE,
-      !!(e.SNOWFLAKE_ACCOUNT_URL && e.SNOWFLAKE_PAT && e.SNOWFLAKE_MODEL),
-    ),
     elevenlabs: status(e.FEATURE_ELEVENLABS, !!(e.ELEVENLABS_API_KEY && e.ELEVENLABS_VOICE_ID)),
     solana: status(e.FEATURE_SOLANA, !!(e.SOLANA_RPC_URL && e.SOLANA_ATTESTER_SECRET_KEY)),
     presage: status(

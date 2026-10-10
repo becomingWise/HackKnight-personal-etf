@@ -57,24 +57,27 @@ file, and a short note Lucas can forward to the frontend teammate.
 
 ## Step 4 — Sponsor APIs (each behind a flag with a mock)
 
+Sponsors in use: Tiger Data, Gemini, ElevenLabs, Solana, Presage (plus the GoDaddy domain). **Snowflake is
+not used**: no keys, no endpoint, not listed in `/api/built-with`, and it must not appear in the Devpost text.
+
 - [ ] a. ElevenLabs: `POST /api/baskets/{id}/narrate` → MP3 briefing of the summary and key odds, cached in Tiger; `GET /api/audio/{id}`
 - [ ] b. Solana devnet: `POST /api/baskets/{id}/publish` → memo tx with the basket hash + odds snapshot; `GET /api/baskets/{id}/verify`
-- [ ] c. Snowflake Cortex: `POST /api/baskets/{id}/letter` → short "manager's note"
+- [x] c. Manager's note: `POST /api/baskets/{id}/letter`, written by Gemini (Snowflake was dropped on 2026-10-09), cached per basket, template fallback, numbers checked against the basket; `getBasketLetter` in the adapter
 - [ ] d. Presage: `POST /api/tilt-check` (mock first) the frontend can call before saving a basket
 
 ## Step 5 — `GET /api/built-with`
 
 - [x] Tiger and Gemini sections (built in step 3)
-- [ ] Per-sponsor proof for step 4: attestation links, briefing and letter counts, tilt checks
+- [ ] Per-sponsor proof for step 4: attestation links, briefing counts, tilt checks (letter counts are already under `gemini`)
 
 ## Later / optional
 
 - [ ] Candidates for `/api/stocks` from Tiger + pgvector instead of live search
 - [ ] Custom GoDaddy domain on Vercel + DNS records
-- [ ] README backend sections, `DEVPOST.md` backend paragraphs, `docs/DEMO.md` backend notes
+- [ ] README backend sections, `DEVPOST.md` backend paragraphs (no "How we used Snowflake" section; the manager's note is a Gemini feature), `docs/DEMO.md` backend notes
 
 ## Needs from Lucas
 
 - [ ] Schedule `POST https://prophetf.vercel.app/api/jobs/tick` every minute on cron-job.org with header `Authorization: Bearer <CRON_SECRET from web/.env.local>`
 - [ ] The GitHub Pages site is down (404): someone with access must republish it (frontend owner)
-- [ ] Step 4: ElevenLabs key + voice id, Snowflake account URL + PAT, fund the Solana devnet attester, Presage key
+- [ ] Step 4: ElevenLabs key + voice id, fund the Solana devnet attester, Presage key

@@ -5,7 +5,7 @@ import { db } from "../db/client";
 
 export const CACHE_TTL_SECONDS = 15 * 60;
 
-export type CacheKind = "stocks" | "weights";
+export type CacheKind = "stocks" | "weights" | "letter";
 export type CacheEntry<T> = { value: T; createdAt: Date; expiresAt: Date };
 
 export type ApiCache = {

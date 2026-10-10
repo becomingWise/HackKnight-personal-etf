@@ -16,15 +16,12 @@ const schema = z.object({
   CRON_SECRET: optional,
   APP_BASE_URL: optional,
 
+  // Snowflake was dropped (2026-10-09); the variable stays false and nothing reads it.
   FEATURE_SNOWFLAKE: flag,
   FEATURE_ELEVENLABS: flag,
   FEATURE_SOLANA: flag,
   FEATURE_PRESAGE: flag,
   FEATURE_WS: flag,
-
-  SNOWFLAKE_ACCOUNT_URL: optional,
-  SNOWFLAKE_PAT: optional,
-  SNOWFLAKE_MODEL: optional,
 
   ELEVENLABS_API_KEY: optional,
   ELEVENLABS_VOICE_ID: optional,
