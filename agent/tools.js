@@ -6,6 +6,8 @@ import { ALLOWED, ALLOWED_BY_SYMBOL } from "./retrieval.js";
 import { MAX_PREFERENCE_LENGTH } from "./memory.js";
 
 export const BASKET_SIZE = 3;
+/** How the agent judges an idea before anything else. Only "clear" may become a basket. */
+export const CLARITIES = ["clear", "broad", "not_covered", "unclear"];
 
 /**
  * The one rule set for a selection, used by the check_selection tool and again on the final
@@ -39,13 +41,14 @@ const DECLARATIONS = {
   check_selection: {
     name: "check_selection",
     description:
-      "Checks a proposed basket: exactly 3 symbols, all different, all from the allowed list. Call it before giving the final answer and fix any errors it reports.",
+      "Checks a proposed basket: exactly 3 symbols, all different, all from the allowed list. Only for an idea whose clarity is \"clear\"; for any other clarity it tells you to ask the person instead. Call it before giving the final answer and fix any errors it reports.",
     parameters: {
       type: "OBJECT",
       properties: {
+        clarity: { type: "STRING", enum: CLARITIES, description: "Your judgement of the idea: clear, broad, not_covered or unclear." },
         symbols: { type: "ARRAY", items: { type: "STRING" }, description: "The 3 ticker symbols, e.g. [\"NVDA\", \"TSM\", \"AMD\"]." }
       },
-      required: ["symbols"]
+      required: ["clarity", "symbols"]
     }
   },
   get_memory: {
@@ -99,8 +102,20 @@ const isObject = value => value !== null && typeof value === "object" && !Array.
 export async function executeTool(name, args, context) {
   const input = isObject(args) ? args : {};
   switch (name) {
-    case "check_selection":
+    case "check_selection": {
+      if (!CLARITIES.includes(input.clarity)) {
+        return { ok: false, errors: [`clarity is required and must be one of: ${CLARITIES.join(", ")}.`] };
+      }
+      // Not clear: no basket is checked. `ask` tells the agent loop that the question is now due.
+      if (input.clarity !== "clear") {
+        return {
+          ok: false,
+          ask: true,
+          errors: [`The idea is "${input.clarity}", so do not pick stocks. Ask the person instead: answer now with that clarity, a question and 2 or 3 options, and no symbols.`]
+        };
+      }
       return checkSelection(input.symbols);
+    }
 
     case "get_memory": {
       if (!context.sessionId) return { preferences: [], previousBaskets: [], note: "No session: nothing is remembered." };

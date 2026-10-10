@@ -103,18 +103,24 @@ error, with the ideas to choose from in `error.options`:
      per tracked Polymarket signal, the signals with the biggest 7-day odds move first (fixed examples
      when the signals cannot be read). Tickers, short ideas (`"AI"`, `"oil"`) and text in other
      languages are never stopped here.
-  2. **The agent asks (normally 1 Gemini call):** it cannot tell what is meant, the idea is a broad
-     everyday word, or the idea's main companies are not among the 40 tickers ("We don't cover
-     carmakers yet."). Its question and options are checked in code like a basket; an invalid one
-     gets one correction turn.
+  2. **The agent asks (normally 1 Gemini call):** the model first judges the idea (`clarity`:
+     clear, broad, not_covered or unclear, generated before any symbol) and the server enforces it:
+     **only `clear` can become a basket.** Anything else is this question ("We don't cover
+     carmakers yet."). Options that touch none of the covered sectors are dropped; when the model's
+     question or options are unusable, the example ideas of the pre-check are offered instead. For
+     "I don't know", "help me" or a greeting the options are those example ideas (this week's
+     biggest Polymarket moves).
 - Nothing is saved to the session's memory, no web search is made, and the controller should stop
   (no `/api/weights`, no `/api/votes`). The question is cached for 15 minutes, so the same text again
   costs nothing. It is not counted as an answer in `/api/savings`.
-- **Measured 2026-10-10 on Flash-Lite (`pnpm try:clarify`, 20 requests):** 5 of 5 clear ideas got a
-  basket ("AI chips and Taiwan risk", "TSM", "oil", "banks", "我想投资AI芯片"). Of the 6 unclear inputs
-  that completed, 3 were stopped ("car", "airlines", "asdfgh") and 3 got a basket anyway ("food",
-  "money", "banana dance"); "hello" ran out of budget mid-request, 2 inputs and all option
-  resubmits were not run. So a broad or silly idea can still slip through.
+- Every cache key starts with the agent's version (`AGENT_VERSION` in `agent/gemini.js`); raising it
+  when the agent's rules change empties the cache for everyone.
+- **Measured 2026-10-10 on Flash-Lite (`pnpm try:clarify`, 41 requests in two runs):** 7 of 7 clear
+  ideas got a basket ("AI chips and Taiwan risk", "TSM", "oil", "banks", "我想投资AI芯片", "crypto",
+  "defense stocks"); 12 of 12 other inputs got a question ("car", "food", "airlines", "money",
+  "asdfgh", "banana dance", "hello", "what's the weather?", "???", "cat", "I don't know", "travel");
+  the first option of each question gave a basket (12 of 12, after "food" and "travel" were re-run
+  with the option rule above).
 
 ### Behaviour
 

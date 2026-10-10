@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { AgentError, ClarifyError, MAX_MODEL_CALLS, checkClarification, createFindStocks, modelChains, tidySummary } from "../agent/gemini.js";
-import { FIXED_EXAMPLES, NONSENSE_QUESTION, SIGNAL_IDEAS, exampleIdeas, looksLikeNonsense } from "../agent/precheck.js";
+import { AGENT_VERSION, AgentError, ClarifyError, MAX_MODEL_CALLS, checkClarification, createFindStocks, createLocalCache, modelChains, optionIsCovered, tidySummary } from "../agent/gemini.js";
+import { FALLBACK_QUESTION, FIXED_EXAMPLES, NONSENSE_QUESTION, SIGNAL_IDEAS, exampleIdeas, looksLikeNonsense } from "../agent/precheck.js";
 import { createMemoryStore } from "../agent/memory.js";
 import { ALLOWED, retrieve } from "../agent/retrieval.js";
 import { checkSignalIds, oddsLine, oddsMoved, reuseCached, usableSignals } from "../agent/signals.js";
@@ -28,10 +28,10 @@ function gemini(...steps) {
 }
 const agent = (model, extra = {}) =>
   createFindStocks({ callModel: model.callModel, memory: createMemoryStore(), sessionId: null, ...extra });
-const answer = (symbols = ["NVDA", "TSM", "AMD"], summary = "Your AI chips basket") => text({ summary, symbols });
+const answer = (symbols = ["NVDA", "TSM", "AMD"], summary = "Your AI chips basket") => text({ clarity: "clear", why: "Maps to the allowed tickers.", summary, symbols });
 
 test("returns exactly three allowed, unique stocks and nothing else", async () => {
-  const model = gemini(toolCall("check_selection", { symbols: ["NVDA", "TSM", "AMD"] }), answer());
+  const model = gemini(toolCall("check_selection", { clarity: "clear", symbols: ["NVDA", "TSM", "AMD"] }), answer());
   const result = await agent(model)({ idea: "AI chips and Taiwan risk" });
 
   assert.deepEqual(Object.keys(result).sort(), ["stocks", "summary"]);
@@ -46,13 +46,13 @@ test("returns exactly three allowed, unique stocks and nothing else", async () =
 });
 
 test("sends every part of a tool turn back, thought signature and call id included", async () => {
-  const model = gemini(toolCall("check_selection", { symbols: ["NVDA", "TSM", "AMD"] }), answer());
+  const model = gemini(toolCall("check_selection", { clarity: "clear", symbols: ["NVDA", "TSM", "AMD"] }), answer());
   await agent(model)({ idea: "AI chips" });
 
   const [, second] = model.requests;
   assert.equal(model.requests.length, 2);
   assert.deepEqual(second.body.contents[1].parts[0], {
-    functionCall: { name: "check_selection", args: { symbols: ["NVDA", "TSM", "AMD"] }, id: "call_1" },
+    functionCall: { name: "check_selection", args: { clarity: "clear", symbols: ["NVDA", "TSM", "AMD"] }, id: "call_1" },
     thoughtSignature: "sig-1"
   });
   const reply = second.body.contents[2].parts[0].functionResponse;
@@ -66,7 +66,7 @@ test("asks for structured output and offers the function tools", async () => {
   await agent(model, { sessionId: "s1" })({ idea: "AI chips" });
   const { body } = model.requests[0];
   assert.equal(body.generationConfig.responseMimeType, "application/json");
-  assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["status"]);
+  assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["clarity", "why"]);
   assert.deepEqual(
     body.tools[0].functionDeclarations.map(tool => tool.name),
     ["check_selection", "get_memory", "remember_preference", "google_search"]
@@ -97,7 +97,7 @@ test("rejects instead of inventing a basket: wrong count, duplicates, unknown ti
 });
 
 test("never makes more than four model calls, and the last one cannot ask for a tool", async () => {
-  const model = gemini(toolCall("check_selection", { symbols: ["NVDA"] }));
+  const model = gemini(toolCall("check_selection", { clarity: "clear", symbols: ["NVDA"] }));
   await assert.rejects(agent(model)({ idea: "AI chips" }), AgentError);
   assert.equal(model.requests.length, MAX_MODEL_CALLS);
   assert.equal(model.requests.at(-1).body.toolConfig.functionCallingConfig.mode, "NONE");
@@ -281,7 +281,7 @@ const SIGNALS = [
   { id: "btc_100k", label: "Bitcoin reaches $100k in 2026", status: "live", price: 0.5, question: "Bitcoin $100k?", changes: { "1w": 0 }, betas: { IBIT: 0.9, COIN: 0.8 } },
   { id: "recession", label: "US recession by end of 2026", status: "unavailable", price: null, betas: { TLT: 0.7 } }
 ];
-const withSignals = (ids, symbols) => text({ summary: "Your AI chips basket", symbols: symbols ?? ["NVDA", "TSM", "AMD"], signals: ids });
+const withSignals = (ids, symbols) => text({ clarity: "clear", why: "Fits.", summary: "Your AI chips basket", symbols: symbols ?? ["NVDA", "TSM", "AMD"], signals: ids });
 
 test("signals: one compact line per live signal goes into the prompt, with the rule", async () => {
   const model = gemini(answer());
@@ -297,7 +297,7 @@ test("signals: one compact line per live signal goes into the prompt, with the r
   // Only live signals are shown, and only they can be named.
   assert.ok(!prompt.includes("recession:"));
   assert.deepEqual(body.generationConfig.responseJsonSchema.properties.signals.items.enum, ["taiwan", "chip_export_law", "openai_1t", "btc_100k"]);
-  assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["status"]);
+  assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["clarity", "why"]);
 });
 
 test("signals: unknown ids and ids with no β on a picked ticker are dropped", () => {
@@ -326,7 +326,7 @@ test("signals: the odds line is built from live data, at most two markets, and t
 });
 
 test("signals: Gemini cannot write the odds; a pick that names no signal gets no line", async () => {
-  const lying = gemini(text({ summary: "Taiwan invasion odds are 99% today", symbols: ["NVDA", "TSM", "AMD"], signals: [] }));
+  const lying = gemini(text({ clarity: "clear", why: "Fits.", summary: "Taiwan invasion odds are 99% today", symbols: ["NVDA", "TSM", "AMD"], signals: [] }));
   assert.equal((await agent(lying)({ idea: "AI chips" }, { signals: SIGNALS })).summary, "Taiwan invasion odds are 99% today");
   const unrelated = gemini(withSignals(["btc_100k"]));
   assert.equal((await agent(unrelated)({ idea: "AI chips" }, { signals: SIGNALS })).summary, "Your AI chips basket");
@@ -449,8 +449,8 @@ test("reuse: the rule itself", () => {
 
 // ---------- Asking instead of answering (agent/precheck.js, ClarifyError) ----------
 
-const clarify = (question = "We don't cover carmakers yet. Which angle fits?", options = ["Chips inside electric cars", "Oil prices and gas stations", "Car loans and banks"]) =>
-  text({ status: "clarify", symbols: [], question, options });
+const clarify = (question = "We don't cover carmakers yet. Which angle fits?", options = ["Chips inside electric cars", "Oil prices and gas stations", "Car loans and banks"], clarity = "not_covered") =>
+  text({ clarity, why: "Not something the allowed tickers cover.", symbols: [], question, options });
 const rejection = async promise => {
   try {
     await promise;
@@ -543,20 +543,161 @@ test("clarify: the agent may ask; one call, no tool, nothing saved, and the same
   assert.equal(model.requests.length, 2);
 });
 
-test("clarify: the schema lets the agent ask, and the prompt says when", async () => {
+test("clarify: the model judges the idea first, and the prompt says how", async () => {
   const model = gemini(answer());
-  await agent(model)({ idea: "AI chips" });
+  await agent(model)({ idea: "AI chips" }, { signals: SIGNALS });
   const { body } = model.requests[0];
   const schema = body.generationConfig.responseJsonSchema;
-  assert.deepEqual(schema.properties.status.enum, ["basket", "clarify"]);
-  assert.deepEqual(Object.keys(schema.properties), ["status", "summary", "symbols", "question", "options"]);
+  assert.deepEqual(schema.properties.clarity.enum, ["clear", "broad", "not_covered", "unclear"]);
+  // clarity and why are generated before anything else.
+  assert.deepEqual(Object.keys(schema.properties).slice(0, 2), ["clarity", "why"]);
+  assert.deepEqual(schema.propertyOrdering, ["clarity", "why", "summary", "symbols", "question", "options", "signals"]);
+  assert.deepEqual(schema.required, ["clarity", "why"]);
   // The count of symbols is checked in code, not by the schema.
   assert.equal("minItems" in schema.properties.symbols, false);
   assert.equal("maxItems" in schema.properties.symbols, false);
+
   const system = body.systemInstruction.parts[0].text;
-  for (const rule of ["broad everyday word", "not in the allowed tickers", "We don't cover carmakers yet.", "do not search before asking", "at most 20 words", "any language", '"TSM", "AI chips", "oil", "Taiwan", "banks"']) {
+  for (const rule of ["FIRST judge the idea", 'ONLY "clear" gets a basket', "We don't cover carmakers yet.", "We don't cover pet companies yet.", "Never offer an option about companies we do not cover", "do not search before asking", "at most 20 words", "any language", "STARTER IDEAS"]) {
     assert.ok(system.includes(rule), rule);
   }
+  for (const example of ['"car" -> not_covered', '"cat" -> not_covered', '"food" -> broad', '"money" -> broad', '"travel" -> broad', `"I don't know" -> unclear`, '"banana dance" -> unclear', '"hello" -> unclear', `"what's the weather?" -> unclear`,
+    '"oil" -> clear', '"banks" -> clear', '"TSM" -> clear', '"AI chips" -> clear', '"Taiwan" -> clear', '"crypto" -> clear', '"defense stocks" -> clear', '"我想投资AI芯片" -> clear']) {
+    assert.ok(system.includes(example), example);
+  }
+  // The check_selection tool asks for the same judgement.
+  const check = body.tools[0].functionDeclarations.find(tool => tool.name === "check_selection");
+  assert.deepEqual(check.parameters.required, ["clarity", "symbols"]);
+  assert.deepEqual(check.parameters.properties.clarity.enum, ["clear", "broad", "not_covered", "unclear"]);
+
+  // The starter ideas for a person with no idea yet: this week's biggest Polymarket moves.
+  const prompt = body.contents[0].parts[0].text;
+  assert.ok(prompt.includes("STARTER IDEAS (the options to offer a person who has no idea yet)\n- AI chip export rules\n- AI chips and Taiwan risk\n- Big Tech and an OpenAI IPO\n"));
+  const offline = gemini(answer());
+  await agent(offline)({ idea: "AI chips" });
+  assert.ok(offline.requests[0].body.contents[0].parts[0].text.includes(`- ${FIXED_EXAMPLES.join("\n- ")}\n`));
+});
+
+test("clarify: the server enforces the clarity; a basket is never returned unless it is clear", async () => {
+  // The model says "broad" and still names three stocks: it becomes a question, not a basket.
+  for (const clarity of ["broad", "not_covered", "unclear"]) {
+    const model = gemini(text({ clarity, why: "Could mean many things.", summary: "Your food basket", symbols: ["AMZN", "GOOGL", "MSFT"], question: "Which part of food do you mean?", options: ["Grocery delivery and big tech", "Farm lending and banks"] }));
+    const memory = createMemoryStore();
+    const error = await rejection(agent(model, { memory })({ idea: "food" }, { sessionId: "s1" }));
+    assert.equal(error.code, "needs_clarification", clarity);
+    assert.deepEqual(error.options, ["Grocery delivery and big tech", "Farm lending and banks"]);
+    assert.equal(model.requests.length, 1);
+    assert.deepEqual(await memory.load("s1"), { preferences: [], baskets: [] });
+  }
+});
+
+test("clarify: a missing or invalid question falls back to the starter ideas, with no further call", async () => {
+  const long = Array.from({ length: 21 }, (_, index) => `w${index + 1}`).join(" ");
+  for (const broken of [
+    text({ clarity: "broad", why: "Many themes.", symbols: ["AMZN", "GOOGL", "MSFT"] }),
+    text({ clarity: "unclear", why: "No idea yet.", question: long, options: ["Oil majors", "Big banks"] }),
+    text({ clarity: "broad", why: "Many themes.", question: "Which?", options: ["Only one option"] }),
+    text({ clarity: "unclear", why: "Random words.", question: "Which?", options: ["banana dance", "Oil majors"] })
+  ]) {
+    const model = gemini(broken);
+    const error = await rejection(agent(model)({ idea: "banana dance" }, { signals: SIGNALS }));
+    assert.equal(error.code, "needs_clarification");
+    assert.equal(error.message, FALLBACK_QUESTION);
+    assert.ok(error.message.split(" ").length <= 20);
+    assert.deepEqual(error.options, ["AI chip export rules", "AI chips and Taiwan risk", "Big Tech and an OpenAI IPO"]);
+    assert.equal(model.requests.length, 1);
+  }
+  // Without live signals the fixed examples are offered.
+  const offline = gemini(text({ clarity: "unclear", why: "No idea yet." }));
+  assert.deepEqual((await rejection(agent(offline)({ idea: "I don't know" }))).options, FIXED_EXAMPLES);
+});
+
+test("clarify: options we cannot build a basket from are dropped", async () => {
+  for (const covered of ["Chips inside electric cars", "Oil prices and gas stations", "Car loans and banks", "Big tech travel platforms", "Defense and aerospace contractors", "Crypto and digital money", "Government bonds and interest rates", "AI chip export rules", "Bitcoin reaching $100k", "电动车芯片", "Aktien für Öl"]) {
+    assert.equal(optionIsCovered(covered), true, covered);
+  }
+  for (const uncovered of ["Restaurants and food delivery", "Supermarkets and food retail", "Airlines and airplane manufacturers", "Hotels and booking websites", "Cruise lines and tourism"]) {
+    assert.equal(optionIsCovered(uncovered), false, uncovered);
+  }
+  // Every fixed example idea can be built.
+  for (const idea of Object.values(SIGNAL_IDEAS)) assert.equal(optionIsCovered(idea), true, idea);
+
+  // Two good options are kept and the third is dropped.
+  const mixed = gemini(clarify("Which area of travel do you mean?", ["Airlines and airplane manufacturers", "Oil prices and jet fuel", "Big Tech travel booking"], "broad"));
+  assert.deepEqual((await rejection(agent(mixed)({ idea: "travel" }))).options, ["Oil prices and jet fuel", "Big Tech travel booking"]);
+  // Fewer than two left: the starter ideas, under the model's own question.
+  const none = gemini(clarify("Which area of travel do you mean?", ["Airlines and airplane manufacturers", "Hotels and booking websites", "Cruise lines and tourism"], "broad"));
+  const error = await rejection(agent(none)({ idea: "travel" }));
+  assert.equal(error.message, "Which area of travel do you mean?");
+  assert.deepEqual(error.options, FIXED_EXAMPLES);
+  assert.equal(none.requests.length, 1);
+});
+
+test("clarify: check_selection replies \"ask the person instead\" unless the idea is clear, and that sticks", async () => {
+  const reply = await executeTool("check_selection", { clarity: "broad", symbols: ["AMZN", "GOOGL", "MSFT"] }, {});
+  assert.equal(reply.ok, false);
+  assert.equal(reply.ask, true);
+  assert.match(reply.errors[0], /do not pick stocks\. Ask the person instead/);
+  assert.equal((await executeTool("check_selection", { clarity: "clear", symbols: ["NVDA", "TSM", "AMD"] }, {})).ok, true);
+  assert.match((await executeTool("check_selection", { symbols: ["NVDA", "TSM", "AMD"] }, {})).errors[0], /clarity is required/);
+  assert.match((await executeTool("check_selection", { clarity: "maybe", symbols: [] }, {})).errors[0], /clarity is required/);
+
+  // The model tells the tool "broad", is told to ask, and then tries a basket anyway.
+  const stubborn = gemini(toolCall("check_selection", { clarity: "broad", symbols: ["AMZN", "GOOGL", "MSFT"] }), answer(["AMZN", "GOOGL", "MSFT"], "Your food basket"));
+  const error = await rejection(agent(stubborn)({ idea: "food" }));
+  assert.equal(error.code, "needs_clarification");
+  assert.equal(error.message, FALLBACK_QUESTION);
+  assert.deepEqual(error.options, FIXED_EXAMPLES);
+  assert.equal(stubborn.requests.length, 2);
+  assert.equal(stubborn.requests[1].body.contents[2].parts[0].functionResponse.response.ask, true);
+
+  // The usual path: told to ask, it asks.
+  const polite = gemini(toolCall("check_selection", { clarity: "not_covered", symbols: [] }), clarify());
+  assert.deepEqual((await rejection(agent(polite)({ idea: "car" }))).options, ["Chips inside electric cars", "Oil prices and gas stations", "Car loans and banks"]);
+});
+
+test("clarify: an answer without a clarity gets the usual correction turn", async () => {
+  const model = gemini(text({ summary: "Your AI chips basket", symbols: ["NVDA", "TSM", "AMD"] }), answer());
+  const result = await agent(model)({ idea: "AI chips" });
+  assert.equal(result.stocks.length, 3);
+  assert.equal(model.requests.length, 2);
+  const correction = model.requests[1].body.contents.at(-1).parts[0].text;
+  assert.match(correction, /rejected/);
+  assert.match(correction, /clarity is required and must be one of: clear, broad, not_covered, unclear/);
+  assert.match(correction, /clarity first/);
+
+  // Four answers without one end in an error, never in an invented basket or question.
+  const stubborn = gemini(text({ clarity: "sure", symbols: ["NVDA", "TSM", "AMD"] }));
+  const failed = await rejection(agent(stubborn)({ idea: "AI chips" }));
+  assert.equal(failed.code, "invalid_selection");
+  assert.equal(stubborn.requests.length, MAX_MODEL_CALLS);
+});
+
+test("cache: the agent version is part of every key, so new rules start with an empty cache", async () => {
+  const keys = [];
+  const inner = createLocalCache();
+  const cache = {
+    get: key => inner.get(key),
+    set: (key, value, ttl) => {
+      keys.push(key);
+      return inner.set(key, value, ttl);
+    }
+  };
+  const memory = createMemoryStore();
+  await memory.rememberPreference("picky", "no oil companies");
+  const model = gemini(answer());
+  const findStocks = agent(model, { cache, memory });
+  await findStocks({ idea: "AI chips" });
+  await findStocks({ idea: "AI chips" }, { sessionId: "picky" });
+  assert.deepEqual(keys, [`v${AGENT_VERSION}|-|ai chips`, `v${AGENT_VERSION}|picky|ai chips`]);
+
+  // An answer stored under the old rules (keys without a version) is never read.
+  await inner.set("-|car", { summary: "Old basket", stocks: [{ symbol: "XOM", name: "Exxon Mobil" }] }, 60_000);
+  await inner.set("v1|-|car", { summary: "Old basket", stocks: [] }, 60_000);
+  const asking = gemini(clarify());
+  const error = await rejection(agent(asking, { cache })({ idea: "car" }));
+  assert.equal(error.code, "needs_clarification");
+  assert.equal(asking.requests.length, 1);
 });
 
 test("clarify: a picked option gives a basket, and a basket still needs exactly three symbols", async () => {
@@ -567,29 +708,10 @@ test("clarify: a picked option gives a basket, and a basket still needs exactly 
   assert.deepEqual(result.stocks.map(stock => stock.symbol), ["NVDA", "TSM", "AMD"]);
   assert.deepEqual(Object.keys(result).sort(), ["stocks", "summary"]);
 
-  // status "basket" with a wrong count is corrected like before.
-  const short = gemini(text({ status: "basket", summary: "Two", symbols: ["NVDA", "TSM"] }), text({ status: "basket", summary: "Three", symbols: ["NVDA", "TSM", "AMD"] }));
+  // A "clear" answer with a wrong count is corrected like before.
+  const short = gemini(text({ clarity: "clear", why: "Fits.", summary: "Two", symbols: ["NVDA", "TSM"] }), text({ clarity: "clear", why: "Fits.", summary: "Three", symbols: ["NVDA", "TSM", "AMD"] }));
   assert.equal((await agent(short)({ idea: "AI chips" })).summary, "Three");
   assert.equal(short.requests.length, 2);
-});
-
-test("clarify: an invalid question gets the usual correction turn", async () => {
-  const long = Array.from({ length: 21 }, (_, index) => `w${index + 1}`).join(" ");
-  const model = gemini(clarify(long), clarify("Which angle fits?", ["Only one option"]), clarify());
-  const error = await rejection(agent(model)({ idea: "car" }));
-  assert.equal(error.code, "needs_clarification");
-  assert.equal(model.requests.length, 3);
-  const correction = model.requests[1].body.contents.at(-1).parts[0].text;
-  assert.match(correction, /rejected/);
-  assert.match(correction, /at most 20 words; yours has 21/);
-  assert.match(correction, /status "clarify" with a question/);
-  assert.match(model.requests[2].body.contents.at(-1).parts[0].text, /Give 2 or 3 options; you gave 1/);
-
-  // Four bad answers in a row end in an error, never in an invented basket or question.
-  const stubborn = gemini(clarify("Which?", []));
-  const failed = await rejection(agent(stubborn)({ idea: "car" }));
-  assert.equal(failed.code, "invalid_selection");
-  assert.equal(stubborn.requests.length, MAX_MODEL_CALLS);
 });
 
 test("clarify: the rules for a question and its options", () => {
@@ -610,7 +732,7 @@ test("clarify: the rules for a question and its options", () => {
 
 test("clarify: once the agent asks it stops: no search, no further call", async () => {
   // Asked on the second turn, after a tool call: the question still ends the request.
-  const model = gemini(toolCall("get_memory", {}), clarify());
+  const model = gemini(toolCall("get_memory", {}), clarify("Which part of food do you mean?", ["Grocery delivery and big tech", "Farm lending and banks"], "broad"));
   const memory = createMemoryStore();
   const error = await rejection(agent(model, { memory })({ idea: "food" }, { sessionId: "s1" }));
   assert.equal(error.code, "needs_clarification");

@@ -25,6 +25,8 @@ export const SIGNAL_IDEAS = {
 export const FIXED_EXAMPLES = [SIGNAL_IDEAS.taiwan, SIGNAL_IDEAS.btc_100k, SIGNAL_IDEAS.no_cuts];
 export const EXAMPLE_COUNT = 3;
 export const NONSENSE_QUESTION = "I could not read that as an investing idea. Would one of these work?";
+/** Used with the example ideas when the agent asks but its own question or options are unusable. */
+export const FALLBACK_QUESTION = "I need a little more to go on. Would one of these work?";
 
 const KEYBOARD_ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 const reversed = text => [...text].reverse().join("");

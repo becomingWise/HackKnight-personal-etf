@@ -32,7 +32,16 @@ const answer = (symbols: string[]) => ({
     {
       content: {
         role: "model",
-        parts: [{ text: JSON.stringify({ summary: "Your AI chips basket", symbols }) }],
+        parts: [
+          {
+            text: JSON.stringify({
+              clarity: "clear",
+              why: "Fits.",
+              summary: "Your AI chips basket",
+              symbols,
+            }),
+          },
+        ],
       },
     },
   ],
@@ -139,7 +148,8 @@ describe("POST /api/stocks (stock agent)", () => {
             parts: [
               {
                 text: JSON.stringify({
-                  status: "clarify",
+                  clarity: "not_covered",
+                  why: "No carmaker in the list.",
                   symbols: [],
                   question: "We don't cover carmakers yet. Which angle fits?",
                   options: ["Chips inside electric cars", "Car loans and banks"],
@@ -273,6 +283,8 @@ describe("POST /api/stocks (stock agent)", () => {
             parts: [
               {
                 text: JSON.stringify({
+                  clarity: "clear",
+                  why: "Fits.",
                   summary: "Your AI chips basket",
                   symbols: ["NVDA", "TSM", "AMD"],
                   signals: ["taiwan", "made_up"],
@@ -324,6 +336,8 @@ describe("POST /api/stocks (stock agent)", () => {
             parts: [
               {
                 text: JSON.stringify({
+                  clarity: "clear",
+                  why: "Fits.",
                   summary: "Your AI chips basket",
                   symbols: ["NVDA", "TSM", "AMD"],
                   signals: ["taiwan"],
