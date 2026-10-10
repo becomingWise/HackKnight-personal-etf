@@ -424,9 +424,10 @@ describe("the workflow with the team's real controller", () => {
       expect(state.error).toBeNull();
       expect(state.view).toBe("dashboard");
       expect(state.stocks).toEqual([
-        { symbol: "TSM", name: "Taiwan Semiconductor", reason: expect.stringContaining("7.5%") },
-        { symbol: "NVDA", name: "NVIDIA", reason: expect.stringContaining("22%") },
-        { symbol: "INTC", name: "Intel", reason: expect.any(String) },
+        // The team's controller keeps only the identity of each stock (since 2026-10-10).
+        { symbol: "TSM", name: "Taiwan Semiconductor" },
+        { symbol: "NVDA", name: "NVIDIA" },
+        { symbol: "INTC", name: "Intel" },
       ]);
       expect(state.summary).toContain("Key Polymarket odds");
     },

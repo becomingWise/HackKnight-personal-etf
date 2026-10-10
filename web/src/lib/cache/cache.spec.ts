@@ -1,5 +1,5 @@
 // Response caching for /api/stocks and /api/weights, and the demo warm-up job.
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEMO_IDEAS, stalestIdea, warmIdea, type WarmDeps } from "../demo/warm";
 import { createStocksHandler, type HandlerDeps } from "../pipeline/handler";
 import type { EvidencePacket } from "../analyst/packet";
@@ -248,8 +248,12 @@ describe("POST /api/weights caching", () => {
 });
 
 describe("demo warm-up", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   function warmSetup() {
     let clock = Date.parse("2026-10-10T12:00:00Z");
+    // warmIdea compares the cache's timestamps with Date.now(), so both follow the same clock.
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
     const cache = memoryApiCache(() => clock);
     const state = { down: false };
     const deps: WarmDeps = {

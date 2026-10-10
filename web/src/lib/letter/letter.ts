@@ -51,7 +51,7 @@ export function numbersAreGrounded(
 function facts(basket: Basket): string {
   const stocks = [...basket.stocks]
     .sort((a, b) => b.weightPct - a.weightPct)
-    .map((s) => `- ${s.symbol} (${s.name}): ${s.weightPct}% — ${s.reason}`)
+    .map((s) => `- ${s.symbol} (${s.name}): ${s.weightPct}%${s.reason ? ` — ${s.reason}` : ""}`)
     .join("\n");
   const markets = basket.markets.length
     ? basket.markets

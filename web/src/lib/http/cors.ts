@@ -28,7 +28,8 @@ export function corsHeaders(request: Request): Record<string, string> {
   if (isAllowedOrigin(origin)) {
     headers["Access-Control-Allow-Origin"] = origin!;
     headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
-    headers["Access-Control-Allow-Headers"] = "Content-Type";
+    // X-Session-Id: the per-tab id the stock agent keys its memory by.
+    headers["Access-Control-Allow-Headers"] = "Content-Type, X-Session-Id";
     headers["Access-Control-Max-Age"] = "86400";
     // Lets browser code read the cache and rate-limit headers.
     headers["Access-Control-Expose-Headers"] = "X-Cache, X-Cache-Age, Retry-After";

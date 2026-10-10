@@ -51,9 +51,7 @@ async function SystemStatus() {
             </li>
           ))}
       </ul>
-      <span className="text-muted">
-        Analyst: {health.pipeline.analystMode} · Gemini Flash-Lite calls left today: {left}
-      </span>
+      <span className="text-muted">Gemini Flash-Lite calls left today: {left}</span>
     </div>
   );
 }
@@ -66,12 +64,12 @@ export default function Home() {
           BACKEND TEST CONSOLE — THE PRODUCT UI IS BUILT BY OUR FRONTEND TEAMMATE
         </p>
         <h1 className="max-w-3xl text-3xl font-bold tracking-tight">
-          An idea in, a stock basket that shows its evidence out.
+          An idea in, three stocks and their weights out.
         </h1>
         <p className="max-w-3xl text-muted">
-          This page calls the live API in order (<code>/api/analyze</code>, <code>/api/stocks</code>
-          , <code>/api/weights</code>) and shows what each stage of the workflow returned:
-          Polymarket evidence, a gate, Gemini&apos;s decision, a code check, and the weights.
+          This page calls the live API in order: <code>/api/stocks</code> (a Gemini agent picks
+          three stocks for the idea), then <code>/api/weights</code> (the weights are tilted by how
+          Polymarket odds moved).
         </p>
       </section>
 

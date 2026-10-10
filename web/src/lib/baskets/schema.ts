@@ -14,7 +14,8 @@ const stocksPart = z.object({
       z.object({
         symbol: text(20),
         name: text(120),
-        reason: text(1000),
+        // /api/stocks no longer returns reasons (2026-10-10); older clients may still send them.
+        reason: z.string().trim().max(1000).default(""),
         marketId: z.string().max(40).nullish(),
       }),
     )
