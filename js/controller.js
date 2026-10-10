@@ -23,13 +23,13 @@ function validateStocks(response) {
   }
   const symbols = new Set();
   return response.stocks.map(stock => {
-    if (![stock?.symbol, stock?.name, stock?.reason].every(value => typeof value === "string" && value.trim())) {
-      throw new Error("Each stock needs a symbol, name, and selection reason.");
+    if (![stock?.symbol, stock?.name].every(value => typeof value === "string" && value.trim())) {
+      throw new Error("Each stock needs a symbol and name.");
     }
     const symbol = stock.symbol.trim();
     if (symbols.has(symbol)) throw new Error("The stock service returned duplicate symbols.");
     symbols.add(symbol);
-    return { symbol, name: stock.name.trim(), reason: stock.reason.trim() };
+    return { symbol, name: stock.name.trim() };
   });
 }
 
