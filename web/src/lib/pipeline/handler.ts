@@ -27,7 +27,7 @@ import {
   type FindStocksResponse,
   type TraceStep,
 } from "../stocks/contract";
-import { aiBuckets, deciderModel, type DeciderModel } from "./budget";
+import { aiBuckets } from "./budget";
 import { gate, type GateResult } from "./gate";
 import {
   analystMode,
@@ -58,10 +58,9 @@ export type HandlerDeps = {
   pastOdds?: MockAnalystDeps["pastOdds"];
   /** The mock analyst's search planner. Default: one Gemini call, cached. null: keywords only. */
   plan?: Planner | null;
-  /** These default to ANALYST_MODE, the built-in analysts, DECIDER_MODEL and CHECKER_LLM. */
+  /** These three default to ANALYST_MODE, the built-in analysts and CHECKER_LLM. */
   mode?: AnalystMode;
   analysts?: Partial<Record<AnalystMode, Analyst>>;
-  deciderModel?: DeciderModel;
   checkerLlm?: boolean;
   now?: () => Date;
   log?: (event: string, detail?: Record<string, unknown>) => void;
@@ -98,7 +97,6 @@ function pipelineDeps(deps: HandlerDeps, ai: boolean): PipelineDeps {
     generate: deps.generate,
     analysts: { ...defaultAnalysts(mock), ...deps.analysts },
     mode: deps.mode ?? analystMode(),
-    deciderModel: deps.deciderModel ?? deciderModel(),
     checkerLlm: deps.checkerLlm ?? env().CHECKER_LLM,
     deciderBudget: async () => ai,
     now: deps.now,

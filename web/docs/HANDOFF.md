@@ -195,9 +195,11 @@ Then set `ANALYST_MODE=module` (in `web/.env.local` locally; Lucas sets it on Ve
   with price, liquidity, 24-hour and 7-day changes), `fetchMarketsByIds`, `fetchPriceHistory` in
   `src/lib/polymarket/markets.ts`, `tigerPastOdds(ids, now)` and `tigerOddsRepo.series(...)` in
   `src/lib/odds/repo.ts`, and the universe in `src/lib/stocks/universe.ts`.
-- Gemini quota is tight and `gemini-3.5-flash` is off limits (its daily quota is very small). The mock
-  already spends one `gemini-3.5-flash-lite` call per new idea on a search plan (`src/lib/analyst/plan.ts`);
-  an analyst that needs more LLM calls needs its own key. Talk to Lucas first.
+- Gemini quota is tight: the Flash models have 20 requests per day each and are reserved for the manager's
+  note. The mock already spends one Flash-Lite call per new idea on a search plan
+  (`src/lib/analyst/plan.ts`). An analyst that calls an LLM must go through `geminiGenerateJson` with
+  `task: "plan"` so its calls are counted against the per-model budgets, or use its own key in a different
+  Google project (all keys of one project share one quota). Talk to Lucas first.
 - Best when: you are fine writing TypeScript and the analysis is quick. One deployment, no extra moving parts,
   works for any idea a user types.
 
@@ -274,8 +276,8 @@ Two endpoints let you work without touching the decider (details in `web/docs/AP
   repeat ideas rather than inventing new ones in a loop.
 - **`POST /api/decide`** `{ "idea": "...", "packet": { ... } }` → the final `/api/stocks` answer for exactly
   that packet. Send a packet you wrote by hand or produced in Python and see what the decider makes of it. A
-  schema error comes back as `400` with the field name. This one spends Gemini quota: about 4 uncached
-  requests per minute and 50 per day for everyone together, so no loops please. Over that budget you get
+  schema error comes back as `400` with the field name. This one spends Gemini quota: 8 uncached
+  requests per minute and 240 per day for everyone together, so no loops please. Over that budget you get
   the evidence-only answer (`"source": "fallback"`) instead of the decider's.
 
 ```powershell

@@ -10,10 +10,10 @@ import { createPlanner } from "../analyst/plan";
 import { createTigerAnalyst } from "../analyst/tiger";
 import { memoryApiCache } from "../cache/apiCache";
 import type { MarketCandidate } from "../polymarket/search";
-import type { GenerateJson } from "../sponsors/gemini";
+import { GeminiUnavailableError, type GenerateJson } from "../sponsors/gemini";
 import { formatOdds, oddsAreAccurate, responseSchema } from "../stocks/contract";
 import { SYMBOLS } from "../stocks/universe";
-import { aiBuckets, aiCaps, deciderModel } from "./budget";
+import { aiBuckets, aiCaps } from "./budget";
 import { check, quotedPoints, ungroundedNumbers } from "./checker";
 import { EVAL_CASES } from "./evalCases";
 import { GATE, gate } from "./gate";
@@ -104,7 +104,6 @@ function deps(generate: GenerateJson, over: Partial<HandlerDeps> = {}): HandlerD
     mode: "mock",
     // Keyword search unless a test supplies a planner.
     plan: null,
-    deciderModel: "lite",
     checkerLlm: false,
     now: () => NOW,
     ...over,
@@ -216,7 +215,6 @@ describe("POST /api/stocks", () => {
     const body = expectContractShape(await res.json());
 
     expect(generate).toHaveBeenCalledTimes(2);
-    expect(generate.mock.calls[1][0].prefer).toBe("lite");
     expect(body.source).toBe("fallback");
     expect(body.summary).toMatch(/evidence-only selection/i);
     for (const stock of body.stocks) {
@@ -542,8 +540,7 @@ describe("search plan and models", () => {
     });
     const packet = evidencePacketSchema.parse(await analyst("Silicon shield"));
     expect(generate.mock.calls[0][0]).toMatchObject({
-      prefer: "lite",
-      fallback: false,
+      task: "plan",
       timeoutMs: 5000,
     });
     expect(searched).toEqual(expect.arrayContaining(["China Taiwan invasion", "AI chip export"]));
@@ -586,36 +583,43 @@ describe("search plan and models", () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
-  it("decides on the lighter model and never spills over to the main one", async () => {
-    const generate = gemini(GOOD);
-    await createStocksHandler(deps(generate)).POST(post({ idea: "chips" }));
-    expect(generate.mock.calls[0][0]).toMatchObject({ prefer: "lite", fallback: false });
+  it("names the model that answered in the trace and stops asking once every model is spent", async () => {
+    const answered: GenerateJson = vi.fn(async (args) => {
+      args.onModel?.("gemini-3.1-flash-lite");
+      return GOOD;
+    });
+    const ok = await (
+      await createStocksHandler(deps(answered)).POST(post({ idea: "chips" }))
+    ).json();
+    expect(vi.mocked(answered).mock.calls[0][0].task).toBe("decide");
+    expect(traceOf(ok).decider.summary).toBe("3 stocks (1 Gemini call, gemini-3.1-flash-lite)");
 
-    const upgraded = gemini(GOOD);
-    await createStocksHandler(deps(upgraded, { deciderModel: "main" })).POST(
-      post({ idea: "chips" }),
+    const spent: GenerateJson = vi.fn(async () => {
+      throw new GeminiUnavailableError(["gemini-3.5-flash-lite: day budget used up"]);
+    });
+    const body = expectContractShape(
+      await (await createStocksHandler(deps(spent)).POST(post({ idea: "chips" }))).json(),
     );
-    expect(upgraded.mock.calls[0][0]).toMatchObject({ prefer: "main", fallback: true });
-    expect(deciderModel(undefined)).toBe("lite");
-    expect(deciderModel("gemini-3.5-flash-lite")).toBe("lite");
-    expect(deciderModel("gemini-3.5-flash")).toBe("main");
+    expect(spent).toHaveBeenCalledTimes(1); // no second attempt
+    expect(body.source).toBe("fallback");
+    expect(traceOf(body).decider.summary).toBe(
+      "every Gemini model is rate limited or over its budget",
+    );
   });
 
-  it("derives every cap from the account's limits", () => {
-    const limits = { lite: { rpm: 15, rpd: 200 }, flash: { rpm: 5, rpd: 40 } };
-    // Lite decider: 1 plan + 2 decisions = 3 lite calls per request at most.
-    expect(aiCaps(limits, "lite", false)).toEqual({
-      callsPerRequest: { lite: 3, flash: 0 },
-      perMinute: 4,
-      per30Minutes: 20,
-      perDay: 50,
-      perIp30Minutes: 10,
+  it("derives the request caps from the model budgets", () => {
+    // 80% of 15 + 15 per minute and of 500 + 500 per day; 3 calls per request at most.
+    const caps = aiCaps(false);
+    expect(caps).toEqual({
+      callsPerRequest: 3,
+      perMinute: 8,
+      per30Minutes: 96,
+      perDay: 240,
+      perIp30Minutes: 48,
     });
-    // Main decider: its 2 calls are bounded by the main model's much smaller quota.
-    expect(aiCaps(limits, "main", false)).toMatchObject({ perMinute: 2, perDay: 15 });
-    const caps = aiCaps(limits, "lite", false);
-    expect(caps.perMinute * caps.callsPerRequest.lite).toBeLessThanOrEqual(limits.lite.rpm);
-    expect(caps.perDay * caps.callsPerRequest.lite).toBeLessThanOrEqual(limits.lite.rpd);
+    expect(caps.perMinute * 3).toBeLessThanOrEqual(24);
+    expect(caps.perDay * 3).toBeLessThanOrEqual(800);
+    expect(aiCaps(true)).toMatchObject({ callsPerRequest: 4, perMinute: 6, perDay: 180 });
     expect(aiBuckets("ip", caps).map((b) => b.bucket)).toEqual([
       "ai:minute",
       "ai:30min",

@@ -1,12 +1,13 @@
 // The decision workflow: analyst → gate → decider → checker, a fixed code path where each stage
 // is one small function and reports one line to the trace. Gemini is called at most twice per
-// request (the decision and one revision), three times with CHECKER_LLM on.
+// request by the decider (the decision and one revision), once more with CHECKER_LLM on. Which
+// model answers is decided by the chain in src/lib/gemini/models.ts.
 import { analyze } from "../analyst";
 import { createMockAnalyst, type MockAnalystDeps } from "../analyst/mock";
 import { evidencePacketSchema, type Analyst, type EvidencePacket } from "../analyst/packet";
 import { createTigerAnalyst } from "../analyst/tiger";
 import { env } from "../env";
-import type { GenerateJson } from "../sponsors/gemini";
+import { GeminiUnavailableError, type GenerateJson } from "../sponsors/gemini";
 import {
   MAX_STOCKS,
   MIN_STOCKS,
@@ -16,7 +17,6 @@ import {
   type TraceStep,
 } from "../stocks/contract";
 import { STOCK_BY_SYMBOL } from "../stocks/universe";
-import type { DeciderModel } from "./budget";
 import { check, llmReview, type CheckResult, type DecidedStock } from "./checker";
 import { DECIDER_SYSTEM, DECISION_JSON_SCHEMA, deciderPrompt, revisionPrompt } from "./decider";
 import { gate } from "./gate";
@@ -40,8 +40,6 @@ export type PipelineDeps = {
   generate: GenerateJson;
   analysts: Record<AnalystMode, Analyst>;
   mode: AnalystMode;
-  /** Which model decides: the lighter one by default (DECIDER_MODEL). */
-  deciderModel?: DeciderModel;
   /** Adds the LLM review to the checker (one more Gemini call). */
   checkerLlm: boolean;
   /** False when the Gemini budget is used up: the decider is skipped. */
@@ -162,10 +160,7 @@ export function fallbackFromPacket(packet: EvidencePacket): {
 export async function decideFromPacket(
   idea: string,
   input: EvidencePacket,
-  deps: Pick<
-    PipelineDeps,
-    "generate" | "deciderModel" | "checkerLlm" | "deciderBudget" | "now" | "log"
-  >,
+  deps: Pick<PipelineDeps, "generate" | "checkerLlm" | "deciderBudget" | "now" | "log">,
   signal?: AbortSignal,
   trace: TraceStep[] = [],
 ): Promise<PipelineResult> {
@@ -190,13 +185,13 @@ export async function decideFromPacket(
   started = Date.now();
   const remaining = () => GEMINI_BUDGET_MS - (Date.now() - started);
   const base = deciderPrompt(idea, packet);
-  const model = deps.deciderModel ?? "lite";
+  const models = new Set<string>();
+  let exhausted = false;
   let calls = 0;
   let geminiCalls = 0;
   let revisions = 0;
   let reviewMs = 0;
   let reviewed = false;
-  let failedCall = false;
   let firstAnswer: unknown = null;
   let feedback: { previous: unknown; errors: string[] } | null = null;
   let last: CheckResult | null = null;
@@ -212,19 +207,19 @@ export async function decideFromPacket(
         prompt: feedback ? revisionPrompt(base, feedback.previous, feedback.errors) : base,
         schema: DECISION_JSON_SCHEMA,
         timeoutMs: Math.min(10_000, remaining()),
-        // After a failed or timed-out call, the next one goes to the lighter, faster model.
-        prefer: failedCall ? "lite" : model,
-        // The main model is an opt-in upgrade: the lighter one never spills over to it.
-        fallback: model === "main",
+        task: "decide",
+        onModel: (model) => models.add(model),
         signal,
       });
     } catch (err) {
       if (signal?.aborted) throw err;
-      failedCall = true;
+      // Every model of the chain is spent: a second call would find the same.
+      exhausted = err instanceof GeminiUnavailableError;
       deps.log?.("gemini_error", {
         call: calls,
         message: err instanceof Error ? err.message.slice(0, 200) : "unknown",
       });
+      if (exhausted) break;
       continue;
     }
     if (feedback) revisions++;
@@ -248,6 +243,10 @@ export async function decideFromPacket(
   const deciderMs = Date.now() - started - reviewMs;
   const revised = revisions ? `${revisions} revision` : "no revision";
   const review = reviewed ? ", LLM review on" : "";
+  // "1 Gemini call, gemini-3.5-flash-lite": the trace names the model that answered.
+  const made =
+    `${calls} Gemini ${calls === 1 ? "call" : "calls"}` +
+    (models.size ? `, ${[...models].join(" + ")}` : "");
 
   let answer: { summary: string; stocks: DecidedStock[] };
   let source: FindStocksResponse["source"] = "gemini";
@@ -256,7 +255,7 @@ export async function decideFromPacket(
       step: "decider",
       status: "ok",
       ms: deciderMs,
-      summary: `${last.stocks.length} stocks (${calls} Gemini ${calls === 1 ? "call" : "calls"})`,
+      summary: `${last.stocks.length} stocks (${made})`,
     });
     step({
       step: "checker",
@@ -271,7 +270,7 @@ export async function decideFromPacket(
       step: "decider",
       status: "ok",
       ms: deciderMs,
-      summary: `${last.stocks.length} stocks (${calls} Gemini ${calls === 1 ? "call" : "calls"})`,
+      summary: `${last.stocks.length} stocks (${made})`,
     });
     step({
       step: "checker",
@@ -292,7 +291,9 @@ export async function decideFromPacket(
       ? "skipped: the Gemini budget for this minute or day is used up"
       : last
         ? `answer rejected after ${calls} Gemini ${calls === 1 ? "call" : "calls"}`
-        : `Gemini unavailable (${calls} ${calls === 1 ? "call" : "calls"} failed)`;
+        : exhausted
+          ? "every Gemini model is rate limited or over its budget"
+          : `Gemini unavailable (${calls} ${calls === 1 ? "call" : "calls"} failed)`;
     step({ step: "decider", status: budgetOk ? "failed" : "skipped", ms: deciderMs, summary: why });
     step({
       step: "checker",

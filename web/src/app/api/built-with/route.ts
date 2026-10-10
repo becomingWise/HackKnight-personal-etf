@@ -6,7 +6,7 @@ import { tigerProof } from "@/lib/builtwith/tiger";
 import { sponsorStatus } from "@/lib/flags";
 import { preflight } from "@/lib/http/cors";
 import { baseUrl, error, json } from "@/lib/http/respond";
-import { GEMINI_LITE_MODEL, GEMINI_MODEL } from "@/lib/sponsors/gemini";
+import { CHAINS } from "@/lib/gemini/models";
 
 export const maxDuration = 30;
 
@@ -20,8 +20,10 @@ export async function GET(request: Request) {
       tiger: { ...status.tiger, ...tiger },
       gemini: {
         ...status.gemini,
-        model: GEMINI_MODEL,
-        backupModel: GEMINI_LITE_MODEL,
+        model: CHAINS.decide[0],
+        backupModel: CHAINS.decide[1],
+        // The order in which each task tries the models.
+        chains: { decide: CHAINS.decide, managersNote: CHAINS.note },
         usedFor: [
           "POST /api/stocks: plans Polymarket searches, then picks and explains stocks",
           "POST /api/baskets/{id}/letter: writes the manager's note for a saved basket",

@@ -1,13 +1,17 @@
 // The one LLM step of the MOCK analyst: the idea becomes Polymarket search queries and the
 // sectors it touches, so ideas without a sector keyword find markets too. One call on the
-// lighter model, cached for a day, 5 seconds at most; on any failure the caller falls back to
+// Flash-Lite chain, cached for a day, 5 seconds at most; on any failure the caller falls back to
 // keyword matching.
 import { z } from "zod";
 import { planCacheKey, type ApiCache } from "../cache/apiCache";
 import { ThinkingLevel, type GenerateJson } from "../sponsors/gemini";
 import { SECTORS, SECTOR_IDS } from "../stocks/universe";
 
-export type SearchPlan = { queries: string[]; sectors: string[] };
+export type SearchPlan = {
+  queries: string[];
+  sectors: string[];
+  /** The model that wrote it. */ model?: string;
+};
 /** Resolves to null when no plan could be made. Never throws. */
 export type Planner = (idea: string, signal?: AbortSignal) => Promise<SearchPlan | null>;
 
@@ -38,6 +42,7 @@ export function createPlanner(deps: { generate: GenerateJson; cache?: ApiCache }
     const key = planCacheKey(idea);
     const hit = await deps.cache?.get<SearchPlan>("plan", key);
     if (hit) return hit.value;
+    let model: string | undefined;
     try {
       const raw = await deps.generate({
         system: PLAN_SYSTEM,
@@ -45,8 +50,8 @@ export function createPlanner(deps: { generate: GenerateJson; cache?: ApiCache }
         schema: PLAN_JSON_SCHEMA,
         timeoutMs: PLAN_TIMEOUT_MS,
         thinking: ThinkingLevel.MINIMAL,
-        prefer: "lite",
-        fallback: false,
+        task: "plan",
+        onModel: (used) => (model = used),
         signal,
       });
       const parsed = planSchema.safeParse(raw);
@@ -54,6 +59,7 @@ export function createPlanner(deps: { generate: GenerateJson; cache?: ApiCache }
       const plan: SearchPlan = {
         queries: [...new Set(parsed.data.queries)],
         sectors: [...new Set(parsed.data.sectors)],
+        model,
       };
       await deps.cache?.set("plan", key, plan, PLAN_TTL_SECONDS);
       return plan;

@@ -1,8 +1,9 @@
 // Eval of the DECIDER prompt against real Gemini with fixed mock packets (no Polymarket, no DB):
-//   pnpm eval:decider                 all 10 cases on gemini-3.5-flash-lite, the decider's default model (about 1 minute)
+//   pnpm eval:decider                 all 10 cases on the decider's Flash-Lite chain (about 1 minute, 9 calls)
 //   pnpm eval:decider --only fed      cases whose name contains "fed"
 //   pnpm eval:decider --pace 0        no pause between calls (paid quota only)
-//   pnpm eval:decider --main          on gemini-3.5-flash instead. ASK LUCAS FIRST: its daily quota is small
+//   pnpm eval:decider --model <id>    try that model first. Any model that is not Flash-Lite has 20 requests
+//                                     per day: ASK LUCAS FIRST
 // Run it before and after every prompt change in src/lib/pipeline/decider.ts and compare the totals.
 //
 // Per case it reports:
@@ -14,7 +15,8 @@ import { check, ungroundedNumbers } from "../src/lib/pipeline/checker";
 import { EVAL_CASES } from "../src/lib/pipeline/evalCases";
 import { gate } from "../src/lib/pipeline/gate";
 import { decideFromPacket } from "../src/lib/pipeline/run";
-import { GEMINI_LITE_MODEL, GEMINI_MODEL, geminiGenerateJson } from "../src/lib/sponsors/gemini";
+import { chainFor } from "../src/lib/gemini/models";
+import { geminiGenerateJson } from "../src/lib/sponsors/gemini";
 
 const args = process.argv.slice(2);
 const option = (name: string) => {
@@ -22,8 +24,9 @@ const option = (name: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 // 13 seconds per Gemini call keeps the run under the free 5 requests per minute.
-const lite = !args.includes("--main");
-const paceSeconds = Number(option("pace") ?? (lite ? 5 : 13));
+const model = option("model");
+if (model) process.env.DECIDER_MODEL = model;
+const paceSeconds = Number(option("pace") ?? 5);
 const only = option("only");
 const cases = EVAL_CASES.filter((c) => !only || c.name.includes(only));
 
@@ -42,7 +45,7 @@ const rows: {
 }[] = [];
 
 console.log(
-  `decider eval: ${cases.length} cases, model ${lite ? GEMINI_LITE_MODEL : GEMINI_MODEL}, pace ${paceSeconds} s per call\n`,
+  `decider eval: ${cases.length} cases, models ${chainFor("decide").join(" → ")}, pace ${paceSeconds} s per call\n`,
 );
 
 for (const c of cases) {
@@ -51,7 +54,6 @@ for (const c of cases) {
   const started = Date.now();
   const result = await decideFromPacket(c.idea, packet, {
     generate: geminiGenerateJson,
-    deciderModel: lite ? "lite" : "main",
     checkerLlm: false,
   });
   const ms = Date.now() - started;

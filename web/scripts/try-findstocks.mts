@@ -3,7 +3,6 @@
 //   pnpm try:findstocks --packet "AI chips and Taiwan risk"   analyst and gate only (1 lite call for the search plan)
 import { createPlanner } from "../src/lib/analyst/plan";
 import { db } from "../src/lib/db/client";
-import { deciderModel } from "../src/lib/pipeline/budget";
 import { gate } from "../src/lib/pipeline/gate";
 import { defaultStocksDeps } from "../src/lib/pipeline/handler";
 import { analystMode, defaultAnalysts, runAnalyst, runPipeline } from "../src/lib/pipeline/run";
@@ -30,7 +29,6 @@ if (packetOnly) {
     generate: defaultStocksDeps.generate,
     analysts,
     mode: analystMode(),
-    deciderModel: deciderModel(),
     checkerLlm: process.env.CHECKER_LLM === "true",
     log,
   });

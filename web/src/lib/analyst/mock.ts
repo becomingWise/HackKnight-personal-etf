@@ -169,7 +169,7 @@ export function createMockAnalyst(deps: MockAnalystDeps): Analyst {
     const queries = plan ? plan.queries : [idea.slice(0, 80), ...keywordHits(idea)];
     const warnings = [
       plan
-        ? `Mock analyst: search planned by Gemini (${queries.join("; ")}), fixed market-to-ticker links, no analysis.`
+        ? `Mock analyst: search planned by ${plan.model ?? "Gemini"} (${queries.join("; ")}), fixed market-to-ticker links, no analysis.`
         : "Mock analyst: keyword search and fixed market-to-ticker links, no analysis.",
     ];
     if (!sectors.length) warnings.push("The idea does not map to any supported sector.");

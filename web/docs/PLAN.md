@@ -67,11 +67,11 @@ Follows Anthropic's "Building effective agents": a workflow (fixed code path), n
 - [x] Migration `0007_analyst.sql`: `analyst_packets`, `market_analysis` (HANDOFF option B)
 - [x] `/api/stocks` runs the workflow; response unchanged plus `trace`; `422 not_enough_evidence` from the gate
 - [x] `POST /api/analyze` (packet only) and `POST /api/decide` (idea + packet)
-- [x] Quota (revised 2026-10-10): decider on `gemini-3.5-flash-lite` (`DECIDER_MODEL` to upgrade); 2 lite calls per uncached request, 3 at most; caps derived from the account limits in `src/lib/pipeline/budget.ts` (assumed lite 15/min, 200/day → 4 per minute, 20 per 30 minutes, 50 per day, 10 per 30 minutes per IP); over budget = answered without Gemini; `CHECKER_LLM=false`
+- [x] Quota (final, 2026-10-10): model chains and per-model budgets in `src/lib/gemini/models.ts` (plan/decide: `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite` → `gemini-2.5-flash-lite`; note: the Flash models first), 80% of each limit, counted in Tiger (migration `0008_gemini_usage.sql`), remaining budget in `/api/health`; 2 calls per uncached request, 3 at most; 8 uncached requests per minute, 96 per 30 minutes, 240 per day, 48 per 30 minutes per IP; over budget = answered without Gemini; `CHECKER_LLM=false`
 - [x] Mock analyst plans its search with one cached lite call (free-form ideas); gate 422 with a plain reason and `error.examples`
 - [x] Warm job keeps answers without a Gemini call while their cited odds stand still
 - [x] `pnpm eval:decider`: 10 ideas with fixed packets; baseline on 2026-10-10: 9/9 first-answer pass, 9/9 grounded, gate case stopped, median 2.9 s (main model), 1.7 s (lite). First prompt change made with it: the backup model pasted market questions into every reason (29 of 29); after the change 0 of 31
-- [ ] **Lucas:** send the real AI Studio limits (RPM and RPD for flash and flash-lite); they arrived as empty placeholders. Then set `GEMINI_LITE_RPM`, `GEMINI_LITE_RPD`, `GEMINI_FLASH_RPM`, `GEMINI_FLASH_RPD` on Vercel and redeploy
+- [x] Real AI Studio limits received and built in (2026-10-10)
 - [ ] **Lucas:** keep the demo ideas warm on demo day: `pnpm demo:warm --loop` in `/web`, or cron-job.org `POST /api/jobs/warm` every 3 minutes with the `CRON_SECRET` bearer
 - [ ] **Teammate:** choose option A (TypeScript module) or B (Python job → Tiger) and build the real analyst
 - [ ] **Lucas:** when the real analyst is ready, set `ANALYST_MODE` on Vercel (`npx vercel env add ANALYST_MODE production`) and redeploy
