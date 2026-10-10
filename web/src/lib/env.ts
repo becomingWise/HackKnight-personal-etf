@@ -26,6 +26,7 @@ const schema = z.object({
   // Snowflake was dropped (2026-10-09); the variable stays false and nothing reads it.
   FEATURE_SNOWFLAKE: flag,
   FEATURE_ELEVENLABS: flag,
+  // Solana and Presage were dropped (2026-10-10); their variables stay off and nothing reads them.
   FEATURE_SOLANA: flag,
   FEATURE_PRESAGE: flag,
   FEATURE_WS: flag,

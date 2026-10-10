@@ -918,7 +918,7 @@ $b.mode; $b.durationSeconds; Start-Process $b.audioUrl
 
 ---
 
-## 5. `GET /api/built-with` — LIVE (Tiger, Gemini, ElevenLabs; Solana and Presage arrive with step 4)
+## 5. `GET /api/built-with` — LIVE (Tiger Data, Gemini, ElevenLabs)
 
 Live proof per sponsor, as JSON for the frontend to render. No parameters.
 
@@ -988,9 +988,7 @@ Live proof per sponsor, as JSON for the frontend to render. No parameters.
     "charactersBilled": 85,
     "lastBriefingAt": "2026-10-10T03:19:40.561Z",
     "latestAudioUrl": "https://prophetf.vercel.app/api/audio/dfxt3jwb"
-  },
-  "solana": { "enabled": false, "configured": false, "mode": "mock" },
-  "presage": { "enabled": false, "configured": false, "mode": "mock" }
+  }
 }
 ```
 
@@ -1074,7 +1072,7 @@ No parameters. `200` when the database is reachable, `503` otherwise.
 }
 ```
 
-`sponsors` has one entry each for `tiger`, `gemini`, `elevenlabs`, `solana`, `presage`, `ws`. The response
+`sponsors` has one entry each for `tiger`, `gemini`, `elevenlabs` and `ws` (a live-feed flag that is off). The response
 also carries `"gemini"`: the model chains and, per model, `usedToday`, `dailyBudget` (80% of the limit),
 `remainingToday`, `limitPerDay`, `blockedUntil` and `blockedBecause`, for example
 `{ "model": "gemini-3.5-flash-lite", "usedToday": 75, "dailyBudget": 400, "remainingToday": 325, "limitPerDay": 500, "blockedUntil": null, "blockedBecause": null }`.
