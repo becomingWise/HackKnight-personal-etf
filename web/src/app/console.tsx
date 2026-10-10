@@ -4,21 +4,11 @@
 // AI voters on that basket) and POST /api/weights.
 // Not the product UI (that is the frontend teammate's); it only shows what the API returns.
 import { useEffect, useState, type ReactNode } from "react";
+import type { TrackRecord } from "./consoleView";
+import { PolymarketSection, type Weights } from "./polymarket";
+import { TrackRecordSection } from "./trackRecord";
 
 type Stocks = { summary: string; stocks: { symbol: string; name: string }[] };
-type Evidence = {
-  title: string;
-  url: string;
-  probability: number;
-  change7d?: number | null;
-  symbols?: string[];
-};
-type Weights = {
-  status: string;
-  holdings: { symbol: string; weightPct: number }[];
-  explanation: string;
-  evidence: Evidence[];
-};
 type Vote = { agent: string; vote: "yes" | "no" | "none"; reason: string };
 type AgentRecord = {
   agent: string;
@@ -38,33 +28,6 @@ type Votes = {
     calls: (Vote & { probability: number | null })[];
   };
   records?: AgentRecord[];
-};
-type Record90 = {
-  n: number;
-  correct: number;
-  pct: number | null;
-  range90: [number, number] | null;
-  brier: number | null;
-};
-type TrackRecord = {
-  lastClose: string | null;
-  decisions: number;
-  pending: number;
-  agents: ({ id: string; agent: string } & Record90)[];
-  majority: Record90;
-  baselines: { alwaysYes: Record90; coinFlip: { n: number; pct: number; brier: number } };
-  recent: {
-    date: string;
-    source: string;
-    idea: string;
-    symbols: string[];
-    yesVotes: number;
-    votes: number;
-    basketPct: number | null;
-    spyPct: number | null;
-    pnl: number | null;
-    correct: boolean | null;
-  }[];
 };
 type Savings = {
   day: string;
@@ -141,12 +104,6 @@ function startingWeights(symbols: string[]) {
   }));
 }
 
-const percent = (p: number) => `${(p * 100).toFixed(p < 0.1 || p > 0.9 ? 1 : 0)}%`;
-const points = (change: number | null | undefined) => {
-  if (change === null || change === undefined) return "–";
-  const pts = change * 100;
-  return `${pts > 0 ? "+" : ""}${pts.toFixed(1)} pts`;
-};
 const seconds = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
 
 function Card(props: {
@@ -229,9 +186,6 @@ function ReusePill({ reuse }: { reuse: Reuse }) {
   );
 }
 
-const signedPct = (value: number | null) =>
-  value === null ? "–" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
-
 /** The agents' call on the whole basket, each with its probability and its record so far. */
 function BasketCall({
   call,
@@ -279,125 +233,6 @@ function BasketCall({
         Prices as of {call.asOf ?? "unknown"}. Scored against SPY one week later.
       </p>
     </div>
-  );
-}
-
-function RecordRow({ name, record }: { name: string; record: Record90 }) {
-  return (
-    <tr className="border-t border-line">
-      <td className="py-1 pr-3 font-sans font-medium">{name}</td>
-      <td className="py-1 text-right">{record.n}</td>
-      <td className="py-1 text-right">{record.correct}</td>
-      <td className="py-1 text-right">
-        {record.pct === null ? "–" : `${record.pct}% (n=${record.n})`}
-      </td>
-      <td className="py-1 text-right">
-        {record.range90 ? `${record.range90[0]}–${record.range90[1]}%` : "–"}
-      </td>
-      <td className="py-1 text-right">{record.brier === null ? "–" : record.brier.toFixed(3)}</td>
-    </tr>
-  );
-}
-
-/** How often each agent, and the majority, was right about "beats SPY next week". */
-function TrackRecordCard({ track }: { track: TrackRecord }) {
-  const coin = track.baselines.coinFlip;
-  return (
-    <Card
-      n="3 · TRACK RECORD"
-      title="How often the agents were right"
-      badge={<Pill kind="plain">GET /api/track-record</Pill>}
-    >
-      <div className="grid gap-4 text-sm">
-        <p className="text-muted">
-          The question: will the basket beat SPY over the next week? {track.decisions} decisions
-          scored, {track.pending} waiting for their week to pass; closes loaded up to{" "}
-          {track.lastClose ?? "–"}. The 90% range comes from resampling whole Fridays.
-        </p>
-        <div className="overflow-x-auto">
-          <table className="w-full max-w-2xl text-left">
-            <thead className="text-xs tracking-wide text-muted">
-              <tr>
-                <th className="py-1 font-medium">WHO</th>
-                <th className="py-1 text-right font-medium">N</th>
-                <th className="py-1 text-right font-medium">RIGHT</th>
-                <th className="py-1 text-right font-medium">%</th>
-                <th className="py-1 text-right font-medium">90% RANGE</th>
-                <th className="py-1 text-right font-medium">BRIER</th>
-              </tr>
-            </thead>
-            <tbody className="font-mono">
-              {track.agents.map((agent) => (
-                <RecordRow key={agent.id} name={agent.agent} record={agent} />
-              ))}
-              <RecordRow name="Majority (3 of 5)" record={track.majority} />
-              <RecordRow name="Always yes" record={track.baselines.alwaysYes} />
-              <tr className="border-t border-line">
-                <td className="py-1 pr-3 font-sans font-medium">Coin flip</td>
-                <td className="py-1 text-right">{coin.n}</td>
-                <td className="py-1 text-right">–</td>
-                <td className="py-1 text-right">
-                  {coin.pct}% (n={coin.n})
-                </td>
-                <td className="py-1 text-right">–</td>
-                <td className="py-1 text-right">{coin.brier.toFixed(3)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="text-xs tracking-wide text-muted">
-              <tr>
-                <th className="py-1 font-medium">DATE</th>
-                <th className="py-1 font-medium">IDEA</th>
-                <th className="py-1 font-medium">STOCKS</th>
-                <th className="py-1 text-right font-medium">YES</th>
-                <th className="py-1 text-right font-medium">BASKET</th>
-                <th className="py-1 text-right font-medium">SPY</th>
-                <th className="py-1 text-right font-medium">P&amp;L ON $10,000</th>
-                <th className="py-1 text-right font-medium">MAJORITY</th>
-              </tr>
-            </thead>
-            <tbody>
-              {track.recent.map((row) => (
-                <tr
-                  key={`${row.date}|${row.source}|${row.idea}|${row.symbols.join()}`}
-                  className="border-t border-line"
-                >
-                  <td className="py-1 pr-3 font-mono whitespace-nowrap">
-                    {row.date}
-                    {row.source === "live" ? " · live" : ""}
-                  </td>
-                  <td className="py-1 pr-3">{row.idea}</td>
-                  <td className="py-1 pr-3 font-mono">{row.symbols.join(" ")}</td>
-                  <td className="py-1 text-right font-mono">
-                    {row.yesVotes} of {row.votes}
-                  </td>
-                  <td className="py-1 text-right font-mono">{signedPct(row.basketPct)}</td>
-                  <td className="py-1 text-right font-mono">{signedPct(row.spyPct)}</td>
-                  <td
-                    className={`py-1 text-right font-mono ${row.pnl === null ? "text-muted" : row.pnl >= 0 ? "text-up" : "text-down"}`}
-                  >
-                    {row.pnl === null
-                      ? "pending"
-                      : `${row.pnl >= 0 ? "+" : "−"}$${Math.abs(row.pnl).toFixed(2)}`}
-                  </td>
-                  <td
-                    className={`py-1 text-right ${row.correct === null ? "text-muted" : row.correct ? "text-up" : "text-down"}`}
-                  >
-                    {row.correct === null ? "–" : row.correct ? "right" : "wrong"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="text-xs text-muted">
-          Paper results on past data. AI opinions, not financial advice.
-        </p>
-      </div>
-    </Card>
   );
 }
 
@@ -488,7 +323,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
           <button
             type="submit"
             disabled={busy || !idea.trim()}
-            className="rounded-xl bg-blue px-6 py-2.5 font-semibold text-white disabled:opacity-50"
+            className="rounded-xl bg-blue px-6 py-2.5 font-semibold text-surface disabled:opacity-50"
           >
             {busy ? "Running…" : "Run"}
           </button>
@@ -622,7 +457,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
 
       <Card
         n="2 · WEIGHTS"
-        title="Tilted by how Polymarket odds moved"
+        title="Weights tilted by Polymarket odds"
         time={weights.state === "done" ? seconds(weights.ms) : undefined}
         badge={
           weights.state === "done" && (
@@ -638,64 +473,11 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
             idle="Equal weights in, weights tilted by 7-day odds moves out."
           />
         ) : (
-          <div className="grid gap-3 text-sm">
-            <table className="w-full max-w-md text-left">
-              <thead className="text-xs tracking-wide text-muted">
-                <tr>
-                  <th className="py-1 font-medium">STOCK</th>
-                  <th className="py-1 text-right font-medium">BEFORE</th>
-                  <th className="py-1 text-right font-medium">AFTER</th>
-                  <th className="py-1 text-right font-medium">CHANGE</th>
-                </tr>
-              </thead>
-              <tbody className="font-mono">
-                {weights.data.holdings.map((holding) => {
-                  const before = start.find((s) => s.symbol === holding.symbol)?.weightPct ?? 0;
-                  const delta = holding.weightPct - before;
-                  return (
-                    <tr key={holding.symbol} className="border-t border-line">
-                      <td className="py-1 font-semibold">{holding.symbol}</td>
-                      <td className="py-1 text-right">{before.toFixed(2)}%</td>
-                      <td className="py-1 text-right">{holding.weightPct.toFixed(2)}%</td>
-                      <td
-                        className={`py-1 text-right ${delta > 0.004 ? "text-up" : delta < -0.004 ? "text-down" : "text-muted"}`}
-                      >
-                        {delta > 0 ? "+" : ""}
-                        {delta.toFixed(2)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <p>{weights.data.explanation}</p>
-            {weights.data.evidence.length > 0 ? (
-              <ul className="grid gap-1">
-                {weights.data.evidence.map((item) => (
-                  <li key={item.url + item.title} className="text-muted">
-                    <a
-                      className="text-blue hover:underline"
-                      href={item.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {item.title}
-                    </a>{" "}
-                    <span className="font-mono">
-                      {percent(item.probability)} · {points(item.change7d)} over 7 days
-                    </span>
-                    {item.symbols?.length ? ` · ${item.symbols.join(", ")}` : ""}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-muted">No live Polymarket market is linked to these stocks.</p>
-            )}
-          </div>
+          <PolymarketSection weights={weights.data} start={start} />
         )}
       </Card>
 
-      {track && <TrackRecordCard track={track} />}
+      {track && <TrackRecordSection track={track} />}
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 /* Palette carried over from the team's MyETF simulator (css/styles.css at the repo root). */
 :root {
+  color-scheme: light dark;
   --bg: #f6f7fb;
   --surface: #ffffff;
   --ink: #202940;
@@ -15,6 +16,25 @@
   --down-soft: #fdecea;
   --warn: #c59228;
   --warn-soft: #fff5dc;
+}
+
+/* The same roles on a dark background, for visitors whose system is set to dark. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1320;
+    --surface: #171c2b;
+    --ink: #e8ebf4;
+    --muted: #9aa3b8;
+    --line: #2b3247;
+    --blue: #7d90ff;
+    --blue-soft: #1f2748;
+    --up: #4fc79f;
+    --up-soft: #133328;
+    --down: #f08a80;
+    --down-soft: #3b1d1a;
+    --warn: #e3b85c;
+    --warn-soft: #3a2f14;
+  }
 }
 
 @theme inline {
