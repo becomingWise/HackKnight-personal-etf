@@ -40,7 +40,7 @@ export const CACHE_TTL_MS = 15 * 60 * 1000;
  * Part of every cache key. Raise it whenever the agent's rules change (the prompt, the answer
  * schema, what counts as a basket), so answers made under the old rules are never served again.
  */
-export const AGENT_VERSION = "3";
+export const AGENT_VERSION = "4";
 /** An answer that cites live Polymarket markets is kept this long, while their odds hold still. */
 export const ODDS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 25_000;
@@ -69,10 +69,11 @@ export class AgentError extends Error {
  * `options` are 2 or 3 complete ideas; submitting one of them as the idea gives a basket.
  */
 export class ClarifyError extends AgentError {
-  constructor(question, options) {
+  constructor(question, options, preferences) {
     super("needs_clarification", question, 422);
     this.name = "ClarifyError";
     this.options = options;
+    if (preferences) this.preferences = preferences;
   }
 }
 
@@ -106,6 +107,9 @@ export function createGeminiCall({ apiKey, fetch: fetchFn = globalThis.fetch }) 
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
+      if (response.status === 400 && /api key not valid|invalid api key/i.test(data?.error?.message ?? "")) {
+        throw new AgentError("not_configured", "The Gemini API key is invalid. Update the server settings and restart.", 503);
+      }
       const error = new Error(data?.error?.message ?? `Gemini answered ${response.status}.`);
       error.status = response.status;
       throw error;
@@ -207,21 +211,21 @@ const ANSWER_SCHEMA = {
   propertyOrdering: ["clarity", "why", "summary", "symbols", "question", "options"]
 };
 /** With live signals in the prompt, the answer also names the ones it used. */
-const answerSchema = signals =>
+const answerSchema = (signals, schema = ANSWER_SCHEMA) =>
   signals.length
     ? {
-        ...ANSWER_SCHEMA,
+        ...schema,
         properties: {
-          ...ANSWER_SCHEMA.properties,
+          ...schema.properties,
           signals: {
             type: "array",
             description: "Ids of the live Polymarket events you used; empty when none applies.",
             items: { type: "string", enum: signals.map(signal => signal.id) }
           }
         },
-        propertyOrdering: [...ANSWER_SCHEMA.propertyOrdering, "signals"]
+        propertyOrdering: [...schema.propertyOrdering, "signals"]
       }
-    : ANSWER_SCHEMA;
+    : schema;
 
 const thinking = model => (/^gemini-3/.test(model) ? { thinkingConfig: { thinkingLevel: "minimal" } } : {});
 
@@ -280,7 +284,7 @@ export function optionIsCovered(option) {
   return !/^[\x20-\x7E]+$/.test(option) || retrieve(option).matched;
 }
 
-function parseAnswer(text, { signals, idea, starters, asked }) {
+function parseAnswer(text, { signals, idea, starters, asked, selection, clarification = true, coveredOption = optionIsCovered }) {
   let data;
   try {
     data = JSON.parse(text);
@@ -288,14 +292,14 @@ function parseAnswer(text, { signals, idea, starters, asked }) {
     return { ok: false, errors: ["The answer was not valid JSON."] };
   }
   const clarity = data?.clarity;
-  if (!CLARITIES.includes(clarity)) {
+  if (clarification && !CLARITIES.includes(clarity)) {
     return { ok: false, errors: [`clarity is required and must be one of: ${CLARITIES.join(", ")}.`] };
   }
-  if (clarity !== "clear" || asked) {
+  if (clarification && (clarity !== "clear" || asked)) {
     const checked = checkClarification(data?.question, data?.options, idea);
     // Options we could not build a basket from are dropped; with fewer than two left, the
     // starter ideas are offered under the model's own question.
-    const covered = checked.ok ? checked.clarify.options.filter(optionIsCovered) : [];
+    const covered = checked.ok ? checked.clarify.options.filter(coveredOption) : [];
     return {
       ok: true,
       clarity: clarity === "clear" ? "unclear" : clarity,
@@ -307,7 +311,7 @@ function parseAnswer(text, { signals, idea, starters, asked }) {
   }
   const summary = tidySummary(data?.summary);
   if (!summary) return { ok: false, errors: ["summary must be a short non-empty string."] };
-  const checked = checkSelection(data?.symbols);
+  const checked = checkSelection(data?.symbols, selection);
   if (!checked.ok) return checked;
   // Internal: which live signals the pick rests on. Never part of the public response.
   const signalIds = checkSignalIds(data?.signals, checked.stocks, signals);
@@ -342,6 +346,25 @@ function sessionBlock(record) {
  * @param {(event: object) => void} [options.log]
  */
 export function createFindStocks(options = {}) {
+  // Main keeps its three-stock contract; the basket experiment supplies a 7–10-company range.
+  const selection = { min: BASKET_SIZE, max: BASKET_SIZE, companiesOnly: false, ...options.selection };
+  const available = ALLOWED.filter(t => !selection.companiesOnly || t.kind === "company");
+  if (!Number.isInteger(selection.min) || !Number.isInteger(selection.max) || selection.min < 1 || selection.max < selection.min || selection.max > available.length) {
+    throw new RangeError("Invalid stock selection range.");
+  }
+  const count = selection.min === selection.max ? `exactly ${selection.min}` : `${selection.min} to ${selection.max}`;
+  const clarification = options.clarification !== false;
+  const system = options.systemPrompt ?? SYSTEM;
+  const schema = structuredClone(ANSWER_SCHEMA);
+  schema.properties.symbols.items.enum = available.map(t => t.symbol);
+  schema.properties.symbols.description = `clear: ${count} allowed tickers. Otherwise: leave empty.`;
+  if (!clarification) {
+    for (const key of ["clarity", "why", "question", "options"]) delete schema.properties[key];
+    schema.required = ["summary", "symbols"];
+    schema.propertyOrdering = ["summary", "symbols"];
+    schema.properties.symbols.minItems = selection.min;
+    schema.properties.symbols.maxItems = selection.max;
+  }
   const now = options.now ?? Date.now;
   const memory = options.memory ?? localMemory;
   const cache = options.cache ?? createLocalCache(now);
@@ -357,7 +380,7 @@ export function createFindStocks(options = {}) {
    *   report: told how the answer was made: { reused, calls, oddsMoved } (oddsMoved in points, or null).
    * @returns {Promise<{ summary: string, stocks: { symbol: string, name: string }[], basket?: object }>}
    */
-  return async function findStocks({ idea } = {}, { signal, sessionId: givenSession, basket = false, signals, report } = {}) {
+  return async function findStocks({ idea } = {}, { signal, sessionId: givenSession, basket = false, signals, report, cacheContext = "", promptContext = "" } = {}) {
     const text = typeof idea === "string" ? idea.trim() : "";
     if (!text) throw new AgentError("invalid_idea", "idea must be a non-empty string.", 400);
     if (text.length > MAX_IDEA_LENGTH) {
@@ -365,10 +388,11 @@ export function createFindStocks(options = {}) {
     }
     const sessionId = cleanSessionId(givenSession ?? options.sessionId ?? process.env.MYETF_SESSION_ID);
     const live = usableSignals(signals);
+    const starters = options.starterIdeas ?? exampleIdeas(live);
     // Plainly not an idea ("asdf", "???"): no Gemini call, nothing remembered, examples offered.
-    if (looksLikeNonsense(text)) {
+    if (clarification && looksLikeNonsense(text)) {
       log({ event: "precheck", sessionId });
-      throw new ClarifyError(NONSENSE_QUESTION, exampleIdeas(live));
+      throw new ClarifyError(NONSENSE_QUESTION, starters);
     }
     /** The public response: the odds line is built now, from the live figures. */
     const finish = ({ signalIds, odds, at, ...selection }) => {
@@ -393,7 +417,11 @@ export function createFindStocks(options = {}) {
     // own entries. Everyone else shares one entry per idea.
     const sharedKey = `v${AGENT_VERSION}|-|${normalizeIdea(text)}`;
     const sessionKey = `v${AGENT_VERSION}|${sessionId}|${normalizeIdea(text)}`;
-    const cacheKey = record?.preferences.length ? sessionKey : sharedKey;
+    const customContract = Boolean(options.selection || options.systemPrompt || options.promptNotes || options.validateStocks || cacheContext || !clarification);
+    const keyFor = preferences => customContract
+      ? JSON.stringify([AGENT_VERSION, options.version ?? "1", selection, clarification, sessionId ?? "-", preferences ?? [], normalizeIdea(text), cacheContext])
+      : preferences?.length ? sessionKey : sharedKey;
+    const cacheKey = keyFor(record?.preferences);
     const cached = await cache.get(cacheKey).catch(() => null);
     /** Points the cited odds had moved when a cached answer was given up. */
     let movedSince = null;
@@ -492,11 +520,10 @@ export function createFindStocks(options = {}) {
     }
 
     const canSearch = searchEnabled && (await budget.available(models.search, "search").catch(() => false));
-    const declarations = functionDeclarations({ memory: Boolean(sessionId), search: canSearch });
-    const toolContext = { sessionId, memory, search: canSearch ? groundedSearch : undefined };
+    const declarations = functionDeclarations({ memory: Boolean(sessionId), search: canSearch, selection, clarification });
+    const toolContext = { sessionId, memory, selection, clarification, search: canSearch ? groundedSearch : undefined };
     // This week's biggest Polymarket moves as ideas: offered to a person who has none yet, and
     // used when the model asks without a usable question.
-    const starters = exampleIdeas(live);
     /** Set once the model tells check_selection the idea is not clear: no basket after that. */
     let asked = false;
 
@@ -504,7 +531,8 @@ export function createFindStocks(options = {}) {
       role: "user",
       parts: [{
         text:
-          `${notesForPrompt(text)}\n\n` +
+          `${(options.promptNotes ?? notesForPrompt)(text)}\n\n` +
+          (promptContext ? `${promptContext}\n\n` : "") +
           (live.length ? `${signalsForPrompt(live)}\n\n` : "") +
           `STARTER IDEAS (the options to offer a person who has no idea yet)\n${starters.map(idea => `- ${idea}`).join("\n")}\n\n` +
           `SESSION\n${sessionBlock(record)}\n\n` +
@@ -527,13 +555,13 @@ export function createFindStocks(options = {}) {
           if (conversation.model && conversation.model !== model) conversation.contents = [firstTurn];
           conversation.model = model;
           return {
-            systemInstruction: { parts: [{ text: SYSTEM }] },
+            systemInstruction: { parts: [{ text: system }] },
             contents: conversation.contents,
             tools: [{ functionDeclarations: declarations }],
             ...(lastCall ? { toolConfig: { functionCallingConfig: { mode: "NONE" } } } : {}),
             generationConfig: {
               responseMimeType: "application/json",
-              responseJsonSchema: answerSchema(live),
+              responseJsonSchema: answerSchema(live, schema),
               temperature: 0.3,
               ...thinking(model)
             }
@@ -569,13 +597,21 @@ export function createFindStocks(options = {}) {
           continue;
         }
 
-        const answer = parseAnswer(parts.filter(part => part.text && !part.thought).map(part => part.text).join(""), { signals: live, idea: text, starters, asked });
+        const answer = parseAnswer(parts.filter(part => part.text && !part.thought).map(part => part.text).join(""),
+          { signals: live, idea: text, starters, asked, selection, clarification, coveredOption: options.coveredOption });
         if (answer.ok && answer.clarify) {
           // The agent asks: it stops here. No further call, no search, nothing saved to memory.
           await cache.set(cacheKey, { clarify: answer.clarify, at: now() }, CACHE_TTL_MS).catch(() => {});
           log({ event: "clarify", model: sent.model, calls, clarity: answer.clarity, fallback: answer.fallback });
           tell({ reused: false, calls, oddsMoved: movedSince });
           throw new ClarifyError(answer.clarify.question, answer.clarify.options);
+        }
+        if (answer.ok) {
+          if (options.validateStocks) {
+            const preferences = sessionId ? (await memory.load(sessionId)).preferences : [];
+            const errors = options.validateStocks(answer.value.stocks, preferences);
+            if (errors.length) { answer.ok = false; answer.errors = errors; }
+          }
         }
         if (answer.ok) {
           if (sessionId) {
@@ -592,7 +628,8 @@ export function createFindStocks(options = {}) {
           const cited = answer.value.signalIds ?? [];
           const entry = { ...answer.value, ...(cited.length ? { odds: oddsOf(cited, live) } : {}), at: now() };
           // A session that stated its first preference in this request finds the answer again too.
-          const keys = new Set([cacheKey, ...(sessionId && savedPreference ? [sessionKey] : [])]);
+          const preferences = sessionId ? (await memory.load(sessionId)).preferences : [];
+          const keys = new Set(customContract ? [keyFor(preferences)] : [cacheKey, ...(sessionId && savedPreference ? [sessionKey] : [])]);
           for (const key of keys) {
             await cache.set(key, entry, cited.length ? ODDS_CACHE_TTL_MS : CACHE_TTL_MS).catch(() => {});
           }
@@ -608,7 +645,7 @@ export function createFindStocks(options = {}) {
         conversation.contents = [
           ...conversation.contents,
           ...(parts.length ? [content] : []),
-          { role: "user", parts: [{ text: `That answer was rejected:\n- ${answer.errors.join("\n- ")}\nAnswer again as JSON, clarity first: "clear" with a summary and exactly ${BASKET_SIZE} allowed symbols, or another clarity with a question of at most ${MAX_QUESTION_WORDS} words and ${MIN_OPTIONS} or ${MAX_OPTIONS} options.` }] }
+          { role: "user", parts: [{ text: `That answer was rejected:\n- ${answer.errors.join("\n- ")}\nAnswer again as JSON${clarification ? ', clarity first: "clear"' : ""} with a summary and ${count} allowed symbols${clarification ? `, or another clarity with a question of at most ${MAX_QUESTION_WORDS} words and ${MIN_OPTIONS} or ${MAX_OPTIONS} options` : ""}.` }] }
         ];
       }
     } catch (error) {
