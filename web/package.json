@@ -16,7 +16,9 @@
     "db:status": "tsx --env-file-if-exists=.env.local scripts/migrate.ts --status",
     "sync:universe": "node scripts/sync-universe.mjs",
     "try:findstocks": "tsx --env-file-if-exists=.env.local scripts/try-findstocks.mts",
-    "parity:weights": "node scripts/run-parity.mjs"
+    "parity:weights": "node scripts/run-parity.mjs",
+    "jobs:loop": "tsx --env-file-if-exists=.env.local scripts/jobs-loop.mts",
+    "try:odds": "tsx --env-file-if-exists=.env.local scripts/try-odds.mts"
   },
   "dependencies": {
     "@google/genai": "^2.28.0",

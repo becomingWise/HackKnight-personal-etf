@@ -1,7 +1,8 @@
 // HTTP layer for findStocks, shared by POST /api/stocks and its alias POST /api/findstock.
 import { corsHeaders, preflight } from "../http/cors";
 import { clientIp, hit, ipKey, type Limit, type RateResult } from "../http/rateLimit";
-import { searchMarkets } from "../polymarket/search";
+import { recordObservations } from "../odds/service";
+import { searchMarkets, type MarketCandidate } from "../polymarket/search";
 import { geminiGenerateJson } from "../sponsors/gemini";
 import {
   NoMatchError,
@@ -21,6 +22,8 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const cache = new Map<string, { at: number; value: FindStocksResponse }>();
 
 export type HandlerDeps = FindStocksDeps & {
+  /** Stores the odds observed for the candidate markets (odds history). */
+  record?: (candidates: MarketCandidate[]) => Promise<unknown>;
   rateLimit: (limits: Limit[]) => Promise<RateResult>;
 };
 
@@ -28,6 +31,18 @@ const defaultDeps: HandlerDeps = {
   generate: geminiGenerateJson,
   search: searchMarkets,
   rateLimit: hit,
+  record: (candidates) =>
+    recordObservations(
+      candidates.map((m) => ({
+        id: m.id,
+        question: m.question,
+        url: m.url,
+        yesTokenId: m.yesTokenId,
+        endDate: m.endDate,
+        probability: m.probability,
+      })),
+      "stocks",
+    ),
   log: (event, detail) => console.log(JSON.stringify({ at: "findStocks", event, ...detail })),
 };
 
@@ -95,7 +110,21 @@ export function createStocksHandler(deps: HandlerDeps = defaultDeps) {
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) return json(request, 200, cached.value);
 
     try {
-      const result = await findStocks({ idea }, deps, request.signal);
+      // Odds are recorded while Gemini works, so the answer is not delayed.
+      let recording: Promise<unknown> | undefined;
+      const result = await findStocks(
+        {
+          idea,
+        },
+        {
+          ...deps,
+          onCandidates: (candidates) => {
+            recording = deps.record?.(candidates).catch(() => {});
+          },
+        },
+        request.signal,
+      );
+      await recording;
       // Only AI answers are cached, so a fallback never sticks once Gemini is back.
       if (result.source === "gemini") {
         if (cache.size > 300) cache.clear();

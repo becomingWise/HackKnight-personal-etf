@@ -17,7 +17,7 @@ const numeric = z
     return Number.isFinite(n) ? n : undefined;
   });
 
-const gammaMarket = z.looseObject({
+export const gammaMarket = z.looseObject({
   id: z.union([z.string(), z.number()]).transform(String),
   question: z.string(),
   active: z.boolean().nullish(),
@@ -36,6 +36,11 @@ const gammaMarket = z.looseObject({
   description: z.string().nullish(),
   umaResolutionStatus: z.string().nullish(),
   resolutionStatus: z.string().nullish(),
+  // Outcome ids: v2 markets use positionIds (array), v1 markets clobTokenIds (JSON text).
+  version: z.string().nullish(),
+  positionIds: z.array(z.union([z.string(), z.number()]).transform(String)).nullish(),
+  clobTokenIds: z.string().nullish(),
+  events: z.array(z.unknown()).nullish(),
 });
 
 const gammaEvent = z.looseObject({
@@ -58,13 +63,28 @@ export type MarketCandidate = {
   change7d: number | null;
   endDate: string | null;
   volume: number;
+  /** Outcome token of "Yes", needed to load price history. */
+  yesTokenId: string | null;
   /** Tickers the weighting backend links to this market (empty for free-text search hits). */
   linkedSymbols: string[];
   /** The weighting backend's sensitivity of each linked ticker to this market. */
   linkedBetas?: Record<string, number>;
 };
 
-type GammaMarket = z.infer<typeof gammaMarket>;
+export type GammaMarket = z.infer<typeof gammaMarket>;
+
+/** The outcome token of "Yes" (the first outcome). Never assumes clobTokenIds exists. */
+export function yesTokenId(m: GammaMarket): string | null {
+  const position = m.positionIds?.[0] ?? null;
+  let clob: string | null = null;
+  try {
+    const ids = JSON.parse(m.clobTokenIds ?? "[]") as unknown;
+    if (Array.isArray(ids) && ids.length) clob = String(ids[0]);
+  } catch {
+    clob = null;
+  }
+  return m.version === "v2" ? (position ?? clob) : (clob ?? position);
+}
 
 /**
  * Reference price: the midpoint, or the last trade when the spread is wider than 0.10 or a side
@@ -131,6 +151,7 @@ export function parseSearch(payload: unknown, perEvent = 3): MarketCandidate[] {
           change7d: m.oneWeekPriceChange ?? null,
           endDate: m.endDate ?? null,
           volume: m.volumeNum ?? 0,
+          yesTokenId: yesTokenId(m),
           linkedSymbols: [],
         }),
       );

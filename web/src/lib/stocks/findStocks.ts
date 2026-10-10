@@ -381,6 +381,8 @@ export type FindStocksDeps = {
   search: SearchMarkets;
   now?: () => Date;
   log?: (event: string, detail?: Record<string, unknown>) => void;
+  /** Receives every candidate market with the odds observed, e.g. to record them. */
+  onCandidates?: (candidates: MarketCandidate[]) => void;
 };
 
 export async function findStocks(
@@ -407,6 +409,7 @@ export async function findStocks(
   );
   const byId = new Map(candidates.map((m) => [m.id, m]));
   const observedAt = (deps.now?.() ?? new Date()).toISOString();
+  deps.onCandidates?.(candidates);
   log("candidates", {
     planned: !!plan,
     queries: queries.length,

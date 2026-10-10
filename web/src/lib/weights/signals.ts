@@ -2,6 +2,7 @@
 // Port of _resolve / signals in /backend/src/polyslice_api/polymarket.py: same query, same
 // match rule, same price (outcomePrices[0]) so both services tilt identically. Read-only.
 import { SIGNALS, type UniverseSignal } from "../stocks/universe";
+import { recordObservations } from "../odds/service";
 import type { Signal } from "./engine";
 
 const GAMMA = "https://gamma-api.polymarket.com";
@@ -29,13 +30,16 @@ function isLive(market: Raw): boolean {
 
 function tokenIds(market: Raw): string[] {
   // v2 markets list outcome ids in positionIds (array); v1 in clobTokenIds (JSON text).
-  if (Array.isArray(market.positionIds)) return market.positionIds.map(String);
+  const position = Array.isArray(market.positionIds) ? market.positionIds.map(String) : [];
+  let clob: string[] = [];
   try {
     const ids = JSON.parse(String(market.clobTokenIds ?? "[]"));
-    return Array.isArray(ids) ? ids.map(String) : [];
+    if (Array.isArray(ids)) clob = ids.map(String);
   } catch {
-    return [];
+    clob = [];
   }
+  const [first, second] = market.version === "v2" ? [position, clob] : [clob, position];
+  return first.length ? first : second;
 }
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -103,7 +107,27 @@ let cached: { expires: number; value: Promise<Signal[]> } | undefined;
 /** All universe signals with live odds, cached for 60 s like the Python service. */
 export function liveSignals(): Promise<Signal[]> {
   if (cached && cached.expires > Date.now()) return cached.value;
-  const value = Promise.all(SIGNALS.map(resolve));
+  const value = Promise.all(SIGNALS.map(resolve)).then(async (signals) => {
+    // Every fresh lookup also feeds the odds history in Tiger.
+    await recordObservations(
+      signals.flatMap((sig) =>
+        sig.status === "live" && sig.marketId && sig.price !== null
+          ? [
+              {
+                id: sig.marketId,
+                question: sig.question ?? sig.label,
+                url: sig.url,
+                yesTokenId: sig.tokenIds?.[0],
+                endDate: sig.endDate,
+                probability: sig.price,
+              },
+            ]
+          : [],
+      ),
+      "weights",
+    ).catch(() => {});
+    return signals;
+  });
   cached = { expires: Date.now() + SIGNAL_TTL_MS, value };
   // A fully failed lookup must not be served for a minute.
   value.then((signals) => {

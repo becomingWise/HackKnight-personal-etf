@@ -1,4 +1,6 @@
-// Saved-basket adapter for the deployed backend: POST /api/baskets and GET /api/baskets/{id}.
+// Saved-basket adapter for the deployed backend: save and open baskets, and load the odds
+// history of the markets they cite (POST /api/baskets, GET /api/baskets/{id}, .../odds,
+// GET /api/markets/{id}/history).
 // Not wired into the app: import it where a basket is saved or opened (see web/docs/API.md).
 
 export const DEFAULT_BASKETS_API = "https://prophetf.vercel.app";
@@ -34,7 +36,8 @@ export function basketFromState(state) {
  *   baseUrl: backend origin without a trailing path, e.g. "http://localhost:3000" in development.
  */
 export function createBaskets({ baseUrl = DEFAULT_BASKETS_API, fetch: fetchFn = globalThis.fetch } = {}) {
-  const root = `${baseUrl.replace(/\/+$/, "")}/api/baskets`;
+  const api = `${baseUrl.replace(/\/+$/, "")}/api`;
+  const root = `${api}/baskets`;
   return {
     /**
      * Saves a basket. Pass the /api/stocks and /api/weights responses as they are:
@@ -56,9 +59,24 @@ export function createBaskets({ baseUrl = DEFAULT_BASKETS_API, fetch: fetchFn = 
     async getBasket(id, { signal } = {}) {
       const response = await fetchFn(`${root}/${encodeURIComponent(id)}`, { signal });
       return parse(response, "The basket could not be loaded");
+    },
+
+    /**
+     * Odds history of every market the basket cites, for a chart. range: "1d" | "7d" | "30d".
+     * Resolves to { markets: [{ id, title, probabilityAtCreation, current, points: [{ t, p }] }], ... }.
+     */
+    async getBasketOdds(id, range = "7d", { signal } = {}) {
+      const url = `${root}/${encodeURIComponent(id)}/odds?range=${encodeURIComponent(range)}`;
+      return parse(await fetchFn(url, { signal }), "The odds history could not be loaded");
+    },
+
+    /** Odds history of one Polymarket market (a marketId). range: "1d" | "7d" | "30d". */
+    async getMarketHistory(marketId, range = "7d", { signal } = {}) {
+      const url = `${api}/markets/${encodeURIComponent(marketId)}/history?range=${encodeURIComponent(range)}`;
+      return parse(await fetchFn(url, { signal }), "The odds history could not be loaded");
     }
   };
 }
 
 /** Ready-to-use functions pointing at the deployed backend. */
-export const { saveBasket, getBasket } = createBaskets();
+export const { saveBasket, getBasket, getBasketOdds, getMarketHistory } = createBaskets();

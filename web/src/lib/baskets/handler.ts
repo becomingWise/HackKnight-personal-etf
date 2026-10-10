@@ -2,6 +2,7 @@
 import { preflight } from "../http/cors";
 import { clientIp, hit, ipKey, type Limit, type RateResult } from "../http/rateLimit";
 import { baseUrl, error, json } from "../http/respond";
+import { recordObservations } from "../odds/service";
 import { liveSignals } from "../weights/signals";
 import { BasketInputError, buildBasket, saveBasketSchema, type Basket } from "./schema";
 import { BASKET_ID_PATTERN, tigerBasketStore, type BasketStore } from "./store";
@@ -32,6 +33,27 @@ const defaultDeps: BasketDeps = {
   store: tigerBasketStore,
   rateLimit: hit,
   marketIds: signalMarketIds,
+  // The odds at creation become the first points of each cited market's history.
+  onSaved: async (basket) => {
+    await recordObservations(
+      basket.markets.flatMap((m) =>
+        m.id
+          ? [
+              {
+                id: m.id,
+                question: m.title,
+                url: m.url,
+                probability: m.probability,
+                observedAt: Number.isFinite(Date.parse(m.observedAt))
+                  ? new Date(m.observedAt)
+                  : undefined,
+              },
+            ]
+          : [],
+      ),
+      "basket",
+    );
+  },
 };
 
 export const shareUrl = (request: Request, id: string) => `${baseUrl(request)}/b/${id}`;

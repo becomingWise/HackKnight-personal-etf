@@ -24,6 +24,7 @@ const market = (over: Partial<MarketCandidate>): MarketCandidate => ({
   change7d: -0.01,
   endDate: "2027-07-01T03:59:00Z",
   volume: 472728,
+  yesTokenId: "tok-yes",
   linkedSymbols: [],
   ...over,
 });

@@ -37,17 +37,16 @@ file, and a short note Lucas can forward to the frontend teammate.
 - [x] `/js/baskets-adapter.js`: `saveBasket`, `getBasket`, `basketFromState` (not wired in), documented
 - [x] Found and fixed during testing: Gemini free-tier per-minute quota (429) silently triggered the keyword fallback → backup model `gemini-3.5-flash-lite`, planning step moved to the lite model, better keyword fallback
 
-## Step 3 — Odds history (Tiger showcase)
+## Step 3 — Odds history in Tiger (done, live)
 
-- [ ] `odds_ticks` hypertable (time, market_id, outcome, probability), unique (market_id, outcome, time), columnstore policy
-- [ ] `markets` table for cited markets (id, question, url, token ids, end date, resolved)
-- [ ] Every `/api/stocks` call records the odds it observed
-- [ ] `POST /api/jobs/tick` (cron, `CRON_SECRET`): refresh odds every minute for all markets cited by saved baskets; `pnpm jobs:loop`
-- [ ] `odds_1h` continuous aggregate + refresh policy
-- [ ] `GET /api/markets/{id}/history?range=1d|7d|30d`, backfilled from Data API v2 `prices-history` the first time a market is seen
-- [ ] `GET /api/baskets/{id}/odds`: all cited markets' history in one call
-- [ ] Query latency recorded for `GET /api/built-with`
-- [ ] cron-job.org URL and schedule handed to Lucas
+- [x] Migration `0004_odds.sql`: `markets`, `odds_ticks` hypertable (unique market/outcome/time, columnstore segmented by market after 1 day), `odds_1h` real-time continuous aggregate + refresh policy
+- [x] Every `/api/stocks` call records its candidate markets' odds; `/api/weights` records its signals; saving a basket records the odds at creation
+- [x] `POST /api/jobs/tick` (`CRON_SECRET`): one tick per minute per open market cited by a saved basket, idempotent; `pnpm jobs:loop`
+- [x] Backfill from Data API v2 `prices-history` the first time a market is seen (30 days hourly + 1 day at 10 minutes)
+- [x] `GET /api/markets/{id}/history?range=1d|7d|30d` and `GET /api/baskets/{id}/odds` (one `time_bucket_gapfill` + `locf` query for all markets)
+- [x] `GET /api/built-with`: Tiger row counts, hypertable/columnstore stats, policy jobs, live query latencies (other sponsors in step 4/5)
+- [x] `getBasketOdds` / `getMarketHistory` in `/js/baskets-adapter.js`
+- [ ] **Lucas:** schedule the tick on cron-job.org (URL and header in the step 3 message); until then nothing ticks every minute
 
 ## Step 4 — Sponsor APIs (each behind a flag with a mock)
 
@@ -58,7 +57,8 @@ file, and a short note Lucas can forward to the frontend teammate.
 
 ## Step 5 — `GET /api/built-with`
 
-- [ ] JSON proof per sponsor: row counts, last tick, query latencies, attestation links, briefing and letter counts, tilt checks
+- [x] Tiger and Gemini sections (built in step 3)
+- [ ] Per-sponsor proof for step 4: attestation links, briefing and letter counts, tilt checks
 
 ## Later / optional
 
@@ -68,5 +68,6 @@ file, and a short note Lucas can forward to the frontend teammate.
 
 ## Needs from Lucas
 
+- [ ] Schedule `POST https://prophetf.vercel.app/api/jobs/tick` every minute on cron-job.org with header `Authorization: Bearer <CRON_SECRET from web/.env.local>`
 - [ ] The GitHub Pages site is down (404): someone with access must republish it (frontend owner)
 - [ ] Step 4: ElevenLabs key + voice id, Snowflake account URL + PAT, fund the Solana devnet attester, Presage key

@@ -228,11 +228,11 @@ Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/weights" -C
 
 Two ready-made modules implement the controller's ports. Neither is wired into the app.
 
-| Port                 | Module                   | Calls                                                    |
-| -------------------- | ------------------------ | -------------------------------------------------------- |
-| `findStocks`         | `/js/stocks-adapter.js`  | `POST /api/stocks`                                       |
-| `adjustWeights`      | `/js/weights-adapter.js` | `POST /api/weights`                                      |
-| save / open a basket | `/js/baskets-adapter.js` | `POST /api/baskets`, `GET /api/baskets/{id}` (section 3) |
+| Port                              | Module                   | Calls                                                                                                                               |
+| --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `findStocks`                      | `/js/stocks-adapter.js`  | `POST /api/stocks`                                                                                                                  |
+| `adjustWeights`                   | `/js/weights-adapter.js` | `POST /api/weights`                                                                                                                 |
+| save / open a basket, odds charts | `/js/baskets-adapter.js` | `POST /api/baskets`, `GET /api/baskets/{id}` (section 3), `GET /api/baskets/{id}/odds`, `GET /api/markets/{id}/history` (section 4) |
 
 **How to switch (5 lines):**
 
@@ -418,7 +418,208 @@ $basket.url; Invoke-RestMethod -Uri "$api/api/baskets/$($basket.id)" | ConvertTo
 
 ---
 
-## 4. `GET /api/health` — LIVE
+## 4. Odds history — LIVE
+
+Every Polymarket probability the backend sees is stored in Tiger (TimescaleDB): the candidates of each
+`/api/stocks` call, the signals behind `/api/weights`, the odds saved with a basket, a tick every minute
+for markets cited by saved baskets, and 30 days of history loaded from Polymarket the first time a market
+is seen.
+
+| Endpoint                               | Purpose                                                           |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| `GET /api/markets/{id}/history?range=` | Odds history of one market                                        |
+| `GET /api/baskets/{id}/odds?range=`    | History of every market a basket cites, in one call (for a chart) |
+
+`range` is `1d`, `7d` (default) or `30d`:
+
+| `range` | Point spacing (`bucketSeconds`) | Points per market |
+| ------- | ------------------------------- | ----------------- |
+| `1d`    | 600 (10 minutes)                | up to 144         |
+| `7d`    | 3600 (1 hour)                   | up to 168         |
+| `30d`   | 10800 (3 hours)                 | up to 241         |
+
+Points are evenly spaced and share the same time axis across markets; a bucket without a new tick repeats
+the last known odds. A market younger than the range simply has fewer points. Odds are probabilities of
+"Yes", from 0 to 1.
+
+### `GET /api/markets/{id}/history?range=7d`
+
+`{id}` is a Polymarket market id, e.g. a `marketId` from `/api/stocks` or a `markets[].id` of a basket.
+
+```json
+{
+  "market": {
+    "id": "1426260",
+    "question": "Will AI-chip export licensing become law this year?",
+    "url": "https://polymarket.com/event/which-bills-will-become-law-in-2026",
+    "endDate": "2027-01-01T04:59:00.000Z",
+    "closed": false
+  },
+  "range": "7d",
+  "bucketSeconds": 3600,
+  "from": "2026-10-03T01:35:00.000Z",
+  "to": "2026-10-10T01:35:00.000Z",
+  "current": 0.21,
+  "change": -0.205,
+  "points": [
+    { "t": "2026-10-03T02:00:00.000Z", "p": 0.415 },
+    { "t": "2026-10-03T03:00:00.000Z", "p": 0.415 }
+  ],
+  "queryMs": 6.8
+}
+```
+
+| Field               | Meaning                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `current`           | The last point's odds (`null` when there are no points)                              |
+| `change`            | Last point minus first point of the range                                            |
+| `points[].t` / `.p` | ISO time of the bucket start / probability                                           |
+| `queryMs`           | Time the Tiger query took                                                            |
+| `market.closed`     | `true` once the market has resolved; its last point is then the payout (1, 0 or 0.5) |
+
+The first request for a market we have never seen loads its history first and can take 1 to 2 seconds.
+
+### `GET /api/baskets/{id}/odds?range=30d`
+
+```json
+{
+  "id": "dfxt3jwb",
+  "createdAt": "2026-10-10T01:27:12.000Z",
+  "range": "30d",
+  "bucketSeconds": 10800,
+  "from": "2026-09-10T01:35:00.000Z",
+  "to": "2026-10-10T01:35:00.000Z",
+  "markets": [
+    {
+      "id": "1633611",
+      "title": "Will China invade Taiwan by December 31, 2027?",
+      "url": "https://polymarket.com/event/will-china-invade-taiwan-by-december-31-2027",
+      "citedBy": ["stocks", "weights"],
+      "probabilityAtCreation": 0.105,
+      "current": 0.105,
+      "changeSinceCreation": 0,
+      "closed": false,
+      "points": [{ "t": "2026-09-10T03:00:00.000Z", "p": 0.11 }]
+    }
+  ],
+  "untracked": [],
+  "queryMs": 62.4
+}
+```
+
+`markets` follows the order of the basket's `markets`. `changeSinceCreation` is `current` minus
+`probabilityAtCreation`. `untracked` lists titles of cited markets whose Polymarket id is unknown (they
+have no history). To mark the creation moment on a chart, use `createdAt`.
+
+### Errors (both endpoints)
+
+| Status | `error.code`      | When                                          |
+| ------ | ----------------- | --------------------------------------------- |
+| 400    | `invalid_request` | `range` is not `1d`, `7d` or `30d`            |
+| 404    | `not_found`       | Unknown market or basket id                   |
+| 429    | `rate_limited`    | More than 120 requests per minute from one IP |
+| 503    | `storage_error`   | The database is unreachable                   |
+
+### From the frontend
+
+`/js/baskets-adapter.js` also exports `getBasketOdds(id, range)` and `getMarketHistory(marketId, range)`:
+
+```js
+import { getBasketOdds } from "./baskets-adapter.js";
+const { markets } = await getBasketOdds(basket.id, "30d");
+// one line per market: markets[i].points.map(({ t, p }) => [new Date(t), p * 100])
+```
+
+### Try it
+
+```powershell
+Invoke-RestMethod "https://prophetf.vercel.app/api/markets/1633611/history?range=7d" | ConvertTo-Json -Depth 4
+Invoke-RestMethod "https://prophetf.vercel.app/api/baskets/dfxt3jwb/odds?range=30d" | ConvertTo-Json -Depth 5
+```
+
+---
+
+## 5. `GET /api/built-with` — LIVE (Tiger and Gemini; other sponsors arrive with step 4)
+
+Live proof per sponsor, as JSON for the frontend to render. No parameters.
+
+```json
+{
+  "generatedAt": "2026-10-10T01:36:00.000Z",
+  "tiger": {
+    "enabled": true,
+    "configured": true,
+    "mode": "live",
+    "service": "Tiger Cloud (PostgreSQL + TimescaleDB)",
+    "postgres": "18.6",
+    "timescaledb": "2.30.2",
+    "rows": { "odds_ticks": 10023, "markets": 37, "baskets": 3, "odds_1h_buckets": 8551 },
+    "ticksBySource": { "backfill": 9957, "stocks": 30, "tick": 25, "weights": 11 },
+    "trackedMarkets": 12,
+    "firstTickAt": "2026-09-10T02:00:00.000Z",
+    "lastTickAt": "2026-10-10T01:35:00.000Z",
+    "hypertable": { "name": "odds_ticks", "chunks": 5, "columnstoreChunks": 4, "size": "888 kB" },
+    "continuousAggregate": { "name": "odds_1h", "bucket": "1 hour", "realTime": true },
+    "jobs": [
+      {
+        "job": "policy_compression",
+        "every": "12:00:00",
+        "lastStatus": "Success",
+        "lastSuccess": "2026-10-10T01:29:55.482Z"
+      },
+      {
+        "job": "policy_refresh_continuous_aggregate",
+        "every": "00:15:00",
+        "lastStatus": "Success",
+        "lastSuccess": "2026-10-10T01:29:55.481Z"
+      }
+    ],
+    "queryLatencyMs": {
+      "rowCounts": 8.3,
+      "marketHistory1d_gapfill_over_ticks": 2.6,
+      "marketHistory7d_gapfill_over_hourly_aggregate": 3.6,
+      "basketOdds30d_gapfill_over_hourly_aggregate": 62.4,
+      "basketOdds30d_markets": 6,
+      "basketOdds30d_points": 1446
+    }
+  },
+  "gemini": {
+    "enabled": true,
+    "configured": true,
+    "mode": "live",
+    "model": "gemini-3.5-flash",
+    "backupModel": "gemini-3.5-flash-lite",
+    "usedFor": "…"
+  },
+  "elevenlabs": { "enabled": false, "configured": false, "mode": "mock" },
+  "solana": { "enabled": false, "configured": false, "mode": "mock" },
+  "snowflake": { "enabled": false, "configured": false, "mode": "mock" },
+  "presage": { "enabled": false, "configured": false, "mode": "mock" }
+}
+```
+
+`queryLatencyMs` values are measured on each request by running the same queries the chart endpoints use.
+`lastTickAt` is the time of the latest tick-job reading; `trackedMarkets` is how many markets saved baskets
+cite. The fields under `elevenlabs`, `solana`, `snowflake` and `presage` will grow in step 4.
+
+---
+
+## 6. `POST /api/jobs/tick` — LIVE (not for the frontend)
+
+Refreshes the odds of every open market cited by a saved basket and stores one tick per market, stamped on
+the minute. Also loads history for newly cited markets (up to 4 per run). Requires
+`Authorization: Bearer <CRON_SECRET>`; `GET` works too. Running it twice in the same minute adds nothing.
+
+```json
+{ "ok": true, "markets": 12, "ticks": 12, "closed": 0, "backfilled": 2, "ms": 2345 }
+```
+
+`401` with `error.code` `unauthorized` without the right token. Locally: `pnpm jobs:loop` (ticks
+`http://localhost:3000` every minute) or `pnpm jobs:loop https://prophetf.vercel.app`.
+
+---
+
+## 7. `GET /api/health` — LIVE
 
 No parameters. `200` when the database is reachable, `503` otherwise.
 
@@ -445,7 +646,7 @@ No parameters. `200` when the database is reachable, `503` otherwise.
 
 ---
 
-## 5. The Python service in `/backend` (reference, not deployed)
+## 8. The Python service in `/backend` (reference, not deployed)
 
 The weighting method is owned by the Polymarket teammate and lives in `/backend` (FastAPI, local port 8001;
 see `/backend/README.md`). It is not deployed publicly; `POST /api/weights` above is its TypeScript port.
