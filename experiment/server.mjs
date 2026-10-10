@@ -2,21 +2,26 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createSuggestions, previewSuggestions, COMPANIES } from "./suggestions.js";
-import { loadSnapshot, refreshSnapshot, saveSnapshot, stockEvents } from "./data.js";
+import { loadSnapshot, refreshSnapshot, saveSnapshot, stockEvents, analyzeBasket } from "./data.js";
 import { loadAgentEnv } from "../agent/env.js";
 import { AgentError } from "../agent/gemini.js";
 
 const FILES = {
   "/": ["./index.html", "text/html"],
+  "/basket": ["./index.html", "text/html"],
+  "/events": ["./index.html", "text/html"],
   "/app.js": ["./app.js", "text/javascript"],
+  "/charts.js": ["./charts.js", "text/javascript"],
+  "/session.js": ["./session.js", "text/javascript"],
   "/math.js": ["./math.js", "text/javascript"],
   "/styles.css": ["./styles.css", "text/css"],
-  "/capitalization.example.json": ["./capitalization.example.json", "application/json"],
 };
 
 export async function createExperimentServer(deps = {}) {
   let snapshot = deps.snapshot ?? await loadSnapshot();
   const suggest = deps.suggest ?? createSuggestions();
+  const suggestionMode = deps.suggestionMode ?? process.env.EXPERIMENT_SUGGESTION_MODE ?? "preview";
+  if (!["preview", "gemini"].includes(suggestionMode)) throw new Error("EXPERIMENT_SUGGESTION_MODE must be preview or gemini.");
   let refreshing = null;
   return createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
@@ -34,7 +39,7 @@ export async function createExperimentServer(deps = {}) {
         return res.end(data);
       }
       if (req.method === "GET" && url.pathname === "/api/overview") {
-        return send(200, { builtAt: snapshot.builtAt, note: snapshot.note, geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+        return send(200, { builtAt: snapshot.builtAt, note: snapshot.note, suggestionMode,
           stocks: COMPANIES.map(s => ({ ...s, lastClose: snapshot.stocks[s.symbol]?.prices.at(-1) ?? null,
             eventCount: snapshot.events.filter(e => e.linkedSymbols.includes(s.symbol) && e.status === "available").length })),
         });
@@ -45,13 +50,13 @@ export async function createExperimentServer(deps = {}) {
         return send(200, { symbol, builtAt: snapshot.builtAt, events: stockEvents(snapshot, symbol) });
       }
       if (req.method === "POST" && url.pathname === "/api/refresh") {
-        if (!refreshing) refreshing = (deps.refresh ?? refreshSnapshot)().then(async data => {
+        if (!refreshing) refreshing = (deps.refresh ?? refreshSnapshot)({ previous: snapshot }).then(async data => {
           await (deps.save ?? saveSnapshot)(data); snapshot = data; return data;
         }).finally(() => { refreshing = null; });
         await refreshing;
         return send(200, { builtAt: snapshot.builtAt });
       }
-      if (req.method === "POST" && url.pathname === "/api/stocks") {
+      if (req.method === "POST" && ["/api/stocks", "/api/analysis"].includes(url.pathname)) {
         let raw = "";
         for await (const chunk of req) {
           raw += chunk;
@@ -59,9 +64,14 @@ export async function createExperimentServer(deps = {}) {
         }
         let body;
         try { body = JSON.parse(raw); } catch { return send(400, { error: { message: "Use a JSON request." } }); }
+        if (url.pathname === "/api/analysis") {
+          try { return send(200, analyzeBasket(snapshot, body?.symbols)); }
+          catch (err) { return send(400, { error: { message: err.message } }); }
+        }
         if (typeof body?.idea !== "string" || !body.idea.trim() || body.idea.length > 500) return send(400, { error: { message: "Enter an idea between 1 and 500 characters." } });
-        if (body.mode === "preview") return send(200, previewSuggestions(body));
-        if (body.mode !== "gemini") return send(400, { error: { message: "Choose preview or Gemini suggestions." } });
+        const mode = body.mode ?? suggestionMode;
+        if (mode === "preview") return send(200, previewSuggestions(body));
+        if (mode !== "gemini") return send(400, { error: { message: "Choose preview or Gemini suggestions." } });
         if (!process.env.GEMINI_API_KEY && !deps.suggest) return send(503, { error: { message: "Set GEMINI_API_KEY in this experiment's agent/.env to enable Gemini suggestions." } });
         const abort = new AbortController();
         res.on("close", () => { if (!res.writableEnded) abort.abort(); });

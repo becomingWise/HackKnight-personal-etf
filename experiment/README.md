@@ -1,78 +1,110 @@
-# Basket Lab experiment
+# Basket Lab: three-page experiment
 
-Local prototype on `codex/shaun-experiment`, based on `lucas-branch` at `6cb4ca0`.
-No deployment or remote push. No Tiger writes. The original root application and deployed endpoints
-keep their three-stock default; this separate local server explicitly requests a 7–10-company shortlist.
+Local prototype on `codex/shaun-experiment`, based on Lucas's branch. No remote push,
+deployment, trading, or writes to the team's database. The original application retains
+its three-stock contract; this experiment requests 7–10 companies.
 
 ```sh
 npm run experiment
-# Open http://127.0.0.1:8790
+# http://127.0.0.1:8790/
 ```
 
-The default **Example shortlist** ranks the existing company list by sector keywords. It is explicitly
-labelled and never substitutes for a failed Gemini call. For actual **Gemini suggestions**, set
-`GEMINI_API_KEY` in this checkout's ignored `agent/.env` (see `agent/.env.example`) and restart.
-Suggestions use only Flash-Lite models, local memory/cache, and no shared database. API keys are never
-sent to the browser. Nothing is added to the user's basket automatically. Existing basket selections
-are retained when searching for another idea.
+## Journey
 
-The basket uses equal weights by default. Users can import JSON records with `symbol`,
-`floatAdjustedMarketCap`, `currency: "USD"`, `asOf`, and `source` (HTTP(S) URL), and choose market-cap
-weights when **every selected holding** has valid data. All observations must be recent (30 days) and
-from the same date (one-day maximum spread). `capitalization.example.json` contains deliberately blank
-fields; this prototype does not invent market capitalizations. The S&P formula is float-adjusted value
-divided by total float-adjusted value; here that total covers only the selected holdings.
-Reference: https://www.spglobal.com/spdji/en/documents/methodologies/methodology-index-math.pdf
+- `/`: one idea box with an integrated submit button. Suggestions run only on submission.
+- `/basket`: all suggested companies enter the paper basket automatically. Delete and undo
+  update equal allocations, which sum to 100% after display rounding. Export contains the
+  retained holdings. No weighting selector, cap import, or S&P explanation remains.
+- `/events`: basket simulation, selected-stock performance, Polymarket and Kalshi filters,
+  event odds history, and an illustrative future scenario.
 
-## Historical event scenarios
+Browser session storage preserves the idea, candidates, deletions and undo stack through
+navigation and refresh. A successful new idea replaces the basket; failed suggestions keep
+it intact. Visits to protected pages without retained holdings return to `/`. Empty baskets
+cannot continue; undo remains available on the current basket page.
 
-The committed `data/snapshot.json` contains real observed public data, fetched on 2026-10-10:
-34 allowed companies and SPY (a year of adjusted daily closes from Yahoo Finance), and the 11 configured
-open events with Polymarket Data API v2 price histories. Source URLs and observation timestamps are
-stored with the records. **Refresh observations** only reads public APIs and writes an ignored local
-cache (`experiment/.cache`); the committed snapshot remains available if upstream services fail.
-CLI: `npm run experiment:refresh`; `node experiment/refresh.mjs --snapshot` updates the committed file.
+Example suggestions are the default and are labelled on page two. They rank the allowed
+company list by sector keywords; the price and event histories are genuine observations.
+For live suggestions set `EXPERIMENT_SUGGESTION_MODE=gemini` and a valid `GEMINI_API_KEY` in
+this checkout's ignored `agent/.env`, then restart. Only Flash-Lite models are used, with
+local memory/cache. An invalid key produces an error, never an example fallback. The
+previously supplied key was rejected by Google during the earlier live test.
 
-The team's existing hand-set exposure map chooses which events are *plausibly connected* to a company.
-Its hand-set betas are **not used for numerical scenario effects**. Each effect is estimated from the
-selected company's own observed price data and that exact event's history (no mixing expiration
-contracts). Current v2 and legacy Yes-token IDs may refer to the same market; the legacy ID supplies
-history when the migrated ID is empty. Outcome order is resolved by the actual `Yes` label.
+## Public data and interfaces
 
-- Align adjusted stock closes and odds snapshots at the US close, including daylight saving time.
-  Odds are 12-hour buckets; use the last snapshot at/before the close, no older than 18 hours. Weekend
-  moves enter the next trading day. Missing snapshots break pairs. Exclude incomplete current-day
-  prices and observations with stock/SPY returns beyond ±20%.
-- Fit `stock daily return = intercept + slope × daily odds change + marketBeta × SPY daily return`.
-  At least 60 varying, overlapping daily changes are required. Uncertainty uses Newey–West lag-5
-  standard errors, an approximate normal 95% interval and approximate normal p values.
-- Show **partial R²** as historical strength: the share of market-adjusted return variation associated
-  with odds changes. This is not a causal score or probability that an event affects the stock.
-- Apply Benjamini–Hochberg q values across the available, configured events for that stock. Split
-  chronologically 80/20, fit each sample separately, and report whether directions agree. Require
-  120+ days, q≤0.10, a mean interval excluding zero and consistent direction before displaying
-  "Observed association"; otherwise show "Weak evidence". This is exploratory screening, not a
-  validation of the original team's holdout hypotheses or a proven trading signal.
-- Slider estimate: `100 × slope × (target odds − observed odds)`, a percent **same-day return relative
-  to SPY holding SPY fixed**, not a future price or expected return. Its interval describes uncertainty
-  in the fitted mean association; it is not a predictive interval for an individual stock return.
-  Moves larger than the largest measured daily odds change show an extrapolation warning.
-- Scenarios never change allocations. Effects across different events must not be added together.
-  Insufficient history means no numerical slider, rather than a fabricated beta or zero effect.
+The committed schema-v2 snapshot includes adjusted daily prices for 34 companies and SPY,
+11 Polymarket contracts, and seven verified Kalshi topic-series contracts, fetched on
+2026-10-10. `/api/analysis` accepts `{ "symbols": ["NVDA", "TSM"] }` by POST, validates
+1–10 unique allowed companies, and returns allocations, indexed shared-date histories,
+provider-qualified events, raw odds histories, and independently fitted basket/stock
+relationships. `/api/stocks` accepts an idea and uses the server's configured mode when
+no explicit mode is supplied. Existing experimental endpoints remain available.
 
-Important limits: temporal precision is restricted by the 12-hour odds snapshots; selection of only
-currently open markets introduces selection bias; other contemporaneous events and omitted factors
-can drive both series; rolling holiday gaps and stale trading are imperfectly handled; a finite
-single-market history can be unstable. The original research (`backend/research/METHODOLOGY.md`)
-found **no confirmed primary H1–H3 signal in its holdout**. This UI displays relationships for exploration,
-not forecasts, causal effects or a trading recommendation.
+`npm run experiment:refresh` refreshes the ignored cache. `node experiment/refresh.mjs
+--snapshot` updates committed observations. The newest valid snapshot wins; old schema-v1
+Polymarket snapshots are migrated in memory. Failed refreshes retain previous unexpired
+observations with stale labels. Each upstream provider fails independently. Kalshi reads
+are paced and rate-limit retries are bounded. Partial history errors remain visible.
+
+Kalshi series are curated for OpenAI IPO timing, AI safety audits, no Fed cuts, recession,
+Hormuz traffic, an Iran nuclear agreement and Bitcoin reaching $100k. These are business-topic
+links, not claims that provider contracts have equivalent settlement rules. The most traded
+eligible open binary contract in each configured series is used; year predicates apply to
+rates and recession. Titles, deadlines, contract IDs, settlement rules and source links are
+kept. No histories are joined across providers, outcomes or expirations. No verified Kalshi
+match is claimed for the remaining four business topics.
+
+Kalshi historical and current odds are Yes bid/ask midpoints, parsed from fixed-point dollar
+fields. Both valid quotes are required; missing/crossed quotes, synthetic previous prices
+and unfinished candles are not invented. Polymarket keeps its observed Yes outcome prices
+and exact v2/legacy token history selection. Observation and source timestamps are stored.
+
+References: https://docs.kalshi.com/getting_started/quick_start_market_data,
+https://docs.kalshi.com/api-reference/market/get-market-candlesticks,
+https://data-api.polymarket.com/v2/docs
+
+## Charts and scenarios
+
+Basket history replays today's retained stocks, rebalancing equally at each shared observed
+daily close. It compounds the average daily adjusted return and starts at index 100. Stock
+charts use the same dates and initial index; individual fits use each stock's own available
+observations independently of missing dates in other holdings. Missing observations are not filled. This
+is a simulation of today's composition, not an actual historical ETF. A missing company
+history prevents a complete basket simulation rather than silently dropping that company.
+Charts show 1M/3M/1Y windows (3M default); the initial full-period indexing stays fixed.
+SVG tooltips support pointer input and keyboard arrows/Home/End.
+
+Fit `daily return ~ intercept + daily odds change + SPY daily return`. The basket is fitted
+directly, not assembled from hand-set stock betas. Business links select eligible stock-event
+pairs; their hand-set betas never set numerical effects. At least 60 varying paired changes
+are required. Odds must precede the DST-aware US close, including scheduled 1pm early closes, and be no
+more than 18 hours old.
+Missing observations break pairs; weekend moves roll into the next session. Incomplete
+today prices and returns beyond ±20% are excluded. Partial R², Newey–West lag-5 standard
+errors, approximate normal p values, an 80/20 chronological direction check and per-target
+Benjamini–Hochberg correction qualify evidence. Weak evidence stays visible.
+
+A slider creates a linear odds ramp over the next 20 scheduled US exchange sessions.
+The path is `last historical index × (1 + slope × cumulative odds change)`. Its endpoint
+applies the shock once, not twenty times. Broader-market movement and other events are
+held fixed. A shaded 95% band describes slope-estimation uncertainty, NOT future-return
+uncertainty. Unsupported fits or nonpositive index ranges suppress the future illustration.
+Changing events resets odds; changing the stock preserves that event's current scenario.
+No unlinked stock effect is assumed. No scenario changes holdings or weights, and different
+event effects cannot be added together.
+
+Session dates exclude weekends, standard NYSE holidays and Good Friday; early-close days
+count as sessions. The [NYSE calendar](https://www.nyse.com/trade/hours-calendars)
+defines the schedule. Unexpected exchange closures cannot be anticipated. Future paths are
+explicitly illustrative: the team's original holdout research did not confirm a reliable
+forecasting signal. Temporal sampling, open-market selection and omitted causes restrict
+interpretation of these fitted relationships.
 
 ## Verification
 
-`node --test tests/*.test.js` runs the original contract tests plus experimental tests for count
-bounds, optional selection, allocation rounding/capitalization validation, close alignment, known-slope
-regression, missing history, uncertainty, unchanged allocation, v1/v2 token history, and local HTTP.
-The UI is checked at desktop and mobile sizes. The shared agent copies in `web/src/lib/agent-core`
-are synchronized by the existing sync script; the Next.js routes keep their original three-stock
-default. Nothing is deployed. The existing local key was rejected by Google as invalid during the
-live test; use a valid key to try Gemini. The numerical histories and example mode are usable without it.
+Run `node --test tests/*.test.js`. Checks cover the original contracts, automatic population,
+deletion/undo/storage, equal allocations, shared-date basket replay, provider normalization,
+missing/future quotes, contract separation, outage retention, analysis validation, suggestion
+failures, exchange-calendar dates, cumulative scenario paths and uncertainty. Browser checks
+cover all three pages, direct visits, refresh recovery, desktop/mobile layouts, chart tooltips,
+provider filtering and sliders changing both charts while leaving weights fixed.

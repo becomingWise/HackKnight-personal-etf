@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { COMPANIES } from "./suggestions.js";
-import { association, qualifyAssociations } from "./math.js";
+import { association, qualifyAssociations, basketHistory, allocate } from "./math.js";
+import { KALSHI_TOPICS, kalshiEvent } from "./kalshi.js";
 
 const UNIVERSE = JSON.parse(await readFile(new URL("../backend/src/polyslice_api/data/universe.json", import.meta.url), "utf8"));
 const HEADER = { "User-Agent": "Mozilla/5.0 (BasketLab local research preview)" };
@@ -75,20 +76,36 @@ export async function eventHistory(cfg, fetchFn = fetch) {
   };
 }
 
-export async function refreshSnapshot({ fetch: fetchFn = fetch } = {}) {
+export function normalizeSnapshot(data) {
+  return { ...data, schemaVersion: 2, events: (data.events ?? []).map(e => ({ ...e,
+    topicId: e.topicId ?? e.id, provider: e.provider ?? "polymarket",
+    id: e.provider ? e.id : `polymarket:${e.marketId ?? e.id}`, oddsKind: e.oddsKind ?? "Yes outcome price",
+  })) };
+}
+
+export async function refreshSnapshot({ fetch: fetchFn = fetch, previous } = {}) {
+  const old = normalizeSnapshot(previous ?? await loadSnapshot());
   const stocks = await pool([...COMPANIES, { symbol: "SPY", name: "S&P 500 ETF" }], async stock => {
     try { return { ...stock, ...await stockHistory(stock.symbol, fetchFn) }; }
-    catch (err) { return { ...stock, prices: [], error: err.message }; }
+    catch (err) { return { ...stock, ...(old.stocks[stock.symbol] ?? { prices: [] }), error: err.message, stale: true }; }
   });
-  const events = await pool(UNIVERSE.signals, async cfg => {
-    try { return await eventHistory(cfg, fetchFn); }
-    catch (err) { return { id: cfg.id, label: cfg.label, linkedSymbols: Object.keys(cfg.betas), history: [], status: "unavailable", reason: err.message }; }
+  const work = [...UNIVERSE.signals.map(topic => ({ provider: "polymarket", topic })),
+    ...KALSHI_TOPICS.map(cfg => ({ provider: "kalshi", cfg, topic: UNIVERSE.signals.find(s => s.id === cfg.topicId) }))];
+  const events = await pool(work, async ({ provider, cfg, topic }) => {
+    try { return provider === "kalshi" ? await kalshiEvent(cfg, topic, fetchFn) : { ...await eventHistory(topic, fetchFn), provider, topicId: topic.id }; }
+    catch (err) {
+      const retained = old.events.find(e => e.provider === provider && e.topicId === topic.id && e.status === "available" && Date.parse(e.endDate) > Date.now());
+      return retained ? { ...retained, stale: true, reason: err.message }
+        : { id: `${provider}:${topic.id}:unavailable`, provider, topicId: topic.id, label: topic.label,
+          linkedSymbols: Object.keys(topic.betas), history: [], status: "unavailable", reason: err.message };
+    }
   });
+  for (const event of events) if (event.provider === "polymarket" && event.marketId) event.id = `polymarket:${event.marketId}`;
   if (!stocks.find(s => s.symbol === "SPY")?.prices.length || !events.some(e => e.status === "available")) {
     throw new Error("Could not refresh usable public stock and event data. The previous snapshot is retained.");
   }
-  return { schemaVersion: 1, builtAt: new Date().toISOString(),
-    note: "Observed data. Event odds are 12-hour snapshots sampled before the US close, at most 18 hours old. Estimates describe same-day associations, not forecasts or causal effects.",
+  return { schemaVersion: 2, builtAt: new Date().toISOString(),
+    note: "Observed data. Polymarket uses 12-hour prices; Kalshi uses hourly Yes bid/ask midpoints. Fits use observations before the US close, at most 18 hours old. Future paths are illustrative scenarios.",
     stocks: Object.fromEntries(stocks.map(s => [s.symbol, s])), events,
   };
 }
@@ -97,10 +114,16 @@ const CACHE = new URL("./.cache/snapshot.json", import.meta.url);
 const SNAPSHOT = new URL("./data/snapshot.json", import.meta.url);
 
 export async function loadSnapshot() {
+  const candidates = [];
   for (const path of [CACHE, SNAPSHOT]) {
-    try { const data = JSON.parse(await readFile(path, "utf8")); if (data.schemaVersion === 1) return data; } catch { /* try committed snapshot */ }
+    try {
+      const data = JSON.parse(await readFile(path, "utf8"));
+      if ([1, 2].includes(data.schemaVersion) && data.stocks && Array.isArray(data.events)) candidates.push(normalizeSnapshot(data));
+    } catch { /* try the other snapshot */ }
   }
-  return { schemaVersion: 1, builtAt: null, stocks: {}, events: [], note: "Refresh public observations to load historical data." };
+  candidates.sort((a, b) => (Date.parse(b.builtAt) || 0) - (Date.parse(a.builtAt) || 0));
+  if (candidates.length) return candidates[0];
+  return { schemaVersion: 2, builtAt: null, stocks: {}, events: [], note: "Refresh public observations to load historical data." };
 }
 
 export async function saveSnapshot(data, committed = false) {
@@ -127,10 +150,43 @@ export function stockEvents(snapshot, symbol) {
   const stock = snapshot.stocks[symbol];
   const benchmark = snapshot.stocks.SPY?.prices ?? [];
   const events = snapshot.events.filter(e => e.linkedSymbols.includes(symbol)).map(e => ({
-    ...e, history: undefined, businessLink: BUSINESS[e.id],
+    ...e, history: undefined, businessLink: BUSINESS[e.topicId ?? e.id],
     // The research map selects plausible links only. Its hand-set betas are NEVER used in
     // the numerical slider; the stock's own overlapping observed data supplies the slope.
     fit: association(stock?.prices ?? [], benchmark, e.history),
   }));
   return qualifyAssociations(events).sort((a, b) => (b.fit.partialR2 ?? -1) - (a.fit.partialR2 ?? -1));
+}
+
+const summaryFit = fit => { const { points, ...summary } = fit; return summary; };
+
+export function analyzeBasket(input, symbols) {
+  if (!Array.isArray(symbols) || !symbols.length || symbols.length > 10 || new Set(symbols).size !== symbols.length ||
+    symbols.some(symbol => !COMPANIES.some(s => s.symbol === symbol))) throw new Error("Choose 1–10 unique company tickers from your basket.");
+  const snapshot = normalizeSnapshot(input);
+  const holdings = allocate(symbols.map(symbol => COMPANIES.find(s => s.symbol === symbol)));
+  const curves = basketHistory(symbols.map(symbol => ({ symbol, prices: snapshot.stocks[symbol]?.prices ?? [] })));
+  const benchmark = snapshot.stocks.SPY?.prices ?? [];
+  const related = snapshot.events.filter(e => e.linkedSymbols.some(s => symbols.includes(s)));
+  const events = related.map(e => ({ ...e, businessLink: BUSINESS[e.topicId] ?? "Related business exposure.",
+    linkedHoldings: symbols.filter(s => e.linkedSymbols.includes(s)),
+    fit: association(curves.basket, benchmark, e.history ?? []),
+    stockFits: Object.fromEntries(symbols.filter(s => e.linkedSymbols.includes(s))
+      .map(symbol => [symbol, association(snapshot.stocks[symbol]?.prices ?? [], benchmark, e.history ?? [])])),
+  }));
+  qualifyAssociations(events);
+  for (const symbol of symbols) qualifyAssociations(events.filter(e => e.stockFits[symbol]).map(e => ({ fit: e.stockFits[symbol] })));
+  for (const event of events) {
+    event.fit = summaryFit(event.fit);
+    event.stockFits = Object.fromEntries(Object.entries(event.stockFits).map(([s, fit]) => [s, summaryFit(fit)]));
+  }
+  events.sort((a, b) => Number(b.status === "available") - Number(a.status === "available") ||
+    (b.fit.partialR2 ?? -1) - (a.fit.partialR2 ?? -1) || a.id.localeCompare(b.id));
+  return { builtAt: snapshot.builtAt, holdings, basketHistory: curves.basket, stockHistories: curves.stocks, events,
+    historyReason: curves.basket.length < 2 ? "Some holdings are missing price history; a common basket chart is unavailable." : null,
+    providerStatus: Object.fromEntries(["polymarket", "kalshi"].map(provider => [provider, {
+      available: related.filter(e => e.provider === provider && e.status === "available").length,
+      unavailable: related.filter(e => e.provider === provider && e.status !== "available").length,
+      stale: related.some(e => e.provider === provider && e.stale),
+    }])) };
 }

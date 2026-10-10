@@ -34,14 +34,20 @@ export function validateCaps(input, now = Date.now()) {
 
 /** US equity close, including daylight saving time, for a Yahoo trading-date label. */
 export function closeTimestamp(day) {
-  const candidate = Date.parse(`${day}T20:00:00Z`);
+  const date = new Date(`${day}T00:00:00Z`), year = date.getUTCFullYear();
+  const afterThanksgiving = new Date(`${nthWeekday(year, 10, 4, 4)}T00:00:00Z`);
+  afterThanksgiving.setUTCDate(afterThanksgiving.getUTCDate() + 1);
+  const shortSession = ![0, 6].includes(date.getUTCDay()) && !exchangeHolidays(year).has(day) &&
+    (day === isoDay(afterThanksgiving) || day.endsWith("-07-03") || day.endsWith("-12-24"));
+  const closingHour = shortSession ? 13 : 16;
+  const candidate = Date.parse(`${day}T${closingHour + 4}:00:00Z`);
   const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hourCycle: "h23" }).format(candidate));
-  return (candidate + (hour === 16 ? 0 : 3600000)) / 1000;
+  return (candidate + (hour === closingHour ? 0 : 3600000)) / 1000;
 }
 
 export function alignHistory(prices, benchmark, history) {
   const market = new Map(benchmark.map(p => [p.date, p.close]));
-  const observations = history.filter(p => Number.isFinite(p.timestamp) && p.price > 0 && p.price < 1).sort((a, b) => a.timestamp - b.timestamp);
+  const observations = history.filter(p => Number.isFinite(p.timestamp) && Number.isFinite(p.price) && p.price >= 0 && p.price <= 1).sort((a, b) => a.timestamp - b.timestamp);
   const rows = [];
   let cursor = -1, previous = null;
   for (const price of [...prices].sort((a, b) => a.date.localeCompare(b.date))) {
@@ -141,4 +147,77 @@ export function scenario(fit, from, to) {
   return { estimatePct: estimate, lowPct: estimate - margin, highPct: estimate + margin,
     extrapolated: Math.abs(delta) > fit.maxDailyMove,
   };
+}
+
+/** Replay today's basket with fixed daily equal weights, on shared observed dates. */
+export function basketHistory(stocks) {
+  if (!stocks.length || stocks.some(s => !s.prices?.length)) return { basket: [], stocks: {} };
+  const maps = stocks.map(s => new Map(s.prices.filter(p => p.close > 0 && Number.isFinite(p.close)).map(p => [p.date, p.close])));
+  const dates = [...maps[0].keys()].filter(date => maps.every(map => map.has(date))).sort();
+  if (!dates.length) return { basket: [], stocks: {} };
+  let value = 100;
+  const basket = dates.map((date, i) => {
+    if (i) value *= 1 + maps.reduce((sum, map) => sum + map.get(date) / map.get(dates[i - 1]) - 1, 0) / stocks.length;
+    return { date, close: value };
+  });
+  return { basket, stocks: Object.fromEntries(stocks.map((stock, i) => [stock.symbol,
+    dates.map(date => ({ date, close: maps[i].get(date) / maps[i].get(dates[0]) * 100 }))])) };
+}
+
+const isoDay = date => date.toISOString().slice(0, 10);
+const nthWeekday = (year, month, weekday, n) => {
+  const first = new Date(Date.UTC(year, month, 1));
+  return isoDay(new Date(Date.UTC(year, month, 1 + (weekday - first.getUTCDay() + 7) % 7 + (n - 1) * 7)));
+};
+function exchangeHolidays(year) {
+  const days = new Set();
+  for (const [month, day] of [[0, 1], [5, 19], [6, 4], [11, 25]]) {
+    const date = new Date(Date.UTC(year, month, day));
+    // NYSE stays open on Dec 31 when Jan 1 falls on Saturday.
+    if (date.getUTCDay() === 0) date.setUTCDate(day + 1);
+    else if (date.getUTCDay() === 6 && month !== 0) date.setUTCDate(day - 1);
+    days.add(isoDay(date));
+  }
+  days.add(nthWeekday(year, 0, 1, 3)); days.add(nthWeekday(year, 1, 1, 3));
+  days.add(nthWeekday(year, 8, 1, 1)); days.add(nthWeekday(year, 10, 4, 4));
+  const memorial = new Date(Date.UTC(year, 5, 0));
+  memorial.setUTCDate(memorial.getUTCDate() - (memorial.getUTCDay() + 6) % 7);
+  days.add(isoDay(memorial));
+  // Gregorian Easter, then Good Friday.
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const q = h + l - 7 * m + 114;
+  days.add(isoDay(new Date(Date.UTC(year, Math.floor(q / 31) - 1, q % 31 + 1 - 2))));
+  return days;
+}
+
+export function nextSessions(after, count = 20) {
+  const date = new Date(`${after}T00:00:00Z`), out = [], holidays = new Map();
+  if (!Number.isFinite(date.getTime()) || !Number.isInteger(count) || count < 1 || count > 60) throw new Error("Invalid trading-session range.");
+  while (out.length < count) {
+    date.setUTCDate(date.getUTCDate() + 1);
+    const year = date.getUTCFullYear();
+    if (!holidays.has(year)) holidays.set(year, exchangeHolidays(year));
+    if (![0, 6].includes(date.getUTCDay()) && !holidays.get(year).has(isoDay(date))) out.push(isoDay(date));
+  }
+  return out;
+}
+
+/** An illustrative cumulative odds ramp, not twenty repetitions of a one-day shock. */
+export function scenarioPath(history, fit, from, to, sessions = 20) {
+  const effect = scenario(fit, from, to);
+  if (!history.length || !effect) return { points: [], reason: "Not enough overlapping history for a future illustration." };
+  const anchor = history.at(-1);
+  const dates = [anchor.date, ...nextSessions(anchor.date, sessions)];
+  const points = dates.map((date, i) => {
+    const fraction = i / sessions;
+    return { date, close: anchor.close * (1 + effect.estimatePct / 100 * fraction),
+      low: anchor.close * (1 + effect.lowPct / 100 * fraction), high: anchor.close * (1 + effect.highPct / 100 * fraction),
+      probability: from + (to - from) * fraction };
+  });
+  if (points.some(p => ![p.close, p.low, p.high].every(v => Number.isFinite(v) && v > 0)))
+    return { points: [], reason: "This odds move is outside the model's usable range. Try a smaller change." };
+  return { points, ...effect };
 }
