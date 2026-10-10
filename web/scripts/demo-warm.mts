@@ -71,28 +71,33 @@ async function warm(query: string) {
   }
 }
 
-console.log(`Demo cache on ${base}`);
-if (statusOnly) {
-  printStatus((await call("GET")).ideas);
-  process.exit(0);
+// Ends by returning rather than process.exit: exiting right after a fetch crashes Node on Windows.
+async function main() {
+  console.log(`Demo cache on ${base}`);
+  if (statusOnly) {
+    printStatus((await call("GET")).ideas);
+    return;
+  }
+
+  // All four, spaced out so the burst stays inside Gemini's per-minute quota.
+  let last: Report | null = null;
+  for (let i = 0; i < 4; i++) {
+    last = (await warm(`?idea=${i}`)) ?? last;
+    if (i < 3) await sleep(12_000);
+  }
+  if (last) printStatus(last.ideas);
+
+  if (!loop) {
+    console.log("Done. Answers stay cached for 15 minutes; use --loop to keep them warm.");
+    return;
+  }
+
+  console.log("Keeping warm: one refresh every 3 minutes (each idea every 12). Ctrl+C to stop.");
+  for (;;) {
+    await sleep(180_000);
+    const r = await warm("");
+    if (r) printStatus(r.ideas);
+  }
 }
 
-// All four, spaced out so the burst stays inside Gemini's per-minute quota.
-let last: Report | null = null;
-for (let i = 0; i < 4; i++) {
-  last = (await warm(`?idea=${i}`)) ?? last;
-  if (i < 3) await sleep(12_000);
-}
-if (last) printStatus(last.ideas);
-
-if (!loop) {
-  console.log("Done. Answers stay cached for 15 minutes; use --loop to keep them warm.");
-  process.exit(0);
-}
-
-console.log("Keeping warm: one refresh every 3 minutes (each idea every 12). Ctrl+C to stop.");
-for (;;) {
-  await sleep(180_000);
-  const r = await warm("");
-  if (r) printStatus(r.ideas);
-}
+await main();
