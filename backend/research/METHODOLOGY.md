@@ -66,7 +66,9 @@ Newest first. "Tests run" counts distinct statistical tests behind each claim, f
 
 **2026-10-10: Cluster rule (amendment 17) applied to H1 and H2 (development period).**
 - **H2:** unchanged (not supported). H2a without 2024-08-01: slope 0.73, t 1.47. H2b without 2025-04-03/07: +7 bp, t 0.66. The rerun reproduced the H2 numbers below exactly.
-- **H1a: provisionally downgraded from suggestive to not supported.** Dropping just 2025-04-03/04 already gives t 1.95 (below). The exact rerun needs the hourly caches, which weren't on this machine, and Yahoo was rate-limiting (HTTP 429). `intraday.py` now prints the rule; rerun with `uv run python -m polyslice_api.intraday` to confirm. The rule was written after this dependence was seen, so the downgrade applies a stricter standard after the fact.
+- **H1a: survives, stays suggestive** (reverses the provisional downgrade, which used t 1.95 from dropping only 2025-04-03/04). The rule drops the whole cluster: 2025-04-03, 04-04 and 04-09. Without it: +32.7 bp, t 2.31 on 30 dates, above the 2.0 bar. The 04-09 spike (Fed odds the day of the tariff pause) scored −109 bp, so removing the full cluster costs less than removing only its two best dates (+282 bp on 04-03, +478 bp on 04-04). Still below t 3 and still fragile: 2.31 comes from the cluster definition, not from April mattering less. The rule was written after this dependence was seen.
+- **H1b:** unchanged (not supported). Without 2025-10-16: +0.7 bp, t 0.05.
+- **H1 rerun:** hourly caches rebuilt 2026-10-09 (Yahoo bars 2024-10-11 → 2026-10-09, 514 symbols, none missing). The full sample matches the H1 entry below exactly: H1a +49.4 bp, t 2.41, hit 70%, placebo p 0.002; H1b +4.9 bp, t 0.30, placebo p 0.745; 33 scored spikes. Yahoo's 730-day window did not move far enough to change any scored spike. Holdout not touched.
 
 **2026-10-10: H2 (development period): the exposure ranking does not predict the cross-section.** 57 daily spikes, 39 dates with fitted βs. Day-0 abnormal returns (capped) regressed on β × Δp across ~490 stocks, one slope per date:
 
@@ -90,7 +92,7 @@ Newest first. "Tests run" counts distinct statistical tests behind each claim, f
 
 - **Stocks don't lead the odds.** Nothing before the spike.
 - **There is drift after the spike, during trading hours.** Bars that stay within one session carry +52 bp of the +49 bp; bars that open after an overnight gap carry −2 bp. So the drift happens while markets are open, not overnight, which is what "time to act" needs.
-- **It leans on one week.** The largest contributions are 2025-04-03 and 04-04 (+478 bp and +282 bp, Fed odds falling during the tariff sell-off). Without those two dates: +28 bp, t 1.95. Median spike +33 bp. Fed spikes: +55 bp (t 1.82, 22 dates); all others: +38 bp (t 2.66, 11 dates).
+- **It leans on one week.** The largest contributions are 2025-04-04 and 04-03 (+478 bp and +282 bp, Fed odds falling during the tariff sell-off). Without those two dates: +28 bp, t 1.95. Median spike +33 bp. Fed spikes: +55 bp (t 1.82, 22 dates); all others: +38 bp (t 2.66, 11 dates).
 - Below the pre-registered t > 3 bar, so this is a lead to confirm on the holdout, not a finding. The holdout has only 2 hourly spikes so far, so confirming it needs data from after 2026-10-09 accumulating, or more series.
 - Tests run: 2 pre-registered, each with a 500-run placebo. The trimmed, without-April and per-series numbers above are descriptive checks run after seeing the result, not additional tests.
 
