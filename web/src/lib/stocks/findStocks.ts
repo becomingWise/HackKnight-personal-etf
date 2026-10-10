@@ -425,6 +425,8 @@ export async function findStocks(
       : "Candidate Polymarket markets: none found. Set every market_id to null.") +
     `\n\nUser's idea: ${idea}`;
   let problem = "";
+  // After a failed or timed-out call, the retry goes to the lighter model, which is faster.
+  let failed = false;
   for (let attempt = 1; attempt <= 2 && remaining() > 3000; attempt++) {
     try {
       const raw = await deps.generate({
@@ -433,7 +435,8 @@ export async function findStocks(
           ? `${prompt}\n\nYour previous answer was rejected: ${problem} Answer again.`
           : prompt,
         schema: PICK_JSON_SCHEMA,
-        timeoutMs: Math.min(12_000, remaining()),
+        timeoutMs: Math.min(10_000, remaining()),
+        prefer: failed ? "lite" : "main",
         signal: abort,
       });
       const checked = checkPick(raw, byId);
@@ -457,6 +460,7 @@ export async function findStocks(
     } catch (err) {
       if (abort?.aborted) throw err;
       problem = "";
+      failed = true;
       log("gemini_error", {
         attempt,
         message: err instanceof Error ? err.message.slice(0, 200) : "unknown",

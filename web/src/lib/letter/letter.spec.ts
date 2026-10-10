@@ -149,6 +149,17 @@ describe("POST /api/baskets/{id}/letter", () => {
     expect((await a.post("abcdefgh")).headers.get("X-Cache")).toBe("MISS");
   });
 
+  it("retries with the lighter model after a timeout or error", async () => {
+    const generate = vi
+      .fn<GenerateJson>()
+      .mockRejectedValueOnce(new Error("This operation was aborted"))
+      .mockResolvedValueOnce({ letter: GOOD });
+    const body = await (await api(generate).post("abcdefgh")).json();
+    expect(body).toMatchObject({ letter: GOOD, source: "gemini" });
+    const calls = generate.mock.calls as unknown as Parameters<GenerateJson>[];
+    expect(calls.map((c) => c[0].prefer)).toEqual(["main", "lite"]);
+  });
+
   it("falls back when Gemini keeps breaking the rules", async () => {
     const generate = vi.fn(async () => ({ letter: GOOD.replace("21%", "85%") }));
     const body = await (await api(generate).post("abcdefgh")).json();

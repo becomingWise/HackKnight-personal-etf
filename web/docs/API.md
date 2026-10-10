@@ -574,7 +574,7 @@ No request body.
 | `cached`, `cachedAt` | Same meaning as on `/api/stocks`; also in the `X-Cache` and `X-Cache-Age` headers                                            |
 
 - A basket never changes, so its letter is written once and then served from the cache (kept 30 days).
-  The first call takes 2 to 5 seconds, later calls about 0.1 seconds. Calling it again is safe.
+  The first call usually takes 1 to 3 seconds (up to about 10 if a retry is needed), later calls about 0.1 seconds. Calling it again is safe.
 - Every percentage in the letter is checked against the basket's weights and the odds saved with it; a
   letter with any other percentage, or over 120 words, is rejected and rewritten once, then the template is
   used. Fallback letters are not cached.

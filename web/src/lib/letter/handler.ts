@@ -27,7 +27,7 @@ const defaults: LetterHandlerDeps = {
 };
 
 // The version is part of the key: bump it when the letter's rules change.
-const cacheKey = (basketId: string) => `v3:${basketId}`;
+const cacheKey = (basketId: string) => `v4:${basketId}`;
 
 type Cached = LetterResult & { generatedAt: string };
 

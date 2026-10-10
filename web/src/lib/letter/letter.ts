@@ -101,6 +101,8 @@ export async function writeLetter(
   const remaining = () => GEMINI_BUDGET_MS - (Date.now() - started);
   const prompt = facts(basket);
   let problem = "";
+  // After a failed or timed-out call, the retry goes to the other model.
+  let failed = false;
   for (let attempt = 1; attempt <= 2 && remaining() > 3000; attempt++) {
     try {
       const raw = await deps.generate({
@@ -109,11 +111,12 @@ export async function writeLetter(
           ? `${prompt}\n\nYour previous letter was rejected: ${problem} Write it again.`
           : prompt,
         schema: LETTER_JSON_SCHEMA,
-        timeoutMs: Math.min(12_000, remaining()),
-        thinking: ThinkingLevel.LOW,
+        timeoutMs: Math.min(7000, remaining()),
+        // Minimal thinking: with more, the main model often takes over 8 s for this prompt.
+        thinking: ThinkingLevel.MINIMAL,
         // The main model writes noticeably better prose here (the lighter one pastes market
         // questions verbatim); the lighter model is still the backup when the quota is hit.
-        prefer: "main",
+        prefer: failed ? "lite" : "main",
         signal: abort,
       });
       const parsed = letterSchema.safeParse(raw);
@@ -129,6 +132,7 @@ export async function writeLetter(
     } catch (err) {
       if (abort?.aborted) throw err;
       problem = "";
+      failed = true;
       deps.log?.("gemini_error", {
         attempt,
         message: err instanceof Error ? err.message.slice(0, 200) : "unknown",
