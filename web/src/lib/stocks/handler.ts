@@ -1,6 +1,8 @@
 // HTTP layer for findStocks, shared by POST /api/stocks and its alias POST /api/findstock.
-import { corsHeaders, preflight } from "../http/cors";
+import { cacheHeaders, stocksCacheKey, tigerApiCache, type ApiCache } from "../cache/apiCache";
+import { preflight } from "../http/cors";
 import { clientIp, hit, ipKey, type Limit, type RateResult } from "../http/rateLimit";
+import { error, json } from "../http/respond";
 import { recordObservations } from "../odds/service";
 import { searchMarkets, type MarketCandidate } from "../polymarket/search";
 import { geminiGenerateJson } from "../sponsors/gemini";
@@ -12,25 +14,26 @@ import {
   type FindStocksResponse,
 } from "./findStocks";
 
-// Judges may share one venue IP, so the per-IP limit is generous; the global daily cap is
-// what protects the free Gemini quota (each uncached request makes two Gemini calls).
-export const PER_IP_PER_MINUTE = 20;
-export const PER_IP_PER_DAY = 300;
-export const GLOBAL_PER_DAY = 1500;
-
-const CACHE_TTL_MS = 10 * 60 * 1000;
-const cache = new Map<string, { at: number; value: FindStocksResponse }>();
+// Judges may share one venue IP, so the per-IP limit is generous. The global daily cap
+// protects the free Gemini quota and only counts requests that actually reach Gemini
+// (each one makes two Gemini calls); cached answers are free.
+export const PER_IP_PER_MINUTE = 30;
+export const PER_IP_PER_DAY = 600;
+export const GLOBAL_UNCACHED_PER_DAY = 600;
 
 export type HandlerDeps = FindStocksDeps & {
   /** Stores the odds observed for the candidate markets (odds history). */
   record?: (candidates: MarketCandidate[]) => Promise<unknown>;
   rateLimit: (limits: Limit[]) => Promise<RateResult>;
+  /** Shared response cache; omitted in tests that do not exercise caching. */
+  cache?: ApiCache;
 };
 
-const defaultDeps: HandlerDeps = {
+export const defaultStocksDeps: HandlerDeps = {
   generate: geminiGenerateJson,
   search: searchMarkets,
   rateLimit: hit,
+  cache: tigerApiCache,
   record: (candidates) =>
     recordObservations(
       candidates.map((m) => ({
@@ -46,30 +49,34 @@ const defaultDeps: HandlerDeps = {
   log: (event, detail) => console.log(JSON.stringify({ at: "findStocks", event, ...detail })),
 };
 
-function json(request: Request, status: number, body: unknown, extra: Record<string, string> = {}) {
-  return Response.json(body, {
-    status,
-    headers: {
-      ...corsHeaders(request),
-      // Explicit charset: Windows PowerShell otherwise misreads non-ASCII characters.
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-      ...extra,
+/** Runs the pipeline without reading the cache, recording the observed odds on the way. */
+export async function computeStocks(
+  idea: string,
+  deps: HandlerDeps,
+  signal?: AbortSignal,
+): Promise<FindStocksResponse> {
+  // Odds are recorded while Gemini works, so the answer is not delayed.
+  let recording: Promise<unknown> | undefined;
+  const result = await findStocks(
+    { idea },
+    {
+      ...deps,
+      onCandidates: (candidates) => {
+        recording = deps.record?.(candidates).catch(() => {});
+      },
     },
-  });
+    signal,
+  );
+  await recording;
+  return result;
 }
 
-function error(
-  request: Request,
-  status: number,
-  code: string,
-  message: string,
-  extra: Record<string, string> = {},
-) {
-  return json(request, status, { error: { code, message } }, extra);
-}
+export function createStocksHandler(deps: HandlerDeps = defaultStocksDeps) {
+  const tooMany = (request: Request, rate: RateResult) =>
+    error(request, 429, "rate_limited", "Too many requests. Please try again shortly.", {
+      "Retry-After": String(rate.retryAfterSeconds),
+    });
 
-export function createStocksHandler(deps: HandlerDeps = defaultDeps) {
   async function POST(request: Request): Promise<Response> {
     let body: unknown;
     try {
@@ -94,43 +101,33 @@ export function createStocksHandler(deps: HandlerDeps = defaultDeps) {
     const { idea } = parsed.data;
 
     const ip = ipKey(clientIp(request));
-    const rate = await deps.rateLimit([
+    const perIp = await deps.rateLimit([
       { bucket: `findstocks:ip:${ip}`, windowSeconds: 60, max: PER_IP_PER_MINUTE },
       { bucket: `findstocks:ipday:${ip}`, windowSeconds: 86_400, max: PER_IP_PER_DAY },
-      { bucket: "findstocks:global", windowSeconds: 86_400, max: GLOBAL_PER_DAY },
     ]);
-    if (!rate.allowed) {
-      return error(request, 429, "rate_limited", "Too many requests. Please try again shortly.", {
-        "Retry-After": String(rate.retryAfterSeconds),
-      });
+    if (!perIp.allowed) return tooMany(request, perIp);
+
+    const key = stocksCacheKey(idea);
+    const hitEntry = await deps.cache?.get<FindStocksResponse>("stocks", key);
+    if (hitEntry) {
+      return json(
+        request,
+        200,
+        { ...hitEntry.value, cached: true, cachedAt: hitEntry.createdAt.toISOString() },
+        cacheHeaders(hitEntry),
+      );
     }
 
-    const key = idea.toLocaleLowerCase().replace(/\s+/g, " ");
-    const cached = cache.get(key);
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return json(request, 200, cached.value);
+    const global = await deps.rateLimit([
+      { bucket: "findstocks:uncached", windowSeconds: 86_400, max: GLOBAL_UNCACHED_PER_DAY },
+    ]);
+    if (!global.allowed) return tooMany(request, global);
 
     try {
-      // Odds are recorded while Gemini works, so the answer is not delayed.
-      let recording: Promise<unknown> | undefined;
-      const result = await findStocks(
-        {
-          idea,
-        },
-        {
-          ...deps,
-          onCandidates: (candidates) => {
-            recording = deps.record?.(candidates).catch(() => {});
-          },
-        },
-        request.signal,
-      );
-      await recording;
+      const result = await computeStocks(idea, deps, request.signal);
       // Only AI answers are cached, so a fallback never sticks once Gemini is back.
-      if (result.source === "gemini") {
-        if (cache.size > 300) cache.clear();
-        cache.set(key, { at: Date.now(), value: result });
-      }
-      return json(request, 200, result);
+      if (result.source === "gemini") await deps.cache?.set("stocks", key, result);
+      return json(request, 200, { ...result, cached: false, cachedAt: null }, cacheHeaders(null));
     } catch (err) {
       if (err instanceof NoMatchError) {
         return error(

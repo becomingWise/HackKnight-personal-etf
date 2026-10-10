@@ -48,6 +48,13 @@ file, and a short note Lucas can forward to the frontend teammate.
 - [x] `getBasketOdds` / `getMarketHistory` in `/js/baskets-adapter.js`
 - [ ] **Lucas:** schedule the tick on cron-job.org (URL and header in the step 3 message); until then nothing ticks every minute
 
+## Step 3b — Demo reliability without Gemini billing (done, live)
+
+- [x] Migration `0005_api_cache.sql`; `/api/stocks` and `/api/weights` answers cached in Tiger for 15 minutes for identical normalized requests; `cached` / `cachedAt` in the body, `X-Cache` / `X-Cache-Age` headers
+- [x] `/api/jobs/warm` + `pnpm demo:warm [--loop|--status]`: pre-computes the 4 demo ideas (stocks and the follow-up weights request) and keeps them warm; a failed refresh keeps the previous AI answer
+- [x] Measured free-tier limits: `gemini-3.5-flash` 5 requests/minute, `gemini-3.5-flash-lite` 15/minute (daily limits only visible in AI Studio)
+- [ ] **Lucas:** check the daily request limits at https://aistudio.google.com/rate-limit
+
 ## Step 4 — Sponsor APIs (each behind a flag with a mock)
 
 - [ ] a. ElevenLabs: `POST /api/baskets/{id}/narrate` → MP3 briefing of the summary and key odds, cached in Tiger; `GET /api/audio/{id}`

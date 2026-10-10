@@ -30,6 +30,8 @@ export function corsHeaders(request: Request): Record<string, string> {
     headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
     headers["Access-Control-Allow-Headers"] = "Content-Type";
     headers["Access-Control-Max-Age"] = "86400";
+    // Lets browser code read the cache and rate-limit headers.
+    headers["Access-Control-Expose-Headers"] = "X-Cache, X-Cache-Age, Retry-After";
   }
   return headers;
 }

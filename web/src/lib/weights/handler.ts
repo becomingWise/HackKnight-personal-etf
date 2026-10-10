@@ -1,7 +1,14 @@
 // HTTP layer for POST /api/weights (the team's adjustWeights port).
-import { corsHeaders, preflight } from "../http/cors";
+import { cacheHeaders, tigerApiCache, weightsCacheKey, type ApiCache } from "../cache/apiCache";
+import { preflight } from "../http/cors";
 import { clientIp, hit, ipKey, type Limit, type RateResult } from "../http/rateLimit";
-import { WeightsInputError, adjustWeights, weightsRequestSchema } from "./adjustWeights";
+import { json } from "../http/respond";
+import {
+  WeightsInputError,
+  adjustWeights,
+  weightsRequestSchema,
+  type WeightsResponse,
+} from "./adjustWeights";
 import type { Signal } from "./engine";
 import { liveSignals } from "./signals";
 
@@ -11,27 +18,17 @@ export type WeightsDeps = {
   signals: () => Promise<Signal[]>;
   rateLimit: (limits: Limit[]) => Promise<RateResult>;
   now?: () => Date;
+  /** Shared response cache; omitted in tests that do not exercise caching. */
+  cache?: ApiCache;
 };
 
-const defaultDeps: WeightsDeps = { signals: liveSignals, rateLimit: hit };
+export const defaultWeightsDeps: WeightsDeps = {
+  signals: liveSignals,
+  rateLimit: hit,
+  cache: tigerApiCache,
+};
 
-export function createWeightsHandler(deps: WeightsDeps = defaultDeps) {
-  const json = (
-    request: Request,
-    status: number,
-    body: unknown,
-    extra: Record<string, string> = {},
-  ) =>
-    Response.json(body, {
-      status,
-      headers: {
-        ...corsHeaders(request),
-        // Explicit charset: Windows PowerShell otherwise misreads non-ASCII characters.
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-        ...extra,
-      },
-    });
+export function createWeightsHandler(deps: WeightsDeps = defaultWeightsDeps) {
   // `detail` is what the Python (FastAPI) service returns; `error` is this API's common shape.
   const fail = (request: Request, status: number, code: string, message: string, extra = {}) =>
     json(request, status, { detail: message, error: { code, message } }, extra);
@@ -68,8 +65,21 @@ export function createWeightsHandler(deps: WeightsDeps = defaultDeps) {
       });
     }
 
+    const key = weightsCacheKey(parsed.data.holdings);
+    const hitEntry = await deps.cache?.get<WeightsResponse>("weights", key);
+    if (hitEntry) {
+      return json(
+        request,
+        200,
+        { ...hitEntry.value, cached: true, cachedAt: hitEntry.createdAt.toISOString() },
+        cacheHeaders(hitEntry),
+      );
+    }
+
     try {
-      return json(request, 200, adjustWeights(parsed.data, await deps.signals(), deps.now?.()));
+      const result = adjustWeights(parsed.data, await deps.signals(), deps.now?.());
+      await deps.cache?.set("weights", key, result);
+      return json(request, 200, { ...result, cached: false, cachedAt: null }, cacheHeaders(null));
     } catch (err) {
       if (err instanceof WeightsInputError) {
         return fail(request, 422, "invalid_request", err.message);

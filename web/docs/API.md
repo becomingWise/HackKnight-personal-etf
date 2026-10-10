@@ -111,9 +111,10 @@ The adapter must reject on any non-2xx status; the controller then shows its own
   Odds quoted in a reason are checked against the live price (within 1 point) and rewritten if wrong.
 - **Timing.** Typically 4 to 10 seconds. Gemini has 20 seconds in total, including one retry on invalid
   output; after that the keyword fallback answers in the same shape.
-- **Caching.** The same idea returns the cached answer for 10 minutes (per server instance).
+- **Caching.** Answers are cached in Tiger for 15 minutes, shared by all servers. Ideas that differ only in case, spacing or surrounding punctuation share an entry. The body says so: `"cached": true` with `"cachedAt"` (ISO time the answer was computed), or `"cached": false, "cachedAt": null`. The same is in the headers `X-Cache: HIT|MISS` and `X-Cache-Age` (seconds). Keyword fallbacks are never cached. Cached answers return in about 0.1 s.
 - **Model backup.** If `gemini-3.5-flash` is rate limited or overloaded, `gemini-3.5-flash-lite` answers instead (still `"source": "gemini"`); only if both fail does the keyword fallback run.
-- **Rate limits.** 20 requests per minute and 300 per day per IP, 1,500 per day in total.
+- **Rate limits.** 30 requests per minute and 600 per day per IP. Requests that are not answered from the cache are also capped at 600 per day in total, to protect the Gemini quota.
+- **Gemini quota (free tier, measured 2026-10-09).** `gemini-3.5-flash` allows 5 requests per minute and `gemini-3.5-flash-lite` 15. An uncached idea uses one of each. Up to about 4 new ideas per minute get the main model, up to about 10 are still answered by AI through the backup model, and beyond that the keyword fallback answers. Cached ideas are not limited by this.
 - **CORS.** Allowed origins: `https://becomingwise.github.io`, `http://localhost:8000`,
   `http://127.0.0.1:8000`, `http://localhost:3000`, `http://127.0.0.1:3000`. `OPTIONS` preflight is
   answered. More origins can be added with the `CORS_ORIGINS` env var (comma-separated).
@@ -215,6 +216,11 @@ is why `/api/stocks` returns only those.
 
 `detail` is the field the Python service returns; `error` is this API's common shape. Same CORS origins as
 `/api/stocks`. Live odds are cached for 60 seconds.
+
+Identical requests (same symbols as sent, same weights, same order; the idea text does not matter) are
+answered from a 15-minute cache in Tiger. The body carries `"cached": true|false` and `"cachedAt"` (two
+fields the Python service does not have), and the headers `X-Cache` and `X-Cache-Age`. A cached answer's
+`evidence[].observedAt` is the time the odds were read, up to 15 minutes ago.
 
 ### Try it
 
@@ -616,6 +622,43 @@ the minute. Also loads history for newly cited markets (up to 4 per run). Requir
 
 `401` with `error.code` `unauthorized` without the right token. Locally: `pnpm jobs:loop` (ticks
 `http://localhost:3000` every minute) or `pnpm jobs:loop https://prophetf.vercel.app`.
+
+---
+
+## 6b. `/api/jobs/warm` — LIVE (not for the frontend)
+
+Keeps the four demo ideas answered from the cache: "AI chips and Taiwan risk", "Fed rate cuts and housing",
+"Clean energy after the election", "Crypto regulation". For each it pre-computes `/api/stocks` and the
+`/api/weights` request the frontend sends next (the same symbols, equally weighted). Requires
+`Authorization: Bearer <CRON_SECRET>`.
+
+| Call                               | Effect                                                                                   |
+| ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| `POST /api/jobs/warm`              | Refreshes the demo idea that is missing or expires first (one idea, two Gemini requests) |
+| `POST /api/jobs/warm?idea=0` … `3` | Refreshes that idea                                                                      |
+| `GET /api/jobs/warm`               | Cache status only                                                                        |
+
+```json
+{
+  "ok": true,
+  "idea": "Crypto regulation",
+  "result": "refreshed",
+  "source": "gemini",
+  "symbols": ["COIN", "HOOD", "IBIT"],
+  "weights": "adjusted",
+  "expiresAt": "2026-10-10T02:53:44.000Z",
+  "ms": 5800,
+  "ideas": [
+    { "idea": "AI chips and Taiwan risk", "cached": true, "expiresAt": "…", "secondsLeft": 843 }
+  ]
+}
+```
+
+`result` is `refreshed` (new AI answer cached), `kept` (Gemini was unavailable, so the previous AI answer's
+expiry was extended instead of replacing it with a keyword fallback) or `failed` (nothing cached).
+
+From `/web`: `pnpm demo:warm` (all four once), `pnpm demo:warm --loop` (all four, then one refresh every
+3 minutes), `pnpm demo:warm --status`.
 
 ---
 
