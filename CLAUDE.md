@@ -2,21 +2,24 @@
 
 > A fresh session should be able to resume from this file alone. Read **Status** and **Decisions** first, then the brief.
 > The Next.js app lives in `/web`. All paths in the brief are relative to `/web` (Vercel Root Directory = `web`).
-> Branch: `prophetf-app`. Never push to `main` without asking. Never touch the teammate's static app at the repo root
+> **Working branch: `lucas-branch`.** Commit and push only there. Leave `prophetf-app` as is. Never touch `main`.
+> **Deploys: `npx vercel --prod --yes` from `/web`** (Vercel CLI, not Git; project `prophetf`, linked in `web/.vercel`, which is git-ignored and survives branch switches). Production: https://prophetf.vercel.app
+> Never touch the teammate's static app at the repo root
 > (`index.html`, `css/`, `js/`, `data/`, `scripts/`, `tests/`, root `package.json`, `README.md`).
 
 ## Status
 
 _Updated: 2026-10-09 (session 1)_
 
-- **Current phase:** Phase 0 built and verified locally. **Now: findStocks, STOPPED waiting for Lucas** on (a) the open questions in `web/docs/API.md` section 1 — chiefly that the frontend contract returns stocks `{symbol,name,reason}` while Lucas described Polymarket markets — and (b) the OK to merge `origin/lucas-branch` into `prophetf-app` (dry run is conflict-free). No findStocks code written yet.
-- **Branches:** `origin/lucas-branch` has the same tree as `origin/main` (`cd8f130`); `prophetf-app` adds one commit (`d1f6e46`, only `CLAUDE.md` + `web/`). `origin/dev` already contains `prophetf-app` via PR #4.
+- **Current phase:** Phase 0 done and deployed. **findStocks is LIVE** at https://prophetf.vercel.app/api/stocks (alias `/api/findstock`), contract in `web/docs/API.md` section 1. Next: Phase 1 (Data core) as backend/API work per `web/docs/PLAN.md`.
+- **Branches:** `lucas-branch` = `origin/main` tree + `prophetf-app` (merged 2026-10-09) + findStocks work. `prophetf-app` is frozen.
+- **findStocks code:** `web/src/lib/stocks/` (`findStocks.ts` pipeline, `handler.ts` HTTP layer, `universe.ts` + `universe.data.json` copied from `/backend` by `pnpm sync:universe`), `web/src/lib/polymarket/search.ts`, `web/src/lib/sponsors/gemini.ts`, `web/src/lib/http/` (CORS, rate limit), `/js/stocks-adapter.js` (frontend adapter, not wired in). Manual check: `pnpm try:findstocks "idea"`.
 - **Commands (run in `web/`):** `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm format`, `pnpm db:migrate`, `pnpm db:status`.
-- **Env:** `web/.env.local` has DATABASE_URL, GEMINI_API_KEY (user-provided), CRON_SECRET (generated locally), APP_BASE_URL and all FEATURE_* flags false. Other sponsor keys are still missing.
+- **Env (local):** `web/.env.local` has DATABASE_URL, GEMINI_API_KEY (user-provided), CRON_SECRET (generated locally), APP_BASE_URL and all FEATURE_* flags false. Other sponsor keys are still missing.
 - **Shell note:** multi-file bash heredocs fail in this harness on Windows; create files with the Write tool.
 - **Checklist:** `web/docs/PLAN.md`.
 - **Tiger Cloud service:** `prophetf`, id `v5idwzv5iv`, us-east-1, free shared plan, DEV. `DATABASE_URL` is in `web/.env.local`.
-- **Vercel:** not imported yet (user action).
+- **Vercel:** project `prophetf` (Root Directory `.`, deployed from `/web` by CLI). Production env vars set from `.env.local` on 2026-10-09: DATABASE_URL, GEMINI_API_KEY, CRON_SECRET, SOLANA_RPC_URL, NEXT_PUBLIC_SOLANA_CLUSTER, PRESAGE_MODE, FEATURE_* (all false). New env vars must be added with `npx vercel env add NAME production`.
 - **Waiting on the user for:** see "Needs from the user" at the bottom of `web/docs/PLAN.md`.
 
 ## Team split (since 2026-10-09, overrides the brief where they conflict)
@@ -41,12 +44,18 @@ _Updated: 2026-10-09 (session 1)_
 | 6 | 2026-10-09 | Migrations run in one transaction per file; a file starting with `-- migrate:no-transaction` runs statement by statement, split on `-- migrate:split` lines. | Continuous aggregates cannot be created inside a transaction. |
 | 7 | 2026-10-09 | A sponsor is "live" only when its flag is on AND its credentials are present; otherwise the mock is used (`src/lib/flags.ts`). | One missing key never breaks the demo. |
 | 8 | 2026-10-09 | shadcn/ui and lightweight-charts get installed in Phase 1 with the first real UI, not in Phase 0. | Keeps the scaffold minimal and the first deploy fast. |
+| 9 | 2026-10-09 | findStocks returns stocks `{summary, stocks:[{symbol,name,reason}]}` (the team contract), restricted to the 40 tickers in the weighting backend's universe, 3 to 5 per answer, with Polymarket markets as evidence in each reason. | Lucas's decision; keeps the controller and `POST /api/weights` working unchanged. |
+| 10 | 2026-10-09 | Candidates come from Gamma `/public-search` (Phase 1 tables are not there yet): Gemini plans queries and sectors, plus the universe's own signal queries. The server, not Gemini, guarantees evidence: unknown market ids drop the stock, quoted odds are checked within 1 point, and the summary's odds line is appended from live prices. | "Never fabricate markets" in the team contract. |
+| 11 | 2026-10-09 | Rate limit counters live in Tiger (`api_rate_limits`), with an in-memory fallback. 20/min and 300/day per IP, 1,500/day global. | Vercel instances do not share memory; judges may share one venue IP. |
+| 12 | 2026-10-09 | `pnpm-workspace.yaml` lists every dependency build script under `allowBuilds` (true or false). | pnpm 12 fails `pnpm install` on Vercel with ERR_PNPM_IGNORED_BUILDS for any unlisted one. |
 
 ## Docs-vs-brief discrepancies
 
 _(Log here whenever a live doc disagrees with the brief; follow the docs.)_
 
-- None yet. Verified so far: the Tiger service runs Postgres 18.6, TimescaleDB 2.30.2, pgvector 0.8.7 and pgvectorscale 0.9.0 (all enabled by migration 0001), so the diskann index option is available.
+- Gemini: `httpOptions.timeout` is sent as a server deadline and the API rejects values under 10 s, so timeouts are client-side `abortSignal` only. `gemini-3.5-flash` confirmed in the models list; `thinkingConfig.thinkingLevel` LOW/MINIMAL keeps calls at 1 to 4 s.
+- Gamma `/public-search`: returns closed markets by default; pass `events_status=active&keep_closed_markets=0`. Markets carry `bestBid`, `bestAsk`, `lastTradePrice`, `liquidityNum`; never-traded ones show bid 0 / ask 1.
+- Verified: the Tiger service runs Postgres 18.6, TimescaleDB 2.30.2, pgvector 0.8.7 and pgvectorscale 0.9.0 (all enabled by migration 0001), so the diskann index option is available.
 
 ## Existing repo (teammate's work — read-only)
 

@@ -21,19 +21,20 @@ At the end of every phase: run tests, deploy, update `/CLAUDE.md` + this file + 
 - [x] DB client singleton, max 3 connections (`src/lib/db/client.ts`)
 - [x] Migration runner (`pnpm db:migrate`, `pnpm db:status`) + `0001_extensions.sql`
 - [x] `GET /api/health`
-- [ ] First Vercel deploy, health OK on the Vercel URL
+- [x] First Vercel deploy, health OK on https://prophetf.vercel.app/api/health
 
-## Priority 1 — findStocks (before anything else)
+## Priority 1 — findStocks (done, live)
 
 - [x] Read `lucas-branch`, find every findStocks call, write the contract to `docs/API.md`
-- [ ] **Blocked:** answers to the open questions in `docs/API.md` section 1
-- [ ] **Blocked:** OK on how to combine `lucas-branch` and `prophetf-app`
-- [ ] Route at the agreed path: zod input, candidates, Gemini (`gemini-3.5-flash`, structured output), zod output, drop unknown IDs, retry once
-- [ ] Fallback when Gemini fails or takes > ~20 s
-- [ ] CORS for `https://becomingwise.github.io`, `localhost:8000`, `127.0.0.1:8000`, `localhost:3000` + `OPTIONS`
-- [ ] Per-IP rate limit
-- [ ] Contract test against the shape in `docs/API.md` with a mocked Gemini
-- [ ] `npx vercel --prod` from `/web`; hand over live URL, `Invoke-RestMethod` command, note for the teammate
+- [x] Decisions from Lucas: stocks per the contract with Polymarket evidence, 40-ticker universe, 3 to 5 stocks, work on `lucas-branch`
+- [x] `POST /api/stocks` + alias `POST /api/findstock`: zod input, Gamma search candidates, Gemini (`gemini-3.5-flash`, structured output), zod output, fabricated markets dropped, odds verified, one retry
+- [x] Keyword fallback when Gemini fails or exceeds 20 s (`source: "fallback"`)
+- [x] CORS for the frontend origins + `OPTIONS`
+- [x] Rate limit per IP and global, counters in Tiger (`api_rate_limits`)
+- [x] Contract tests with mocked Gemini, including the team's real `js/controller.js`
+- [x] `/js/stocks-adapter.js` for the frontend teammate (not wired in)
+- [x] Deployed with `npx vercel --prod`: https://prophetf.vercel.app/api/stocks
+- [ ] Later: use the Tiger `markets` table + pgvector for candidates once Phase 1 and 3 data exists
 
 ## Phase 1 — Data core
 
@@ -87,7 +88,5 @@ Done when: thesis → valid ETF proposal in under 30 s.
 
 ## Needs from Lucas
 
-- [ ] Answers to the findStocks questions (`docs/API.md` section 1) and the merge direction
-- [ ] Vercel: confirm the project is linked (a `web/.vercel` folder appeared) and env vars are set
 - [ ] Phase 4: ElevenLabs key + voice id, Snowflake account URL + PAT, fund the Solana devnet attester, Presage key
 - [ ] Phase 5: register the GoDaddy domain

@@ -3,137 +3,174 @@
 Backend owner: Lucas. Frontend owner: teammate. Every endpoint the frontend can call is documented here
 with request and response examples.
 
+**Base URL (production):** `https://prophetf.vercel.app`
+**Local:** `http://localhost:3000` (`pnpm dev` in `/web`)
+
 Status legend: **LIVE** (deployed), **BUILT** (works locally), **DRAFT** (contract not confirmed yet).
 
----
-
-## 1. `findStocks` — DRAFT, blocked on the open questions below
-
-### Where the contract comes from
-
-Read from `origin/lucas-branch` (same tree as `origin/main` at `cd8f130`):
-
-| File                       | What it says                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------------------ |
-| `docs/team-contracts.md`   | The "Stock selection port" and the "Suggested backend bridge"                              |
-| `js/controller.js`         | The only caller: `await findStocks({ idea }, { signal })`, then `validateStocks(response)` |
-| `js/services.js`           | The mock implementation (reads `data/chat-demo.json`)                                      |
-| `tests/controller.test.js` | Behaviour on errors, duplicates, malformed responses                                       |
-
-There is **no HTTP call to findStocks anywhere in the repo yet**. `findStocks` is a JavaScript function
-("port") injected into `createController({ findStocks, adjustWeights })`. Today only the mock exists. The
-HTTP path is a suggestion in the docs, not something the frontend already calls.
-
-### Contract as written by the framework
-
-**Function signature (frontend side)**
-
-```js
-async function findStocks({ idea }, { signal } = {}) → { summary, stocks }
-```
-
-**Suggested HTTP bridge** (`docs/team-contracts.md`, "Suggested backend bridge")
-
-|                 |                                                                                                                          |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Method and path | `POST /api/stocks`                                                                                                       |
-| Request headers | `Content-Type: application/json`                                                                                         |
-| Request body    | `{ "idea": string }` — trimmed, non-empty, any language                                                                  |
-| Success         | `200` with the port response directly as JSON (no envelope)                                                              |
-| Failure         | Any non-2xx status. The adapter must reject; the controller then shows "I couldn't build your basket. Please try again." |
-
-**Success response — exactly what the controller reads**
-
-```json
-{
-  "summary": "An explanation of how the idea maps to the companies.",
-  "stocks": [
-    { "symbol": "SOLAR_DEMO", "name": "Sunbeam Solar", "reason": "Fictional solar example." },
-    { "symbol": "TIDAL_DEMO", "name": "Tidal Power", "reason": "Fictional renewable example." },
-    { "symbol": "GRID_DEMO", "name": "Evergreen Grid", "reason": "Fictional storage example." }
-  ]
-}
-```
-
-| Field             | Type   | Rule enforced by `validateStocks` in `js/controller.js`              |
-| ----------------- | ------ | -------------------------------------------------------------------- |
-| `summary`         | string | Must be a string (shown to the user as the assistant's chat message) |
-| `stocks`          | array  | Must be a non-empty array                                            |
-| `stocks[].symbol` | string | Non-empty after trim; **unique** across the array                    |
-| `stocks[].name`   | string | Non-empty after trim                                                 |
-| `stocks[].reason` | string | Non-empty after trim                                                 |
-
-Rules from the contract text:
-
-- "The framework assigns equal weights, so this port **must not invent allocation percentages or prices**."
-- "Preserve its original language" (the idea).
-- Demo adapters return three companies; "the controller can accept another nonzero count".
-- "never silently substitute demo data for failed live calls" — reject instead.
-- Any extra field is **dropped**: the controller copies only `symbol`, `name`, `reason` per stock and
-  `summary` from the top level. Extra fields are harmless but never reach the UI.
-
-**Error response**: the contract only says "non-2xx". The body is unspecified. Proposed (frontend can ignore it):
+Errors on every endpoint use a non-2xx status and this body:
 
 ```json
 { "error": { "code": "invalid_request", "message": "idea must be a non-empty string" } }
 ```
 
-| Status | When                                                   |
-| ------ | ------------------------------------------------------ |
-| 400    | Body is not JSON, or `idea` missing / empty / too long |
-| 429    | Per-IP rate limit hit (`Retry-After` header set)       |
-| 502    | Gemini and the fallback both failed                    |
+---
 
-### What happens to the response afterwards (why the symbols matter)
+## 1. `findStocks` — LIVE
 
-1. The controller gives the stocks equal weights.
-2. It calls `adjustWeights({ idea, holdings: [{ symbol, weightPct }] })`.
-3. The teammate's Python service (`backend/`, FastAPI, `POST /api/weights`) tilts the weights using live
-   Polymarket odds. It can only tilt symbols that have a β in `backend/src/polyslice_api/data/universe.json`:
-   40 real US tickers in 7 sectors (semis, bigtech, energy, defense, financials, crypto, rates), linked to
-   11 Polymarket signals. Any other symbol comes back `unchanged`.
+`POST /api/stocks` (alias: `POST /api/findstock`, identical behaviour)
 
-So Polymarket already enters the flow in step 3, through stock tickers.
+Implements the "Stock selection port" in `/docs/team-contracts.md`: an idea in, 3 to 5 stocks out. Gemini
+(`gemini-3.5-flash`) picks the stocks and writes each reason from live Polymarket odds.
 
-### Where the frontend is served from (CORS origins)
+### Request
 
-| Origin                                           | Source                                                                                                   |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `https://becomingwise.github.io`                 | GitHub Pages site `https://becomingwise.github.io/HackKnight-personal-etf/` (`scripts/publish_pages.py`) |
-| `http://localhost:8000`, `http://127.0.0.1:8000` | `npm start` (python http.server)                                                                         |
-| `http://localhost:3000`, `http://127.0.0.1:3000` | Also allowed by the Python backend's default CORS list                                                   |
+|         |                                                                   |
+| ------- | ----------------------------------------------------------------- |
+| Headers | `Content-Type: application/json`                                  |
+| Body    | `{ "idea": string }` — trimmed, 1 to 500 characters, any language |
 
-The browser will send an `OPTIONS` preflight (JSON `POST` across origins), so the route must answer it.
+```json
+{ "idea": "AI chips and Taiwan risk" }
+```
 
-### Open questions (blocking)
+### Success response — `200`
 
-1. **Stocks or Polymarket markets?** The contract returns companies (`symbol`, `name`, `reason`). The new
-   instructions describe findstock as returning Polymarket markets with side, weight and price. These do not
-   fit together: the controller drops side/weight/price, the contract forbids weights and prices, and a
-   market ID as `symbol` would always come back `unchanged` from `/api/weights`.
-2. **Path.** `POST /api/stocks` (the documented suggestion), or a different path such as `/api/findstock`?
-3. **Who writes the browser adapter?** Nothing in `js/` calls the backend yet. The contract assigns the
-   "frontend stock adapter" to the API teammate (Lucas), but the new split says not to touch frontend code.
-4. **Which symbols are allowed?** Only the 40 tickers the weighting backend knows (every pick can be
-   tilted), or any real US ticker Gemini suggests (broader, but most will come back `unchanged`)?
-5. **How many stocks?** The mock returns 3. Proposed: 3 to 5.
+```json
+{
+  "summary": "This portfolio targets leading semiconductor companies exposed to the AI chip supply chain and geopolitical risk around Taiwan. Key Polymarket odds: \"Will China invade Taiwan by December 31, 2027?\" 11%; \"Will AI-chip export licensing become law this year?\" 21%.",
+  "stocks": [
+    {
+      "symbol": "TSM",
+      "name": "Taiwan Semiconductor",
+      "reason": "Polymarket gives 11% that China will invade Taiwan by December 31, 2027, which matters for TSM because its advanced fabs are concentrated in Taiwan.",
+      "marketId": "1633611"
+    },
+    {
+      "symbol": "NVDA",
+      "name": "NVIDIA",
+      "reason": "Polymarket gives 21% that AI-chip export licensing will become law this year, which matters for NVDA because it is the leading designer of AI processors subject to trade restrictions.",
+      "marketId": "1426260"
+    },
+    {
+      "symbol": "INTC",
+      "name": "Intel",
+      "reason": "Intel is building domestic foundry capacity that benefits from reshoring.",
+      "marketId": null
+    }
+  ],
+  "source": "gemini",
+  "markets": [
+    {
+      "id": "1633611",
+      "title": "Will China invade Taiwan by December 31, 2027?",
+      "url": "https://polymarket.com/event/will-china-invade-taiwan-by-december-31-2027",
+      "outcome": "Yes",
+      "probability": 0.105,
+      "observedAt": "2026-10-10T00:34:53.768Z"
+    }
+  ]
+}
+```
+
+**Contract fields** (what `validateStocks` in `/js/controller.js` reads):
+
+| Field             | Type   | Guarantee                                                                                                                              |
+| ----------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `summary`         | string | Non-empty. How the idea maps to the companies, ending with the key Polymarket odds when markets were cited. Same language as the idea. |
+| `stocks`          | array  | 3 to 5 items, unique symbols                                                                                                           |
+| `stocks[].symbol` | string | One of the 40 tickers in the weighting backend's `universe.json`, so `POST /api/weights` can tilt every pick                           |
+| `stocks[].name`   | string | Company name from `universe.json`                                                                                                      |
+| `stocks[].reason` | string | Non-empty. Cites a Polymarket market and its current odds when one is relevant                                                         |
+
+No allocation percentages, weights or stock prices are ever returned, per the contract.
+
+**Extra fields** (optional to use; the controller ignores them):
+
+| Field               | Type                       | Meaning                                                                                                                                                                            |
+| ------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stocks[].marketId` | string \| null             | The Polymarket market the reason cites; matches a `markets[].id`. `null` when no live market was relevant                                                                          |
+| `source`            | `"gemini"` \| `"fallback"` | `"fallback"` = Gemini failed or timed out and stocks were chosen by keyword. The summary says so too                                                                               |
+| `markets`           | array                      | The cited markets, in the same shape as the `evidence` items of `adjustWeights`: `id`, `title`, `url`, `outcome` (always `"Yes"`), `probability` (0 to 1), `observedAt` (ISO time) |
+
+### Error responses
+
+| Status | `error.code`      | When                                                                                       |
+| ------ | ----------------- | ------------------------------------------------------------------------------------------ |
+| 400    | `invalid_request` | Body is not JSON, or `idea` is missing, not a string, empty, or longer than 500 characters |
+| 429    | `rate_limited`    | Rate limit hit. `Retry-After` header gives the seconds to wait                             |
+| 502    | `no_match`        | Gemini is unavailable and no supported stock matched the idea by keyword                   |
+| 502    | `upstream_error`  | Unexpected failure                                                                         |
+
+The adapter must reject on any non-2xx status; the controller then shows its own retry message.
+
+### Behaviour
+
+- **Evidence is real.** Candidate markets come from Polymarket's public search (live, unresolved, Yes/No,
+  with a real price). A stock whose reason cites a market that was not among the candidates is dropped.
+  Odds quoted in a reason are checked against the live price (within 1 point) and rewritten if wrong.
+- **Timing.** Typically 4 to 10 seconds. Gemini has 20 seconds in total, including one retry on invalid
+  output; after that the keyword fallback answers in the same shape.
+- **Caching.** The same idea returns the cached answer for 10 minutes (per server instance).
+- **Rate limits.** 20 requests per minute and 300 per day per IP, 1,500 per day in total.
+- **CORS.** Allowed origins: `https://becomingwise.github.io`, `http://localhost:8000`,
+  `http://127.0.0.1:8000`, `http://localhost:3000`, `http://127.0.0.1:3000`. `OPTIONS` preflight is
+  answered. More origins can be added with the `CORS_ORIGINS` env var (comma-separated).
+
+### Using it from the frontend
+
+`/js/stocks-adapter.js` implements the port. It is not wired into the app; import it where the controller
+is created:
+
+```js
+import { createController } from "./controller.js";
+import { createMockServices } from "./services.js";
+import { findStocks } from "./stocks-adapter.js";
+
+const controller = createController({ ...createMockServices(), findStocks });
+```
+
+For another backend URL (local development):
+
+```js
+import { createFindStocks } from "./stocks-adapter.js";
+const findStocks = createFindStocks({ baseUrl: "http://localhost:3000" });
+```
+
+If the site is published with `scripts/publish_pages.py`, add `js/stocks-adapter.js` to its manifest.
+
+### Try it
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/stocks" -ContentType "application/json" -Body '{"idea":"AI chips and Taiwan risk"}' | ConvertTo-Json -Depth 5
+```
+
+curl:
+
+```sh
+curl -X POST https://prophetf.vercel.app/api/stocks -H "Content-Type: application/json" -d '{"idea":"AI chips and Taiwan risk"}'
+```
+
+Locally without HTTP: `pnpm try:findstocks "your idea"` in `/web`.
 
 ---
 
-## 2. `GET /api/health` — BUILT
+## 2. `GET /api/health` — LIVE
 
 No parameters. `200` when the database is reachable, `503` otherwise.
 
 ```json
 {
   "ok": true,
-  "time": "2026-10-09T22:52:44.360Z",
+  "time": "2026-10-10T00:38:59.783Z",
   "database": {
     "ok": true,
-    "latency_ms": 69.9,
+    "latency_ms": 122.2,
     "postgres": "18.6",
     "timescaledb": "2.30.2",
-    "migrations": 1
+    "migrations": 2
   },
   "sponsors": {
     "tiger": { "enabled": true, "configured": true, "mode": "live" },
@@ -149,5 +186,7 @@ No parameters. `200` when the database is reachable, `503` otherwise.
 
 ## 3. Existing endpoint owned by the Polymarket teammate (Python, not this app)
 
-`POST /api/weights` on the FastAPI service in `/backend` (local port 8001). See `backend/README.md`.
-Listed here only because `findStocks` output feeds it.
+`POST /api/weights` on the FastAPI service in `/backend` (local port 8001). See `/backend/README.md`.
+Listed here because `findStocks` output feeds it: it tilts only the 40 tickers in
+`/backend/src/polyslice_api/data/universe.json`. After that file changes, run `pnpm sync:universe` in `/web`
+and redeploy so both services agree.
