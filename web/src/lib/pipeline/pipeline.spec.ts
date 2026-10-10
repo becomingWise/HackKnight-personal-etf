@@ -585,7 +585,8 @@ describe("checker", () => {
     const stock = {
       symbol: "TSM",
       marketIds: ["1811266"],
-      reason: "Polymarket gives 7.5% to an invasion by 2027; TSMC makes 90 of 100 advanced chips.",
+      reason:
+        "Polymarket gives 7.5% to an invasion by 2027, flat over 7 days; TSMC makes 90 of 100 advanced chips.",
     };
     expect(ungroundedNumbers(stock, packet)).toEqual(["90", "100"]);
   });

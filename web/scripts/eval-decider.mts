@@ -2,17 +2,19 @@
 //   pnpm eval:decider                 all 10 cases, paced for the free quota (about 2 to 4 minutes)
 //   pnpm eval:decider --only fed      cases whose name contains "fed"
 //   pnpm eval:decider --pace 0        no pause between calls (paid quota only)
+//   pnpm eval:decider --lite          the backup model, which answers when the main one is busy (pace 5)
 // Run it before and after every prompt change in src/lib/pipeline/decider.ts and compare the totals.
 //
 // Per case it reports:
 //   first    the first answer passed every checker rule (no revision needed)
 //   final    the returned answer came from Gemini and passes every checker rule
 //   grounded every number in the reasons and the summary is backed by the cited markets
+// It also counts reasons that paste a market question word for word (a style problem, not a failure).
 import { check, ungroundedNumbers } from "../src/lib/pipeline/checker";
 import { EVAL_CASES } from "../src/lib/pipeline/evalCases";
 import { gate } from "../src/lib/pipeline/gate";
 import { decideFromPacket } from "../src/lib/pipeline/run";
-import { GEMINI_MODEL, geminiGenerateJson } from "../src/lib/sponsors/gemini";
+import { GEMINI_LITE_MODEL, GEMINI_MODEL, geminiGenerateJson } from "../src/lib/sponsors/gemini";
 
 const args = process.argv.slice(2);
 const option = (name: string) => {
@@ -20,12 +22,15 @@ const option = (name: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 // 13 seconds per Gemini call keeps the run under the free 5 requests per minute.
-const paceSeconds = Number(option("pace") ?? 13);
+const lite = args.includes("--lite");
+const paceSeconds = Number(option("pace") ?? (lite ? 5 : 13));
 const only = option("only");
 const cases = EVAL_CASES.filter((c) => !only || c.name.includes(only));
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const mark = (ok: boolean | null) => (ok === null ? "-" : ok ? "yes" : "NO");
+let pasted = 0;
+let stocksTotal = 0;
 const rows: {
   name: string;
   expected: boolean;
@@ -37,7 +42,7 @@ const rows: {
 }[] = [];
 
 console.log(
-  `decider eval: ${cases.length} cases, model ${GEMINI_MODEL}, pace ${paceSeconds} s per call\n`,
+  `decider eval: ${cases.length} cases, model ${lite ? GEMINI_LITE_MODEL : GEMINI_MODEL}, pace ${paceSeconds} s per call\n`,
 );
 
 for (const c of cases) {
@@ -45,7 +50,7 @@ for (const c of cases) {
   const packet = c.packet(now);
   const started = Date.now();
   const result = await decideFromPacket(c.idea, packet, {
-    generate: geminiGenerateJson,
+    generate: (call) => geminiGenerateJson({ ...call, prefer: lite ? "lite" : call.prefer }),
     checkerLlm: false,
   });
   const ms = Date.now() - started;
@@ -84,6 +89,17 @@ for (const c of cases) {
     if (firstErrors.length) notes.push(...firstErrors.map((e) => `first answer: ${e}`));
     if (finalErrors.length) notes.push(...finalErrors.map((e) => `final answer: ${e}`));
     if (loose.length) notes.push(`ungrounded numbers: ${loose.join(", ")}`);
+    const pasters = result.decided.filter((s) =>
+      usable.markets.some(
+        (m) => s.marketIds.includes(m.id) && s.reason.includes(m.question.replace(/\?$/, "")),
+      ),
+    );
+    pasted += pasters.length;
+    stocksTotal += result.decided.length;
+    if (pasters.length)
+      notes.push(
+        `style: question pasted word for word by ${pasters.map((s) => s.symbol).join(", ")}`,
+      );
     rows.push({
       name: c.name,
       expected: c.expect === "decision",
@@ -108,6 +124,7 @@ for (const c of cases) {
 }
 
 const decided = rows.filter((r) => r.first !== null);
+const pastedLine = `pasted questions   ${pasted} of ${stocksTotal} reasons`;
 const rate = (n: number, of: number) =>
   `${n}/${of}${of ? ` (${Math.round((100 * n) / of)}%)` : ""}`;
 const latencies = decided.map((r) => r.ms).sort((a, b) => a - b);
@@ -118,6 +135,7 @@ console.log(
     `first-answer pass  ${rate(decided.filter((r) => r.first).length, decided.length)}`,
     `final pass         ${rate(decided.filter((r) => r.final).length, decided.length)}`,
     `grounded           ${rate(decided.filter((r) => r.grounded).length, decided.length)}`,
+    pastedLine,
     `Gemini calls       ${decided.reduce((sum, r) => sum + r.calls, 0)} for ${decided.length} decisions`,
     `latency            median ${latencies[Math.floor(latencies.length / 2)] ?? 0} ms, max ${latencies.at(-1) ?? 0} ms`,
   ].join("\n"),

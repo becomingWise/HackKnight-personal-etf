@@ -132,10 +132,14 @@ export function check(raw: unknown, packet: EvidencePacket): CheckResult {
 export function ungroundedNumbers(stock: DecidedStock, packet: EvidencePacket): string[] {
   const cited = packet.markets.filter((m) => stock.marketIds.includes(m.id));
   const quoted = new Set([...quotedPercents(stock.reason), ...quotedPoints(stock.reason)]);
-  const evidence =
+  // "150,000" and "150000" are the same number; the windows "24 hours" and "7 days" are the packet's own.
+  const plain = (text: string) => text.replace(/(\d),(?=\d{3})/g, "$1");
+  const evidence = plain(
     cited.map((m) => `${m.question} ${m.analystNote}`).join(" ") +
-    ` ${stock.symbol} ${STOCK_BY_SYMBOL.get(stock.symbol)?.name ?? ""}`;
-  return [...stock.reason.matchAll(/\d+(?:[.,]\d+)?/g)]
+      ` ${stock.symbol} ${STOCK_BY_SYMBOL.get(stock.symbol)?.name ?? ""}`,
+  );
+  const reason = plain(stock.reason).replace(/\b(24[- ]?hours?|7[- ]?days?)\b/gi, "");
+  return [...reason.matchAll(/\d+(?:[.,]\d+)?/g)]
     .map((m) => m[0])
     .filter((n) => !quoted.has(Number(n.replace(",", "."))) && !evidence.includes(n));
 }

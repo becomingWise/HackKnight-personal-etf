@@ -378,7 +378,8 @@ Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/decide" -Co
 **Eval.** `pnpm eval:decider` in `/web` runs the decider on 10 fixed ideas with fixed mock packets
 (`web/src/lib/pipeline/evalCases.ts`) and prints, per case and in total: whether the first answer passed
 every checker rule, whether the final answer did, whether every number in it is grounded in the cited
-markets, the Gemini calls and the latency. It is paced for the free quota (about 3 minutes). Run it before
+markets, the Gemini calls, the latency, and how many reasons paste a market question word for word. It is paced for
+the free quota (about 3 minutes) and costs 9 calls of the daily quota; `--lite` runs it on the backup model. Run it before
 and after every change to the prompt in `web/src/lib/pipeline/decider.ts`.
 
 ---

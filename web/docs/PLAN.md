@@ -68,7 +68,8 @@ Follows Anthropic's "Building effective agents": a workflow (fixed code path), n
 - [x] `/api/stocks` runs the workflow; response unchanged plus `trace`; `422 not_enough_evidence` from the gate
 - [x] `POST /api/analyze` (packet only) and `POST /api/decide` (idea + packet)
 - [x] Quota: 1 Gemini call per uncached request, 2 at most; 8 uncached requests per minute may reach Gemini (worst case 16 calls per minute); `CHECKER_LLM=false`
-- [x] `pnpm eval:decider`: 10 ideas with fixed packets; baseline on 2026-10-10: 9/9 first-answer pass, 9/9 grounded, gate case stopped, median 2.9 s
+- [x] `pnpm eval:decider`: 10 ideas with fixed packets; baseline on 2026-10-10: 9/9 first-answer pass, 9/9 grounded, gate case stopped, median 2.9 s (main model), 1.7 s (lite). First prompt change made with it: the backup model pasted market questions into every reason (29 of 29); after the change 0 of 31
+- [ ] **Lucas:** check the daily limit of `gemini-3.5-flash` in AI Studio: after about 45 calls on 2026-10-10 every call got 429 and the lite model answered instead
 - [ ] **Teammate:** choose option A (TypeScript module) or B (Python job → Tiger) and build the real analyst
 - [ ] **Lucas:** when the real analyst is ready, set `ANALYST_MODE` on Vercel (`npx vercel env add ANALYST_MODE production`) and redeploy
 
