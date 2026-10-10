@@ -43,11 +43,32 @@ Walk-forward means a β used on date d is fit only on data before the first of d
 - **Backtest** (`backtest.py`): daily replay of tilted vs. static weights using only odds known at each close, 5 bp per unit turnover, stats per half-period. Continuous and spike-triggered modes.
 - **H1, intraday lead-lag** (`intraday.py`): hourly spikes in hourly chained odds (HH:30 UTC grid, aligned with stocks' hourly bars); for each, the |β|-weighted, signed abnormal return of the 20 most-exposed stocks bar by bar from −6 to +6. H1a sums bars +1..+6, H1b bars −6..−1; one score per date, t-test, 500-run placebo. Hourly stock bars come from Yahoo (last ~730 days, so Oct 2024 on). Details in amendments 7–11. `uv run python -m polyslice_api.intraday`.
 - **H2, cross-sectional dose-response** (`crosssection.py`): on each daily spike date, regress every universe stock's day-0 abnormal return (capped) on its predicted move β × Δp (Fama–MacBeth, one slope per date); also the top-minus-bottom quintile spread and a high-vs-low contract-volume split. Slope 1 = calibrated βs. Because βs are capped at ±1.5, a slope above 1 can mean the cap is binding, not that the βs are biased. Details in amendments 12–16. `uv run python -m polyslice_api.crosssection`.
-- **Pre-registered H3** (live mechanism on the holdout): see the plan.
+- **H3, live mechanism** (`mechanism.py`): per series, a basket of the 20 most-exposed stocks (pooled walk-forward βs, rebuilt monthly, equal weights) replayed daily at static weights and with the app's spike-triggered tilts (`backtest.spike_z`, configs A–C fixed in the plan). Primary metric: max drawdown from the trigger-day close to +10 days, tilted minus static, one score per date, t-test, 500-run block placebo. Secondary: return, Sharpe, drawdown, turnover. Details in amendments 18–24. `uv run python -m polyslice_api.mechanism`.
+- **Cluster rule** (amendment 17, `research.drop_largest_cluster`): every test is rerun without its largest cluster of nearby event dates (dates within max(5, window) trading days, single linkage). A verdict stands only if the reduced t clears the same bar. H1–H3 print it.
 
 ## Results log
 
 Newest first. "Tests run" counts distinct statistical tests behind each claim, for multiple-testing context.
+
+**2026-10-10: H3 (development period, pipeline check): the live tilts don't change drawdowns, because they barely move weights.** The plan reserves H3 for the holdout; this run checks the pipeline, and the configurations stay frozen (amendment 18). 818 trading days; episodes on 16–41 dates per config.
+
+| Config | Episodes (dates) | Drawdown, tilted − static | t | Placebo p | Without largest cluster | Verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| A (1d, hold 5) | 42 (41) | −0.4 bp | −0.53 | 0.76 | −0.0 bp, t −0.03 | not supported |
+| B (1d, hold 10) | 32 (32) | +0.2 bp | 0.18 | 0.94 | −0.6 bp, t −0.87 | not supported |
+| C (7d, hold 10) | 16 (16) | −1.5 bp | −0.60 | 0.64 | +0.3 bp, t 0.18 | not supported |
+
+- **The tilts are tiny.** While a tilt is active, the largest single-stock change averages 0.03–0.55 pts on a 5% base weight (config A). Two reasons: pooled βs are small for most series (median |β| 0.29 for Fed), and when a basket's βs share a sign, renormalising cancels most of the tilt. A long-only basket can only shift weight between stocks with different exposures.
+- **Secondary metrics:** tilted and static are within 1 pt of total return and 0.16 of Sharpe on every basket; turnover rises from 0.5–1.6% to 0.6–1.7% a day.
+- **Implication for the holdout:** at these settings H3 is very likely null by construction. The holdout run will still use A–C unchanged; larger sensitivities would be a new, separately pre-registered test.
+- Taiwan baskets sit at the β cap (median |β| 1.5) and trigger on 2-pt moves (the live trigger has no minimum move). Suspect, not acted on.
+- Tests run: 3, each with a 500-run placebo and the cluster rule.
+
+**2026-10-10: Cluster rule (amendment 17) applied to H1 and H2 (development period).**
+- **H2:** unchanged (not supported). H2a without 2024-08-01: slope 0.73, t 1.47. H2b without 2025-04-03/07: +7 bp, t 0.66. The rerun reproduced the H2 numbers below exactly.
+- **H1a: survives, stays suggestive** (reverses the provisional downgrade, which used t 1.95 from dropping only 2025-04-03/04). The rule drops the whole cluster: 2025-04-03, 04-04 and 04-09. Without it: +32.7 bp, t 2.31 on 30 dates, above the 2.0 bar. The 04-09 spike (Fed odds the day of the tariff pause) scored −109 bp, so removing the full cluster costs less than removing only its two best dates (+282 bp on 04-03, +478 bp on 04-04). Still below t 3 and still fragile: 2.31 comes from the cluster definition, not from April mattering less. The rule was written after this dependence was seen.
+- **H1b:** unchanged (not supported). Without 2025-10-16: +0.7 bp, t 0.05.
+- **H1 rerun:** hourly caches rebuilt 2026-10-09 (Yahoo bars 2024-10-11 → 2026-10-09, 514 symbols, none missing). The full sample matches the H1 entry below exactly: H1a +49.4 bp, t 2.41, hit 70%, placebo p 0.002; H1b +4.9 bp, t 0.30, placebo p 0.745; 33 scored spikes. Yahoo's 730-day window did not move far enough to change any scored spike. Holdout not touched.
 
 **2026-10-10: H2 (development period): the exposure ranking does not predict the cross-section.** 57 daily spikes, 39 dates with fitted βs. Day-0 abnormal returns (capped) regressed on β × Δp across ~490 stocks, one slope per date:
 
@@ -71,7 +92,7 @@ Newest first. "Tests run" counts distinct statistical tests behind each claim, f
 
 - **Stocks don't lead the odds.** Nothing before the spike.
 - **There is drift after the spike, during trading hours.** Bars that stay within one session carry +52 bp of the +49 bp; bars that open after an overnight gap carry −2 bp. So the drift happens while markets are open, not overnight, which is what "time to act" needs.
-- **It leans on one week.** The largest contributions are 2025-04-03 and 04-04 (+478 bp and +282 bp, Fed odds falling during the tariff sell-off). Without those two dates: +28 bp, t 1.95. Median spike +33 bp. Fed spikes: +55 bp (t 1.82, 22 dates); all others: +38 bp (t 2.66, 11 dates).
+- **It leans on one week.** The largest contributions are 2025-04-04 and 04-03 (+478 bp and +282 bp, Fed odds falling during the tariff sell-off). Without those two dates: +28 bp, t 1.95. Median spike +33 bp. Fed spikes: +55 bp (t 1.82, 22 dates); all others: +38 bp (t 2.66, 11 dates).
 - Below the pre-registered t > 3 bar, so this is a lead to confirm on the holdout, not a finding. The holdout has only 2 hourly spikes so far, so confirming it needs data from after 2026-10-09 accumulating, or more series.
 - Tests run: 2 pre-registered, each with a 500-run placebo. The trimmed, without-April and per-series numbers above are descriptive checks run after seeing the result, not additional tests.
 
@@ -106,6 +127,7 @@ Newest first. "Tests run" counts distinct statistical tests behind each claim, f
 - Small samples: tens of spike dates, a few years of history, 5 series.
 - Survivorship bias only partly corrected (no removed stocks).
 - Earlier analyses saw data through 2026-10-09; the holdout is clean only for H1–H3.
+- The live tilts are small with pooled βs and same-sign baskets, so H3 tests a mechanism that barely acts at the pre-registered sensitivity.
 - Prediction-market odds are event probabilities, not return forecasts.
 - Intraday bars aren't dividend-adjusted, so an ex-dividend overnight drop lands in one H1 bar. This adds noise, not bias, because the score's sign follows the odds move.
 - Chained series mix contract horizons; the Ukraine series mixes "ceasefire" and "ceasefire agreement" questions.

@@ -74,3 +74,13 @@ def test_summary_tests_and_placebo():
     assert c["t"] == pytest.approx(0.8 / np.sqrt(0.02 / 2 + 0.02 / 2))
     assert a["placebo_p"] == pytest.approx(0.5)
     assert "placebo_p" not in c  # the placebo run had no low-volume dates, so no H2c statistic
+
+
+def test_summarize_applies_the_cluster_rule_with_a_calendar():
+    cal = [D0 + timedelta(days=k) for k in range(60)]
+    rows = [{"trading_day": cal[k].isoformat(), "slope": s, "spread": s / 100, "stocks": 100}
+            for k, s in [(0, 1.0), (10, 1.2), (20, 9.0), (22, 8.0), (40, 0.8), (50, 1.1)]]
+    t = crosssection.summarize(rows, calendar=cal)["tests"]["H2a"]
+    assert t["robust"]["dropped"] == [cal[20].isoformat(), cal[22].isoformat()]
+    assert t["robust"]["dates"] == 4
+    assert t["robust_verdict"] in {"evidence", "suggestive", "not supported"}
