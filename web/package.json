@@ -20,6 +20,8 @@
     "parity:weights": "node scripts/run-parity.mjs",
     "jobs:loop": "tsx --env-file-if-exists=.env.local scripts/jobs-loop.mts",
     "try:odds": "tsx --env-file-if-exists=.env.local scripts/try-odds.mts",
+    "closes:load": "tsx --env-file-if-exists=.env.local scripts/load-closes.mts",
+    "track:leak-check": "tsx --env-file-if-exists=.env.local scripts/leak-check.mts",
     "demo:warm": "tsx --env-file-if-exists=.env.local scripts/demo-warm.mts",
     "try:letter": "tsx --env-file-if-exists=.env.local scripts/try-letter.mts",
     "try:narrate": "tsx --env-file-if-exists=.env.local scripts/try-narrate.mts",
