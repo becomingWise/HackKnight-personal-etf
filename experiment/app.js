@@ -12,7 +12,7 @@ const sourceName = provider => provider === "kalshi" ? "Kalshi" : "Polymarket";
 const safeUrl = value => { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? escape(url.href) : "#"; } catch { return "#"; } };
 const dateTime = value => value ? new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) + " ET" : "Unavailable";
 const fitLabel = fit => fit?.status === "observed" ? "Observed association" : fit?.status === "insufficient" || !fit ? "Not enough history" : "Weak evidence";
-const state = { overview: null, saved: null, analysis: null, eventId: null, target: null, range: 63, request: 0, busy: false };
+const state = { overview: null, saved: null, analysis: null, eventId: null, eventOpen: true, target: null, range: 63, request: 0, busy: false };
 const sessionId = crypto.randomUUID();
 const arrow = '<span aria-hidden="true">↗</span>';
 const errorNode = '<p id="error" class="error" role="alert" hidden></p>';
@@ -34,13 +34,19 @@ function error(message = "") { const node = $("#error"); if (node) { node.hidden
 function save() { try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state.saved)); } catch { error("This browser cannot save the basket across refreshes. You can still explore it here."); } }
 function header(step) {
   return `<header class="topbar"><a class="brand" href="/" data-route="/" aria-label="MyETF Lab home">${brand}</a>
-    <nav class="steps" aria-label="Your basket journey">${[["Idea", "/"], ["Basket", "/basket"], ["Explore", "/events"]].map(([name, path], i) => {
-      const disabled = i === 1 ? !state.saved : i === 2 && !state.saved?.symbols.length;
+    <nav class="steps" aria-label="Your basket journey">${[["Idea", "/"], ["Basket", "/basket"]].map(([name, path], i) => {
+      const disabled = i === 1 && !state.saved;
       return disabled ? `<span><i>${i+1}</i>${name}</span>` : `<a href="${path}" data-route="${path}" ${step === i+1 ? 'aria-current="step"' : ""}><i>${i+1}</i>${name}</a>`;
     }).join("")}</nav></header>`;
 }
 function navigate(path) {
   history.pushState({}, "", path); void renderPage(); window.scrollTo(0, 0);
+}
+function scrollToOutlook() {
+  const heading = $("#outlook-title");
+  if (!heading) return;
+  heading.focus({ preventScroll: true });
+  $("#outlook").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
 }
 function resizeIdea() {
   const input = $("#idea"); if (!input) return;
@@ -81,7 +87,12 @@ function renderBasket(message = "") {
       ${rows.length ? rows.map(stock => `<article class="holding-row"><div class="holding-company"><span class="ticker-mark" aria-hidden="true">${escape(stock.symbol.slice(0,3))}</span><div><h2>${escape(stock.name)}</h2><span class="holding-symbol">${escape(stock.symbol)}</span></div></div>
         <span class="holding-sector">${escape(stock.sector)}</span><span class="holding-weight"><span class="sr-only">Weight </span>${stock.weightPct.toFixed(2)}%</span>
         <strong class="holding-dollars"><span class="sr-only">Paper allocation </span>${formatUsdCents(stock.allocatedCents)}</strong><button class="delete-button" data-remove="${escape(stock.symbol)}" aria-label="Delete ${escape(stock.symbol)}">×</button></article>`).join("") : '<div class="empty-basket"><h2>Your basket is empty.</h2><p>Undo a deletion or return to your idea to start again.</p></div>'}
-    </section><div class="basket-next"><span>${rows.length ? "100% allocated · delete a company to rebalance" : "Your paper funds are preserved"}</span><button id="explore" class="primary" ${rows.length ? "" : "disabled"}>Explore events ${arrow}</button></div></main>` + footer + amountDialog();
+    </section><div class="basket-next"><span>${rows.length ? "100% allocated · delete a company to rebalance" : "Your paper funds are preserved"}</span><button id="explore" class="secondary" ${rows.length ? "" : "disabled"}>Events to watch <span aria-hidden="true">↓</span></button></div>
+    <section id="outlook" class="outlook-section" aria-labelledby="outlook-title"><div class="outlook-heading"><p class="eyebrow">ON THE HORIZON</p><h2 id="outlook-title" tabindex="-1">What could move your ETF?</h2><p>Follow the possibilities. Explore what changing odds could mean for your basket.</p></div>
+      <p id="analysis-error" class="error" role="alert" hidden></p><div id="analysis-content">${rows.length ? '<p class="loading" role="status">Finding events connected to your companies…</p>' : '<p class="empty-events glass">Restore a company to see what could affect your basket.</p>'}</div>
+    </section></main>` + footer + amountDialog();
+  const request = ++state.request;
+  if (rows.length) void loadOutlook(request);
 }
 function openAmountDialog(mode) {
   const dialog = $("#amount-dialog"); dialog.dataset.mode = mode;
@@ -99,78 +110,105 @@ function previewAmount() {
   } catch { $("#amount-preview").textContent = ""; }
 }
 function chooseEvent(event) {
-  state.eventId = event?.id ?? null;
-  state.target = Number.isFinite(event?.probability) ? event.probability : null;
+  if (event?.id === state.eventId) state.eventOpen = !state.eventOpen;
+  else {
+    state.eventId = event?.id ?? null; state.eventOpen = true;
+    state.target = Number.isFinite(event?.probability) ? event.probability : null;
+  }
   renderEventDetail();
 }
 function renderEventDetail() {
   const event = currentEvent(), available = event?.status === "available" && Number.isFinite(event.probability);
-  $("#event-select").value = event?.id ?? "";
+  const selected = [...document.querySelectorAll("[data-event]")].find(button => button.dataset.event === event?.id);
+  if (!selected) return;
+  document.querySelectorAll("[data-event]").forEach(button => {
+    const active = button === selected && state.eventOpen;
+    button.setAttribute("aria-expanded", active);
+    button.closest(".event-post").classList.toggle("selected", active);
+    button.querySelector(".event-action").textContent = active ? "Close scenario ↑" : "Explore basket impact →";
+  });
+  const panel = $("#scenario-panel");
+  selected.closest(".event-post").append(panel); panel.hidden = !state.eventOpen;
+  if (!state.eventOpen) return;
   $("#scenario-controls").innerHTML = `<div class="scenario-heading"><div><p class="eyebrow">WHAT IF THE ODDS CHANGE?</p><h2>Move the odds. Explore your basket.</h2></div><span class="session-pill">20 trading sessions</span></div>
     <div class="scenario-numbers"><div class="probability-comparison ${Number.isFinite(event?.probability) ? "" : "unavailable-odds"}"><div><span>Observed Yes odds</span><strong>${pct(event?.probability)}</strong></div><span class="probability-arrow" aria-hidden="true">→</span><div><label for="probability">Your scenario</label><output id="target-probability" for="probability">${pct(state.target)}</output></div></div>
       <div id="scenario-output" class="basket-effect" aria-live="polite"></div></div>
     <input id="probability" type="range" min="0" max="100" step="0.1" value="${(state.target ?? 0)*100}" aria-label="Hypothetical Yes probability" ${available ? "" : "disabled"}>
     <div class="range-labels"><span>0%</span><button id="reset-scenario" class="reset-button" ${available ? "" : "disabled"}>↶ Reset to observed</button><span>100%</span></div><p id="scenario-note" class="scenario-note"></p>`;
-  $("#event-detail").innerHTML = event ? `<section class="odds-panel glass"><div class="odds-heading"><div><p class="eyebrow">THE EVENT BEHIND YOUR SCENARIO</p><h2>Event odds history</h2></div><span>${sourceName(event.provider)}${event.url ? ` <a class="external-link" href="${safeUrl(event.url)}" target="_blank" rel="noreferrer">View market ↗</a>` : ""}</span></div>
-      <p class="event-title">${escape(eventName(event))}</p><div id="odds-chart"></div><p class="business-link">${escape(event.businessLink)}</p>
-      ${event.stale ? '<p class="caution">Previous observations · the latest refresh failed for this event.</p>' : ""}
-      ${event.historyError ? `<p class="caution">Some odds history could not be downloaded: ${escape(event.historyError)} Only available observations are shown.</p>` : ""}
-      <details class="reliability"><summary>Historical evidence & assumptions</summary>
-        <p>Affects ${event.linkedHoldings.map(escape).join(", ")}. ${escape(event.oddsKind ?? "Yes outcome price")}. Observed ${dateTime(event.observedAt)}.</p>
+  $("#event-detail").innerHTML = `<details class="reliability"><summary>Evidence & scenario assumptions</summary>
+        ${event.stale ? '<p class="caution">Previous observations · the latest refresh failed for this event.</p>' : ""}
+        ${event.historyError ? `<p class="caution">Some underlying odds observations could not be downloaded: ${escape(event.historyError)}</p>` : ""}
+        <p>${sourceName(event.provider)} · Affects ${event.linkedHoldings.map(escape).join(", ")}. ${escape(event.oddsKind ?? "Yes outcome price")}. Observed ${dateTime(event.observedAt)}.</p>
         <p>Contract ${escape(event.marketId ?? "unavailable")}${event.endDate ? ` · closes ${dateTime(event.endDate)}` : ""}.</p>
         <p>Basket evidence: ${event.fit.n} overlapping days${event.fit.start ? ` (${escape(event.fit.start)} to ${escape(event.fit.end)})` : ""}. ${Number.isFinite(event.fit.partialR2) ? `Partial R² ${(event.fit.partialR2*100).toFixed(1)}%.` : ""} ${event.fit.holdout ? `Later direction ${event.fit.holdout.directionStable ? "consistent" : "changed"}; ${event.fit.holdout.n} held-out days.` : "Not enough history for a later direction check."} ${Number.isFinite(event.fit.qValue) ? `Multiple-event q=${event.fit.qValue.toFixed(3)}.` : ""}</p>
         <p>Odds move gradually to your slider value over 20 scheduled US trading sessions. The cumulative effect is applied once, with broader-market movement and other events held fixed. Fits control for SPY, need 60 varying overlapping changes and only use odds known before the equity close, at most 18 hours old.</p>
         <p>The shaded 95% band reflects uncertainty in the fitted relationship, not future-return uncertainty. This is an illustrative scenario, not a validated forecast. Dollar effects use your paper funding amount; they do not record gains or sales.</p>
         <p>${event.provider === "kalshi" ? "Kalshi uses observed hourly Yes bid/ask midpoints." : "Polymarket uses observed 12-hour Yes prices."} Outcomes and expirations remain separate.</p>
         ${event.rules ? `<p>Settlement rule: ${escape(event.rules)}</p>` : ""}${event.historySource ? `<a href="${safeUrl(event.historySource)}" target="_blank" rel="noreferrer">Historical data source ↗</a>` : ""}
-      </details></section>` : '<p class="empty-events">No verified events cover this basket in the current snapshot. You can still explore its history.</p>';
-  if (event) {
-    const history = (event.history ?? []).map(p => ({ date: new Date(p.timestamp*1000).toISOString(), close: p.price }));
-    $("#odds-chart").innerHTML = chartMarkup({ id: "odds", label: `${sourceName(event.provider)} event odds history`, history, odds: true });
-    bindCharts($("#odds-chart"));
-  }
+      </details>`;
   updateScenario();
 }
 function updateScenario() {
   const event = currentEvent(), history = state.analysis.basketHistory;
   const available = event?.status === "available" && state.target != null;
   const path = available ? scenarioPath(history, event.fit, event.probability, state.target) : { points: [], reason: event?.reason ?? "Choose an available event to explore a scenario." };
-  $("#target-probability").textContent = pct(state.target);
-  $("#probability").style.setProperty("--range-progress", `${(state.target ?? 0)*100}%`);
-  $("#probability").setAttribute("aria-valuetext", `${pct(state.target)} hypothetical Yes odds`);
-  $("#scenario-output").innerHTML = `<span>Illustrative basket change</span><strong class="${path.estimatePct < 0 ? "negative" : "positive"}">${path.points.length ? signed(path.estimatePct) : "Unavailable"}</strong>
+  if ($("#target-probability")) $("#target-probability").textContent = pct(state.target);
+  $("#probability")?.style.setProperty("--range-progress", `${(state.target ?? 0)*100}%`);
+  $("#probability")?.setAttribute("aria-valuetext", `${pct(state.target)} hypothetical Yes odds`);
+  if ($("#scenario-output")) $("#scenario-output").innerHTML = `<span>Illustrative basket change</span><strong class="${path.estimatePct < 0 ? "negative" : "positive"}">${path.points.length ? signed(path.estimatePct) : "Unavailable"}</strong>
     <small>${path.points.length && paperAmount() > 0 ? `${signedMoney(paperAmount()*path.estimatePct/100)} on ${formatUsdCents(state.saved.paperAmountCents)} in paper funds` : "Compared with unchanged odds"}</small>`;
-  $("#scenario-note").textContent = path.points.length ? `${fitLabel(event.fit)} · ${event.fit.n} overlapping days${path.extrapolated ? " · This odds move exceeds the largest observed daily change." : ""}` : path.reason;
+  if ($("#scenario-note")) $("#scenario-note").textContent = path.points.length ? `${fitLabel(event.fit)} · ${event.fit.n} overlapping days${path.extrapolated ? " · This odds move exceeds the largest observed daily change." : ""}` : path.reason;
   $("#basket-chart").innerHTML = chartMarkup({ id: "basket", label: "Your basket historical simulation and illustrative scenario", history: history.slice(-state.range), projection: path.points });
   $("#basket-chart-note").textContent = history.length < 2 ? state.analysis.historyReason ?? "Basket price history is unavailable." : "Simulation of today's holdings · daily equal weights · index starts at 100";
   $("#fit-interval").textContent = path.points.length ? `Illustrative scenario · 95% fit interval ${signed(path.lowPct)} to ${signed(path.highPct)}` : "History is shown; a future illustration needs enough overlapping observations.";
   document.querySelectorAll("[data-range]").forEach(button => { const active = Number(button.dataset.range) === state.range; button.classList.toggle("active", active); button.setAttribute("aria-pressed", active); });
   bindCharts($("#basket-chart"));
 }
-async function renderEventsPage() {
-  document.title = "Explore events — MyETF Lab";
-  $("#app").innerHTML = header(3) + `<main class="page events-page"><div class="page-heading compact"><div><p class="eyebrow">EXPLORE YOUR BASKET</p><h1>A different future. What changes?</h1></div><a class="text-button" href="/basket" data-route="/basket">← Edit basket</a></div>${errorNode}<div id="analysis-content"><p class="loading" role="status">Reading your basket's history…</p></div></main>` + footer;
-  const request = ++state.request;
+function basketChartShell() {
+  return `<div class="basket-chart-heading"><h2>Your basket</h2><div class="range-tabs" aria-label="Historical chart range">${[[21,"1M"],[63,"3M"],[252,"1Y"]].map(([n,label]) => `<button data-range="${n}">${label}</button>`).join("")}</div></div><div id="basket-chart"></div><div class="chart-legend"><span><i></i>Observed history</span><span><i class="dashed"></i>Illustrative scenario</span><span><i class="band"></i>Fit uncertainty</span></div><p id="basket-chart-note" class="chart-caption"></p><p id="fit-interval" class="small-note"></p>`;
+}
+async function loadOutlook(request) {
   try {
     const data = state.analysis ?? await api("/api/analysis", { symbols: state.saved.symbols });
-    if (request !== state.request || location.pathname !== "/events") return;
+    if (request !== state.request || location.pathname !== "/basket") return;
     state.analysis = data;
-    $("#analysis-content").innerHTML = `<section class="scenario-panel glass"><div class="event-picker"><label for="event-select">Choose a related event</label><div class="select-wrap"><select id="event-select" ${data.events.length ? "" : "disabled"}>
-      ${data.events.length ? data.events.map(event => `<option value="${escape(event.id)}">${escape(eventName(event))} · ${event.status === "available" ? `${pct(event.probability)} Yes` : "Unavailable"}</option>`).join("") : '<option value="">No verified events available</option>'}</select></div></div><div id="scenario-controls"></div>
-      <div class="basket-chart-heading"><h2>Your basket</h2><div class="range-tabs" aria-label="Historical chart range">${[[21,"1M"],[63,"3M"],[252,"1Y"]].map(([n,label]) => `<button data-range="${n}">${label}</button>`).join("")}</div></div><div id="basket-chart"></div><div class="chart-legend"><span><i></i>Observed history</span><span><i class="dashed"></i>Illustrative scenario</span><span><i class="band"></i>Fit uncertainty</span></div><p id="basket-chart-note" class="chart-caption"></p><p id="fit-interval" class="small-note"></p></section>
-      <div id="event-detail"></div><div class="snapshot-bar"><span>Snapshot ${dateTime(data.builtAt)}</span><button id="refresh" class="text-button">Refresh observations ↻</button></div>`;
-    chooseEvent(data.events.find(e => e.id === state.eventId) ?? data.events.find(e => e.status === "available") ?? data.events[0]);
+    const selected = data.events.find(e => e.id === state.eventId) ?? data.events.find(e => e.status === "available") ?? data.events[0];
+    if (selected?.id !== state.eventId) state.eventOpen = true;
+    if (selected?.id !== state.eventId || !Number.isFinite(state.target)) state.target = Number.isFinite(selected?.probability) ? selected.probability : null;
+    state.eventId = selected?.id ?? null;
+    $("#analysis-content").innerHTML = `<div class="feed-meta"><span>${data.events.length} possibilities connected to your holdings</span><span>Prediction-market signals</span></div>
+      <div class="event-feed" aria-label="Events that could affect your ETF">${data.events.map((event, i) => `<article class="event-post glass" aria-labelledby="event-title-${i}">
+        <div class="event-post-heading"><span class="event-avatar ${escape(event.provider)}" aria-hidden="true">${event.provider === "kalshi" ? "K" : "P"}</span><div><span class="event-source">${sourceName(event.provider)}${event.url ? `<a href="${safeUrl(event.url)}" target="_blank" rel="noreferrer" aria-label="View ${escape(eventName(event))} on ${sourceName(event.provider)}">↗</a>` : ""}</span><span class="event-timestamp">${event.observedAt ? `Observed ${dateTime(event.observedAt)}` : "Quote unavailable"}</span></div><span class="event-odds">${event.status === "available" ? pct(event.probability) : "—"}<small>Yes odds</small></span></div>
+        <button class="event-story" data-event="${escape(event.id)}" aria-expanded="false" aria-controls="scenario-panel"><span class="event-headline" id="event-title-${i}">${escape(eventName(event))}</span><span class="event-connection">${escape(event.businessLink)}</span><span class="event-holdings"><span>In your basket</span>${event.linkedHoldings.map(symbol => `<span class="holding-chip">${escape(symbol)}</span>`).join("")}</span><span class="event-story-footer"><span class="event-evidence">${fitLabel(event.fit)}</span><span class="event-action">Explore basket impact →</span></span></button>
+      </article>`).join("")}</div>
+      <section id="scenario-panel" class="scenario-panel thread-reply" aria-label="Selected event basket scenario" hidden><div id="scenario-controls"></div>${basketChartShell()}<div id="event-detail"></div></section>
+      ${data.events.length ? "" : '<p class="empty-events glass">No verified events cover this basket in the current snapshot.</p>'}<div class="snapshot-bar"><span>Snapshot ${dateTime(data.builtAt)}</span><button id="refresh" class="text-button">Refresh observations ↻</button></div>`;
+    if (selected) renderEventDetail();
+    else {
+      const panel = $("#scenario-panel"); panel.hidden = false; panel.classList.add("glass");
+      $("#scenario-controls").hidden = true;
+      $("#scenario-panel .chart-legend").innerHTML = '<span><i></i>Observed history</span>';
+      updateScenario();
+    }
   } catch (err) {
-    if (request === state.request && location.pathname === "/events") {
-      error(err.message); $("#analysis-content").innerHTML = '<p class="loading">Could not load analysis. <button id="retry" class="text-button">Try again</button></p>';
+    if (request === state.request && location.pathname === "/basket") {
+      $("#analysis-error").hidden = false; $("#analysis-error").textContent = err.message;
+      $("#analysis-content").innerHTML = '<p class="loading">Could not load the event feed. <button id="retry" class="text-button">Try again</button></p>';
     }
   }
 }
+async function reloadOutlook() {
+  $("#analysis-error").hidden = true;
+  $("#analysis-content").innerHTML = '<p class="loading" role="status">Finding events connected to your companies…</p>';
+  await loadOutlook(++state.request);
+}
 async function renderPage() {
   state.request++;
+  // Keep old bookmarks working: scenarios now live beneath the basket.
+  if (location.pathname === "/events") history.replaceState({}, "", state.saved?.symbols.length ? "/basket#outlook" : "/");
   // A saved empty basket remains editable and its unallocated paper funds stay accessible.
-  if ((location.pathname === "/basket" && !state.saved) || (location.pathname === "/events" && !state.saved?.symbols.length)) history.replaceState({}, "", "/");
-  if (location.pathname === "/basket") renderBasket(); else if (location.pathname === "/events") await renderEventsPage(); else renderIdea();
+  if (location.pathname === "/basket" && !state.saved) history.replaceState({}, "", "/");
+  if (location.pathname === "/basket") { renderBasket(); if (location.hash === "#outlook") scrollToOutlook(); } else renderIdea();
 }
 document.addEventListener("submit", async event => {
   if (event.target.id === "amount-form") {
@@ -201,6 +239,11 @@ document.addEventListener("click", async event => {
   const route = event.target.closest("[data-route]");
   if (route && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.button === 0) { event.preventDefault(); navigate(route.dataset.route); return; }
   const button = event.target.closest("button"); if (!button || button.disabled) return;
+  if (button.dataset.event) {
+    chooseEvent(state.analysis.events.find(e => e.id === button.dataset.event));
+    button.closest(".event-post").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
+    return;
+  }
   if (button.dataset.remove) {
     const index = state.saved.symbols.indexOf(button.dataset.remove);
     state.saved = deleteHolding(state.saved, button.dataset.remove); state.analysis = null;
@@ -216,14 +259,15 @@ document.addEventListener("click", async event => {
   }
   if (["buy","sell"].includes(button.id)) openAmountDialog(button.id);
   if (button.id === "cancel-amount") $("#amount-dialog").close();
-  if (button.id === "explore") navigate("/events");
+  if (button.id === "explore") scrollToOutlook();
   if (button.dataset.range) { state.range = Number(button.dataset.range); updateScenario(); }
   if (button.id === "reset-scenario") { state.target = currentEvent().probability; $("#probability").value = state.target*100; updateScenario(); }
-  if (button.id === "retry") await renderEventsPage();
+  if (button.id === "retry") await reloadOutlook();
   if (button.id === "refresh") {
-    button.disabled = true; button.textContent = "Refreshing…"; error();
-    try { await api("/api/refresh", {}); state.analysis = null; if (location.pathname === "/events") await renderEventsPage(); }
-    catch (err) { error(err.message); if (button.isConnected) { button.disabled = false; button.textContent = "Refresh observations ↻"; } }
+    const request = ++state.request;
+    button.disabled = true; button.textContent = "Refreshing…"; $("#analysis-error").hidden = true;
+    try { await api("/api/refresh", {}); if (request === state.request && location.pathname === "/basket") { state.analysis = null; await reloadOutlook(); } }
+    catch (err) { if (button.isConnected) { $("#analysis-error").hidden = false; $("#analysis-error").textContent = err.message; button.disabled = false; button.textContent = "Refresh observations ↻"; } }
   }
   if (button.id === "export") {
     const url = URL.createObjectURL(new Blob([JSON.stringify(exportBasket(state.saved, state.overview.stocks), null, 2)], { type: "application/json" }));
@@ -235,7 +279,6 @@ document.addEventListener("input", event => {
   if (event.target.id === "idea") resizeIdea();
   if (event.target.id === "amount") previewAmount();
 });
-document.addEventListener("change", event => { if (event.target.id === "event-select") chooseEvent(state.analysis.events.find(e => e.id === event.target.value)); });
 document.addEventListener("keydown", event => {
   if ($("#amount-dialog")?.open && event.key === "Tab") {
     const controls = [$("#amount"), $("#cancel-amount"), $("#confirm-amount")];

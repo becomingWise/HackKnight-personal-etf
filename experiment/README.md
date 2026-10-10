@@ -1,4 +1,4 @@
-# MyETF Lab: simplified three-page experiment
+# MyETF Lab: basket and event-feed experiment
 
 Local prototype on `codex/shaun-experiment`, based on Lucas's branch. No remote push,
 deployment, real trading, or writes to the team's database. The original application retains
@@ -19,11 +19,16 @@ behavior is merged into this experiment.
   Shift + Enter inserts a newline. Loading and errors stay beside the input.
 - `/basket`: compact company rows, equal percentages and paper dollar allocations.
   Buy adds funds; Sell subtracts an entered amount up to the full paper balance.
-  Delete/undo redistributes retained funding. Back, Export and Explore events remain.
-- `/events`: one mixed event picker, a prominent probability slider above one large
-  basket chart, and the selected contract's actual odds history below. Sources and
-  technical evidence remain in the event details. No individual-stock effects or
-  provider filters are displayed.
+  Delete/undo redistributes retained funding. Back, Undo and Export remain. Events to
+  watch scrolls to the event feed below the holdings on this same page.
+- The feed presents possible future developments as posts, with provider attribution,
+  observed Yes odds, business connections and affected holdings. Opening a post reveals
+  a prominent probability slider and the basket chart as an inline thread reply.
+  Only one scenario is open at a time; closing and reopening a post retains its slider,
+  while switching contracts resets it. Technical evidence stays in an expandable section.
+  Event odds-history charts, dropdown selection and individual-stock effects are removed.
+- `/events` remains a compatible bookmark and redirects to `/basket#outlook` when a
+  basket exists. There are two pages in the journey: idea and basket.
 
 Browser session storage preserves the idea, candidates, deletions, undo stack and paper
 amount through navigation and refresh. A successful new idea replaces the basket and
@@ -123,8 +128,8 @@ Run `node --test tests/*.test.js`. Checks cover the original contracts, automati
 deletion/undo/storage, equal allocations, shared-date basket replay, provider normalization,
 missing/future quotes, contract separation, outage retention, analysis validation, suggestion
 failures, exchange-calendar dates, cumulative scenario paths and uncertainty. Browser checks
-cover all three pages, direct visits, refresh recovery, desktop/mobile layouts, chart tooltips,
-the unified event picker and slider changing only the basket chart while leaving funds and
+cover both pages, legacy event bookmarks, refresh recovery, desktop/mobile layouts, chart tooltips,
+the event feed and slider changing only the basket chart while leaving funds and
 weights fixed. Paper tests cover decimal validation, partial/full sales, overflow, exact cent
 totals, session migration, empty funding and exports. Browser checks cover cancellation,
 dialog focus and dollar scenario illustrations.
