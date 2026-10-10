@@ -73,6 +73,9 @@ export function createGeminiCall({ apiKey, fetch: fetchFn = globalThis.fetch }) 
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) {
+      if (response.status === 400 && /api key not valid|invalid api key/i.test(data?.error?.message ?? "")) {
+        throw new AgentError("not_configured", "The Gemini API key is invalid. Update agent/.env and restart the local experiment.", 503);
+      }
       const error = new Error(data?.error?.message ?? `Gemini answered ${response.status}.`);
       error.status = response.status;
       throw error;
@@ -158,7 +161,7 @@ export function tidySummary(text) {
   return words.slice(0, MAX_SUMMARY_WORDS).join(" ").replace(/[\s,;:–—-]+$/u, "");
 }
 
-function parseAnswer(text) {
+function parseAnswer(text, selection) {
   let data;
   try {
     data = JSON.parse(text);
@@ -167,7 +170,7 @@ function parseAnswer(text) {
   }
   const summary = tidySummary(data?.summary);
   if (!summary) return { ok: false, errors: ["summary must be a short non-empty string."] };
-  const checked = checkSelection(data?.symbols);
+  const checked = checkSelection(data?.symbols, selection);
   return checked.ok ? { ok: true, value: { summary, stocks: checked.stocks } } : checked;
 }
 
@@ -192,6 +195,10 @@ function sessionBlock(record) {
  * @param {object} [options.memory]  Store with load / rememberPreference / rememberBasket.
  * @param {object} [options.cache]   Cache with get(key) / set(key, value, ttlMs).
  * @param {object} [options.budget]  reserve / block / available (see createLocalBudget).
+ * @param {{ min?: number, max?: number, companiesOnly?: boolean }} [options.selection]
+ *   Optional shortlist bounds; original callers still get exactly three stocks.
+ * @param {string} [options.systemPrompt] Prompt matching a custom selection contract.
+ * @param {(idea: string) => string} [options.promptNotes] Context matching a custom selection contract.
  * @param {{ agent: string[], search: string[] }} [options.models]
  * @param {boolean} [options.search] False switches the google_search tool off.
  * @param {string | null} [options.sessionId] Default session when a call names none.
@@ -199,6 +206,19 @@ function sessionBlock(record) {
  * @param {(event: object) => void} [options.log]
  */
 export function createFindStocks(options = {}) {
+  // The original three-stock contract stays the default. The isolated experiment asks for a
+  // 7–10-company shortlist and lets the user build their own basket afterwards.
+  const selection = { min: BASKET_SIZE, max: BASKET_SIZE, companiesOnly: false, ...options.selection };
+  const available = ALLOWED.filter(t => !selection.companiesOnly || t.kind === "company");
+  if (!Number.isInteger(selection.min) || !Number.isInteger(selection.max) || selection.min < 1 || selection.max < selection.min || selection.max > available.length) {
+    throw new RangeError("Invalid stock selection range.");
+  }
+  const count = selection.min === selection.max ? `exactly ${selection.min}` : `${selection.min} to ${selection.max}`;
+  const system = options.systemPrompt ?? (options.selection ? SYSTEM.replaceAll("three", count) : SYSTEM);
+  const schema = structuredClone(ANSWER_SCHEMA);
+  schema.properties.symbols.minItems = selection.min;
+  schema.properties.symbols.maxItems = selection.max;
+  schema.properties.symbols.items.enum = available.map(t => t.symbol);
   const now = options.now ?? Date.now;
   const memory = options.memory ?? localMemory;
   const cache = options.cache ?? createLocalCache(now);
@@ -221,7 +241,7 @@ export function createFindStocks(options = {}) {
     const sessionId = cleanSessionId(givenSession ?? options.sessionId ?? process.env.MYETF_SESSION_ID);
     const finish = selection => (basket ? { ...selection, basket: buildBasket(selection) } : selection);
 
-    const cacheKey = `${sessionId ?? "-"}|${normalizeIdea(text)}`;
+    const cacheKey = `${selection.min}:${selection.max}:${selection.companiesOnly}|${sessionId ?? "-"}|${normalizeIdea(text)}`;
     const cached = await cache.get(cacheKey).catch(() => null);
     if (cached) {
       log({ event: "cached", sessionId });
@@ -311,14 +331,14 @@ export function createFindStocks(options = {}) {
 
     const record = sessionId ? await memory.load(sessionId).catch(() => ({ preferences: [], baskets: [] })) : null;
     const canSearch = searchEnabled && (await budget.available(models.search, "search").catch(() => false));
-    const declarations = functionDeclarations({ memory: Boolean(sessionId), search: canSearch });
-    const toolContext = { sessionId, memory, search: canSearch ? groundedSearch : undefined };
+    const declarations = functionDeclarations({ memory: Boolean(sessionId), search: canSearch, selection });
+    const toolContext = { sessionId, memory, selection, search: canSearch ? groundedSearch : undefined };
 
     const firstTurn = {
       role: "user",
       parts: [{
         text:
-          `${notesForPrompt(text)}\n\n` +
+          `${(options.promptNotes ?? notesForPrompt)(text)}\n\n` +
           `SESSION\n${sessionBlock(record)}\n\n` +
           `IDEA\n"""${text}"""`
       }]
@@ -338,13 +358,13 @@ export function createFindStocks(options = {}) {
           if (conversation.model && conversation.model !== model) conversation.contents = [firstTurn];
           conversation.model = model;
           return {
-            systemInstruction: { parts: [{ text: SYSTEM }] },
+            systemInstruction: { parts: [{ text: system }] },
             contents: conversation.contents,
             tools: [{ functionDeclarations: declarations }],
             ...(lastCall ? { toolConfig: { functionCallingConfig: { mode: "NONE" } } } : {}),
             generationConfig: {
               responseMimeType: "application/json",
-              responseJsonSchema: ANSWER_SCHEMA,
+              responseJsonSchema: schema,
               temperature: 0.3,
               ...thinking(model)
             }
@@ -378,7 +398,7 @@ export function createFindStocks(options = {}) {
           continue;
         }
 
-        const answer = parseAnswer(parts.filter(part => part.text && !part.thought).map(part => part.text).join(""));
+        const answer = parseAnswer(parts.filter(part => part.text && !part.thought).map(part => part.text).join(""), selection);
         if (answer.ok) {
           if (sessionId) {
             await memory
@@ -402,7 +422,7 @@ export function createFindStocks(options = {}) {
         conversation.contents = [
           ...conversation.contents,
           ...(parts.length ? [content] : []),
-          { role: "user", parts: [{ text: `That answer was rejected:\n- ${answer.errors.join("\n- ")}\nAnswer again as JSON with a summary and exactly ${BASKET_SIZE} allowed symbols.` }] }
+          { role: "user", parts: [{ text: `That answer was rejected:\n- ${answer.errors.join("\n- ")}\nAnswer again as JSON with a summary and ${count} allowed symbols.` }] }
         ];
       }
     } catch (error) {

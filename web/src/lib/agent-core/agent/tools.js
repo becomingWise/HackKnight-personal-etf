@@ -13,20 +13,23 @@ export const BASKET_SIZE = 3;
  * @param {unknown} symbols
  * @returns {{ ok: true, stocks: { symbol: string, name: string }[] } | { ok: false, errors: string[] }}
  */
-export function checkSelection(symbols) {
+export function checkSelection(symbols, { min = BASKET_SIZE, max = BASKET_SIZE, companiesOnly = false } = {}) {
   if (!Array.isArray(symbols) || symbols.some(symbol => typeof symbol !== "string")) {
     return { ok: false, errors: ["symbols must be an array of ticker strings."] };
   }
   const cleaned = symbols.map(symbol => symbol.trim().toUpperCase());
   const errors = [];
-  if (cleaned.length !== BASKET_SIZE) {
-    errors.push(`Choose exactly ${BASKET_SIZE} symbols; you gave ${cleaned.length}.`);
+  if (cleaned.length < min || cleaned.length > max) {
+    errors.push(`Choose ${min === max ? `exactly ${min}` : `${min} to ${max}`} symbols; you gave ${cleaned.length}.`);
   }
   const repeated = [...new Set(cleaned.filter((symbol, index) => cleaned.indexOf(symbol) !== index))];
   if (repeated.length) errors.push(`Symbols must be unique; repeated: ${repeated.join(", ")}.`);
   const unknown = [...new Set(cleaned.filter(symbol => !ALLOWED_BY_SYMBOL.has(symbol)))];
   if (unknown.length) {
     errors.push(`Not in the allowed list: ${unknown.join(", ")}. Allowed: ${ALLOWED.map(t => t.symbol).join(", ")}.`);
+  }
+  if (companiesOnly && cleaned.some(symbol => ALLOWED_BY_SYMBOL.get(symbol)?.kind === "fund")) {
+    errors.push("This shortlist accepts company stocks only, not funds.");
   }
   if (errors.length) return { ok: false, errors };
   return {
@@ -79,9 +82,15 @@ const DECLARATIONS = {
 };
 
 /** The declarations to send to Gemini. Tools that cannot run this turn are left out. */
-export function functionDeclarations({ memory = true, search = true } = {}) {
+export function functionDeclarations({ memory = true, search = true, selection = {} } = {}) {
+  const { min = BASKET_SIZE, max = BASKET_SIZE } = selection;
+  const check = structuredClone(DECLARATIONS.check_selection);
+  if (min !== BASKET_SIZE || max !== BASKET_SIZE) {
+    check.description = `Checks a shortlist: ${min} to ${max} unique company symbols, all from the allowed list. Call before answering and fix any errors.`;
+    check.parameters.properties.symbols.description = `${min} to ${max} candidate ticker symbols. The user chooses which to add later.`;
+  }
   return [
-    DECLARATIONS.check_selection,
+    check,
     ...(memory ? [DECLARATIONS.get_memory, DECLARATIONS.remember_preference] : []),
     ...(search ? [DECLARATIONS.google_search] : [])
   ];
@@ -100,7 +109,7 @@ export async function executeTool(name, args, context) {
   const input = isObject(args) ? args : {};
   switch (name) {
     case "check_selection":
-      return checkSelection(input.symbols);
+      return checkSelection(input.symbols, context.selection);
 
     case "get_memory": {
       if (!context.sessionId) return { preferences: [], previousBaskets: [], note: "No session: nothing is remembered." };
