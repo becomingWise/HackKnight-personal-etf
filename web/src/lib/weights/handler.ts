@@ -24,7 +24,13 @@ export function createWeightsHandler(deps: WeightsDeps = defaultDeps) {
   ) =>
     Response.json(body, {
       status,
-      headers: { ...corsHeaders(request), "Cache-Control": "no-store", ...extra },
+      headers: {
+        ...corsHeaders(request),
+        // Explicit charset: Windows PowerShell otherwise misreads non-ASCII characters.
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        ...extra,
+      },
     });
   // `detail` is what the Python (FastAPI) service returns; `error` is this API's common shape.
   const fail = (request: Request, status: number, code: string, message: string, extra = {}) =>

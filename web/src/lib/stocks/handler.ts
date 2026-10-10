@@ -34,7 +34,13 @@ const defaultDeps: HandlerDeps = {
 function json(request: Request, status: number, body: unknown, extra: Record<string, string> = {}) {
   return Response.json(body, {
     status,
-    headers: { ...corsHeaders(request), "Cache-Control": "no-store", ...extra },
+    headers: {
+      ...corsHeaders(request),
+      // Explicit charset: Windows PowerShell otherwise misreads non-ASCII characters.
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      ...extra,
+    },
   });
 }
 
