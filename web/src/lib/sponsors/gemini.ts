@@ -21,6 +21,8 @@ export type GenerateJsonArgs = {
   task?: Task;
   /** Told which model produced the answer. */
   onModel?: (model: string) => void;
+  /** Told before every request that is really sent to a model; throwing here stops the call. */
+  onAttempt?: (model: string) => void;
   signal?: AbortSignal;
 };
 
@@ -64,6 +66,7 @@ export function createGenerate(deps: GenerateDeps): GenerateJson {
         tried.push(`${model}: ${refusal === "blocked" ? "blocked" : `${refusal} budget used up`}`);
         continue;
       }
+      args.onAttempt?.(model);
       let text: string;
       try {
         text = await deps.call(model, args, signal);

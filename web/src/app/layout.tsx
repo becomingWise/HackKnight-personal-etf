@@ -31,7 +31,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Link href="/" className="flex items-center gap-2 text-xl font-bold tracking-tight">
               <span
                 aria-hidden="true"
-                className="grid size-8 place-items-center rounded-[10px] bg-blue text-white"
+                className="grid size-8 place-items-center rounded-[10px] bg-blue text-surface"
               >
                 p.
               </span>

@@ -56,7 +56,8 @@ export function createApp({ findStocks: find = findStocks, fetch: fetchFn = glob
       response.writeHead(status, { ...cors, "Content-Type": "application/json; charset=utf-8" });
       response.end(JSON.stringify(body));
     };
-    const fail = (status, code, message) => send(status, { error: { code, message } });
+    const fail = (status, code, message, options) =>
+      send(status, { error: { code, message, ...(Array.isArray(options) ? { options } : {}) } });
     const path = new URL(request.url, "http://localhost").pathname;
 
     if (!["/api/stocks", "/api/weights"].includes(path)) return fail(404, "not_found", "Unknown route.");
@@ -98,7 +99,8 @@ export function createApp({ findStocks: find = findStocks, fetch: fetchFn = glob
       return send(200, result);
     } catch (error) {
       if (gone.signal.aborted) return response.destroy();
-      if (error instanceof AgentError) return fail(error.status, error.code, error.message);
+      // A clarification (422 needs_clarification) carries the ideas to choose from.
+      if (error instanceof AgentError) return fail(error.status, error.code, error.message, error.options);
       console.error(error);
       return fail(502, "upstream_error", "The request failed. Please try again.");
     }

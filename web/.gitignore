@@ -42,3 +42,6 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# local Python environments for scripts (closes, parity)
+/.venv-*/

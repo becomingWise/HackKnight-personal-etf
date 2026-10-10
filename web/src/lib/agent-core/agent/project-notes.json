@@ -24,7 +24,7 @@
     {
       "id": "unsupported",
       "keywords": [],
-      "text": "If the idea matches no sector (for example sports or cooking), pick the three closest large companies from the allowed list rather than refusing."
+      "text": "If the idea's main companies are not in the allowed list (for example sports, cooking, cars, airlines, restaurants, pets), do not force a basket from unrelated large companies: ask the person instead."
     },
     {
       "id": "markets",

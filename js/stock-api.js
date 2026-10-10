@@ -2,6 +2,9 @@
 // Same signature as the server function: findStocks({ idea }, { signal } = {}) resolves to
 // { summary, stocks: [{ symbol, name }] }. It rejects on any non-2xx status, on invalid JSON and
 // on a malformed body, and never substitutes demo companies.
+// The rejection is an Error that keeps the backend's `code`. When the idea needs clarifying
+// (422, code "needs_clarification") its message is the question to show and `options` is an array
+// of 2 or 3 ideas: offer them, and call findStocks again with the one the person picks.
 
 const SESSION_KEY = "myetf.sessionId";
 let fallbackSessionId;
@@ -39,7 +42,12 @@ export function createFindStocks({ baseUrl, fetch: fetchFn, sessionId = tabSessi
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => null);
-      throw new Error(detail?.error?.message ?? `The stock service failed (${response.status}).`);
+      const error = new Error(detail?.error?.message ?? `The stock service failed (${response.status}).`);
+      if (typeof detail?.error?.code === "string") error.code = detail.error.code;
+      if (Array.isArray(detail?.error?.options)) {
+        error.options = detail.error.options.filter(option => typeof option === "string");
+      }
+      throw error;
     }
     // Invalid JSON rejects here.
     const data = await response.json();

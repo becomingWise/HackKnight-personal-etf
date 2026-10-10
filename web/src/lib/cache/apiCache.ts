@@ -5,7 +5,7 @@ import { db } from "../db/client";
 
 export const CACHE_TTL_SECONDS = 15 * 60;
 
-export type CacheKind = "stocks" | "decide" | "plan" | "weights" | "letter" | "agent";
+export type CacheKind = "stocks" | "decide" | "plan" | "weights" | "letter" | "agent" | "votes";
 export type CacheEntry<T> = { value: T; createdAt: Date; expiresAt: Date };
 
 export type ApiCache = {
@@ -145,6 +145,15 @@ export function memoryApiCache(now: () => number = Date.now): ApiCache {
       return row ? new Date(row.expiresAt) : null;
     },
   };
+}
+
+/**
+ * X-Odds-Moved: how many points the Polymarket odds an answer rests on have moved since it was
+ * made (the largest move among its markets). Left out when the answer cites no market, or when
+ * the odds could not be compared.
+ */
+export function oddsMovedHeader(moved: number | null | undefined): Record<string, string> {
+  return typeof moved === "number" ? { "X-Odds-Moved": String(Math.round(moved * 10) / 10) } : {};
 }
 
 /** Headers that tell a client whether the answer came from the cache. */

@@ -119,6 +119,31 @@ The shared controller assigns equal starting weights: 33.33%, 33.33%, 33.34%.
 An additional `basket` field is optional; the controller uses `summary` and
 `stocks`, so those fields must remain available.
 
+**When the idea needs clarifying (added 2026-10-10).** `findStocks` can reject
+instead of returning a basket: the idea is nonsense, unrelated to investing, a
+broad everyday word ("car"), or about companies we do not cover (carmakers,
+airlines). The success shape above does not change.
+
+- `POST /api/stocks` answers `422`:
+  `{ "error": { "code": "needs_clarification", "message": "<question>", "options": ["<idea>", "<idea>", "<idea>"] } }`
+- `js/stock-api.js` rejects with an `Error` whose `message` is the question,
+  with `error.code === "needs_clarification"` and `error.options` (2 or 3 strings).
+- Each option is a complete idea. When the person picks one, call
+  `findStocks({ idea: option })` again (through the controller: `submitIdea(option)`).
+- On a clarification nothing is saved to memory and no weights or votes should be
+  requested. Every other rejection also keeps `error.code` (for example
+  `gemini_unavailable`) and has no `options`.
+
+```js
+try {
+  const selection = await findStocks({ idea }, { signal });
+} catch (error) {
+  if (error.code === "needs_clarification") {
+    // show error.message as the question and one button per error.options entry (as text)
+  }
+}
+```
+
 ## 🟢 Hao — Polymarket: take selected holdings, give their weights and evidence
 
 **Already live; nothing to rebuild.** `POST https://prophetf.vercel.app/api/weights` implements

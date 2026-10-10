@@ -41,7 +41,7 @@ export function budgetOf(model: ModelId): { perMinute: number; perDay: number } 
 }
 
 /** What a Gemini call is for. Each task has its own chain of models. */
-export type Task = "decide" | "plan" | "review" | "note";
+export type Task = "decide" | "plan" | "review" | "note" | "voteA" | "voteB";
 
 // The workflow's own calls stay on the Flash-Lite models, which have real daily quota; when the
 // whole chain is spent the answer comes from the evidence alone.
@@ -55,6 +55,10 @@ export const CHAINS: Record<Task, ModelId[]> = {
   decide: LITE_CHAIN,
   plan: LITE_CHAIN,
   review: LITE_CHAIN,
+  // The voting panel (src/lib/votes): five calls per request, split across the two Flash-Lite
+  // models by alternating the chain each voter starts on. No other model ever votes.
+  voteA: ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+  voteB: ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"],
   // The manager's note is written once per basket, so it can afford the small Flash quotas.
   note: [
     "gemini-3.8-flash",
