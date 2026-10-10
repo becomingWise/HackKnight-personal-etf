@@ -1,6 +1,7 @@
 import { validateBasket, calculateBasket, applyScenario, equalWeightHoldings } from "./portfolio.js";
 import { renderBuilder, updateBuilder, renderErrors, renderResult, renderScenarioControls, renderScenario, showReady, showLoadError } from "./ui.js";
 
+
 const demoState = () => ({
   budget: 1000,
   holdings: [
@@ -71,6 +72,7 @@ async function start() {
     if (!response.ok) throw new Error(`Could not load mock data: ${response.status}`);
     assets = await response.json();
     renderBuilder(assets, dispatch);
+
     update();
     showReady();
   } catch (error) {
