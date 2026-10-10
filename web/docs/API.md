@@ -101,6 +101,126 @@ From the website: `import { findStocks } from "./stock-api.js"` (it reads `API_B
 
 ---
 
+## 1d. AI voting panel — `POST /api/votes` — LIVE
+
+Five AI voters look at the basket `/api/stocks` returned and each votes yes or no on every stock
+(the "parallelization: voting" pattern of Anthropic's "Building effective agents"). Each voter is a
+separate Gemini call with its own system prompt, all five run in parallel, and code counts the votes.
+It does not change `findStocks` or its response; it only comments on a basket.
+
+| Agent (`votes[].agent`) | Point of view                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `Growth investor`       | Upside and demand                                                                |
+| `Value / risk`          | Price, debt, concentration                                                       |
+| `Macro & events`        | The live Polymarket odds and 7-day moves of `/api/weights` (its `evidence` list) |
+| `Skeptic`               | Reasons the stock does NOT fit the idea                                          |
+| `Fit checker`           | Does the company really match what the user asked?                               |
+
+### Request
+
+```json
+{
+  "idea": "AI chips and Taiwan risk",
+  "stocks": [
+    { "symbol": "NVDA", "name": "NVIDIA" },
+    { "symbol": "TSM", "name": "Taiwan Semiconductor" },
+    { "symbol": "AMD", "name": "Advanced Micro Devices" }
+  ]
+}
+```
+
+- `idea`: 1 to 500 characters, the idea the basket was built for.
+- `stocks`: 1 to 5 stocks, exactly as `/api/stocks` returned them. Only the 40 tickers `/api/stocks`
+  can return are accepted; the names shown to the voters come from the server's own list.
+
+### Success response — `200`
+
+```json
+{
+  "stocks": [
+    {
+      "symbol": "NVDA",
+      "name": "NVIDIA",
+      "yes": 4,
+      "no": 1,
+      "votes": [
+        {
+          "agent": "Growth investor",
+          "vote": "yes",
+          "reason": "AI chip demand keeps growing fast."
+        },
+        {
+          "agent": "Value / risk",
+          "vote": "no",
+          "reason": "Rich price leaves little room for error."
+        },
+        {
+          "agent": "Macro & events",
+          "vote": "yes",
+          "reason": "Taiwan invasion odds are low and steady."
+        },
+        { "agent": "Skeptic", "vote": "yes", "reason": "No serious reason it does not fit." },
+        { "agent": "Fit checker", "vote": "yes", "reason": "Designs the leading AI chips." }
+      ]
+    }
+  ],
+  "summary": "2 of 3 stocks backed by a majority"
+}
+```
+
+- `stocks`: in the order of the request. `votes` always has the five agents, in the order of the table.
+- `vote`: `"yes"`, `"no"` or `"none"`. `"none"` means that agent gave **no answer** (its call failed or
+  its answer was unusable); `reason` is then `"No answer."`. A vote is never invented, so
+  `yes + no` can be less than 5. Show `"none"` as "no answer".
+- `reason`: at most 15 words.
+- `summary`: a stock is "backed by a majority" with 3 or more yes votes. When agents are missing it
+  ends with e.g. `(1 of 5 agents gave no answer)`.
+- Headers: `X-Cache: HIT | MISS` (and `X-Cache-Age` in seconds on a hit).
+
+### Error responses
+
+| Status | `error.code`        | When                                                                              |
+| ------ | ------------------- | --------------------------------------------------------------------------------- |
+| 400    | `invalid_request`   | Body is not JSON; `idea` or `stocks` missing; duplicate or unknown symbols        |
+| 429    | `rate_limited`      | More than 20 requests a minute or 300 a day from one IP                           |
+| 503    | `ai_budget_used_up` | The shared caps for AI requests are used up; `Retry-After` says when to try again |
+| 503    | `votes_unavailable` | None of the five voters answered                                                  |
+
+### Behaviour
+
+- **Gemini calls per request:** 5 (one per voter), 0 for a repeat. Flash-Lite only: three voters start
+  on `gemini-3.5-flash-lite` and two on `gemini-3.1-flash-lite`, each with the other model as its only
+  backup. Calls are counted against the per-model budgets in `GET /api/health`.
+- **Cache:** 30 minutes per (idea, set of symbols); the order of the stocks does not matter. Only a
+  complete panel is cached, so a voter that was briefly unavailable gets another chance.
+- **Caps:** an uncached panel counts as two requests against the shared caps of the evidence workflow
+  (`ai:minute`, `ai:30min`, `ai:day`, per IP per 30 minutes).
+- **Typical time:** 2 to 4 seconds; each voter has 9 seconds.
+
+### Try it
+
+PowerShell:
+
+```powershell
+$body = '{"idea":"AI chips and Taiwan risk","stocks":[{"symbol":"NVDA","name":"NVIDIA"},{"symbol":"TSM","name":"Taiwan Semiconductor"},{"symbol":"AMD","name":"Advanced Micro Devices"}]}'
+$r = Invoke-RestMethod -Method Post -Uri https://prophetf.vercel.app/api/votes -ContentType "application/json" -Body $body
+$r.summary; $r.stocks | ForEach-Object { "{0}: {1} yes, {2} no" -f $_.symbol, $_.yes, $_.no; $_.votes | Format-Table agent, vote, reason -Wrap }
+```
+
+From the website: `/js/votes-api.js` (same style as `stock-api.js`; reads `API_BASE_URL` from
+`js/config.js`, rejects on any non-2xx status).
+
+```js
+import { getVotes } from "./votes-api.js";
+
+const { stocks, summary } = await getVotes({ idea, stocks: selection.stocks }, { signal });
+// per stock: `${s.yes} of ${s.votes.length} agents say yes`, a yes/no bar, and one line per vote.
+```
+
+Always show the caveat **"AI opinions, not financial advice."** next to the votes.
+
+---
+
 ## 1b. The evidence packet and `POST /api/analyze` — LIVE
 
 The **EvidencePacket** is the handoff from the analyst to the decider. The schema is

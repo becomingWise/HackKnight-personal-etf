@@ -1,6 +1,7 @@
 "use client";
 
-// Backend test console: idea → POST /api/stocks (the Gemini stock agent) → POST /api/weights.
+// Backend test console: idea → POST /api/stocks (the Gemini stock agent) → POST /api/votes (five
+// AI voters on that basket) and POST /api/weights.
 // Not the product UI (that is the frontend teammate's); it only shows what the API returns.
 import { useState, type ReactNode } from "react";
 
@@ -17,6 +18,11 @@ type Weights = {
   holdings: { symbol: string; weightPct: number }[];
   explanation: string;
   evidence: Evidence[];
+};
+type Vote = { agent: string; vote: "yes" | "no" | "none"; reason: string };
+type Votes = {
+  summary: string;
+  stocks: { symbol: string; name: string; yes: number; no: number; votes: Vote[] }[];
 };
 type Step<T> =
   | { state: "idle" | "running" | "skipped" }
@@ -108,10 +114,45 @@ function Waiting({ step, idle }: { step: { state: string; message?: string }; id
   return <p className="text-sm text-muted">{idle}</p>;
 }
 
+/** One stock's panel result: the count, a yes/no bar and each agent's one-line reason. */
+function StockVotes({ stock }: { stock: Votes["stocks"][number] }) {
+  const total = stock.votes.length;
+  const silent = total - stock.yes - stock.no;
+  return (
+    <div className="mt-3 grid gap-2 border-t border-line pt-3">
+      <p className="font-medium">
+        {stock.yes} of {total} agents say yes
+      </p>
+      <div
+        className="flex h-2 overflow-hidden rounded-full bg-line"
+        role="img"
+        aria-label={`${stock.yes} yes, ${stock.no} no${silent ? `, ${silent} no answer` : ""}`}
+      >
+        <div className="bg-up" style={{ width: `${(stock.yes / total) * 100}%` }} />
+        <div className="bg-down" style={{ width: `${(stock.no / total) * 100}%` }} />
+      </div>
+      <ul className="grid gap-1.5 text-xs">
+        {stock.votes.map((vote) => (
+          <li key={vote.agent}>
+            <span
+              className={`font-semibold ${vote.vote === "yes" ? "text-up" : vote.vote === "no" ? "text-down" : "text-muted"}`}
+            >
+              {vote.vote === "none" ? "NO ANSWER" : vote.vote.toUpperCase()}
+            </span>{" "}
+            <span className="font-medium">{vote.agent}</span>
+            {vote.vote !== "none" && <span className="text-muted">: {vote.reason}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
   const [idea, setIdea] = useState<string>(demoIdeas[0] ?? "");
   const [busy, setBusy] = useState(false);
   const [stocks, setStocks] = useState<Step<Stocks>>(IDLE);
+  const [votes, setVotes] = useState<Step<Votes>>(IDLE);
   const [weights, setWeights] = useState<Step<Weights>>(IDLE);
   const [start, setStart] = useState<{ symbol: string; weightPct: number }[]>([]);
 
@@ -120,6 +161,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
     if (!wanted || busy) return;
     setBusy(true);
     setStocks(RUNNING);
+    setVotes(IDLE);
     setWeights(IDLE);
     setStart([]);
     try {
@@ -129,20 +171,25 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
         setStocks({ state: "done", ...picked });
       } catch (err) {
         setStocks(failure(err));
+        setVotes(SKIPPED);
         setWeights(SKIPPED);
         return;
       }
       const holdings = startingWeights(picked.data.stocks.map((s) => s.symbol));
       setStart(holdings);
+      setVotes(RUNNING);
       setWeights(RUNNING);
-      try {
-        setWeights({
-          state: "done",
-          ...(await call<Weights>("/api/weights", { idea: wanted, holdings })),
-        });
-      } catch (err) {
-        setWeights(failure(err));
-      }
+      // The panel and the weights do not depend on each other.
+      await Promise.all([
+        call<Votes>("/api/votes", { idea: wanted, stocks: picked.data.stocks }).then(
+          (voted) => setVotes({ state: "done", ...voted }),
+          (err) => setVotes(failure(err)),
+        ),
+        call<Weights>("/api/weights", { idea: wanted, holdings }).then(
+          (weighted) => setWeights({ state: "done", ...weighted }),
+          (err) => setWeights(failure(err)),
+        ),
+      ]);
     } finally {
       setBusy(false);
     }
@@ -195,8 +242,9 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
           ))}
         </div>
         <p className="mt-3 rounded-xl bg-warn-soft px-3 py-2 text-sm text-warn">
-          A new idea uses Gemini quota (2 calls normally, 4 at most, free tier). Repeating an idea
-          in this tab within 15 minutes is free. This tab is one session: preferences you state (for
+          A new idea uses Gemini quota (free tier): 2 calls normally, 4 at most, for the stocks,
+          plus 5 Flash-Lite calls for the voting panel. Repeating an idea in this tab within 15
+          minutes is free (votes: 30 minutes). This tab is one session: preferences you state (for
           example &quot;no oil companies&quot;) are remembered for it.
         </p>
       </section>
@@ -215,14 +263,39 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
         ) : (
           <div className="grid gap-3">
             <p className="text-base font-medium">{stocks.data.summary}</p>
-            <ul className="grid gap-2 sm:grid-cols-3">
-              {stocks.data.stocks.map((stock) => (
-                <li key={stock.symbol} className="rounded-xl border border-line p-3 text-sm">
-                  <strong className="font-mono text-base">{stock.symbol}</strong>
-                  <p className="text-muted">{stock.name}</p>
-                </li>
-              ))}
+            <ul className="grid items-start gap-2 sm:grid-cols-3">
+              {stocks.data.stocks.map((stock) => {
+                const voted =
+                  votes.state === "done" &&
+                  votes.data.stocks.find((s) => s.symbol === stock.symbol);
+                return (
+                  <li key={stock.symbol} className="rounded-xl border border-line p-3 text-sm">
+                    <strong className="font-mono text-base">{stock.symbol}</strong>
+                    <p className="text-muted">{stock.name}</p>
+                    {voted && <StockVotes stock={voted} />}
+                  </li>
+                );
+              })}
             </ul>
+            <div className="grid gap-1 text-sm">
+              <p className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="text-xs font-semibold tracking-[0.18em] text-blue">AI VOTES</span>
+                {votes.state === "done" && (
+                  <>
+                    <span className="font-medium">{votes.data.summary}</span>
+                    <Pill kind="plain">POST /api/votes</Pill>
+                    <span className="ml-auto font-mono text-xs text-muted">
+                      {seconds(votes.ms)}
+                    </span>
+                  </>
+                )}
+                {votes.state === "running" && (
+                  <span className="text-muted">Five AI agents are voting…</span>
+                )}
+                {votes.state === "error" && <span className="text-down">{votes.message}</span>}
+              </p>
+              <p className="text-xs text-muted">AI opinions, not financial advice.</p>
+            </div>
           </div>
         )}
       </Card>
