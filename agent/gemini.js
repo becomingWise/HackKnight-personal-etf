@@ -16,7 +16,8 @@
 import { buildBasket } from "./basket.js";
 import { cleanSessionId, localMemory } from "./memory.js";
 import { ALLOWED, notesForPrompt } from "./retrieval.js";
-import { BASKET_SIZE, checkSelection, executeTool, functionDeclarations } from "./tools.js";
+import { BASKET_SIZE, CLARITIES, checkSelection, executeTool, functionDeclarations } from "./tools.js";
+import { FALLBACK_QUESTION, FIXED_EXAMPLES, NONSENSE_QUESTION, looksLikeNonsense } from "./precheck.js";
 
 export const MAX_MODEL_CALLS = 4;
 export const MAX_IDEA_LENGTH = 500;
@@ -40,6 +41,14 @@ export class AgentError extends Error {
     this.name = "AgentError";
     this.code = code;
     this.status = status;
+  }
+}
+export class ClarifyError extends AgentError {
+  constructor(question, options, preferences) {
+    super("needs_clarification", question, 422);
+    this.name = "ClarifyError";
+    this.options = options;
+    if (preferences) this.preferences = preferences;
   }
 }
 
@@ -161,12 +170,24 @@ export function tidySummary(text) {
   return words.slice(0, MAX_SUMMARY_WORDS).join(" ").replace(/[\s,;:–—-]+$/u, "");
 }
 
-function parseAnswer(text, selection) {
+function parseAnswer(text, selection, { clarification = false, asked = false, starters = FIXED_EXAMPLES, coveredOption = () => true, idea = "" } = {}) {
   let data;
   try {
     data = JSON.parse(text);
   } catch {
     return { ok: false, errors: ["The answer was not valid JSON."] };
+  }
+  if (clarification) {
+    if (!CLARITIES.includes(data?.clarity)) return { ok: false, errors: ["First judge clarity: clear, broad, not_covered or unclear."] };
+    if (data.clarity !== "clear" || asked) {
+      const question = typeof data.question === "string" ? data.question.replace(/\s+/g, " ").trim() : "";
+      const options = Array.isArray(data.options) ? [...new Set(data.options.filter(v => typeof v === "string")
+        .map(v => v.replace(/\s+/g, " ").trim()).filter(v => v && v.length <= 100 && normalizeIdea(v) !== normalizeIdea(idea) && !looksLikeNonsense(v) && coveredOption(v)))] : [];
+      return { ok: true, clarify: {
+        question: question && question.split(" ").length <= 20 ? question : FALLBACK_QUESTION,
+        options: options.length >= 2 && options.length <= 3 ? options : starters,
+      } };
+    }
   }
   const summary = tidySummary(data?.summary);
   if (!summary) return { ok: false, errors: ["summary must be a short non-empty string."] };
@@ -219,6 +240,18 @@ export function createFindStocks(options = {}) {
   schema.properties.symbols.minItems = selection.min;
   schema.properties.symbols.maxItems = selection.max;
   schema.properties.symbols.items.enum = available.map(t => t.symbol);
+  if (options.clarification) {
+    // Code enforces the stock count only for clear ideas. Clarifications have no basket.
+    delete schema.properties.symbols.minItems;
+    delete schema.properties.symbols.maxItems;
+    schema.properties.symbols.description = `For clear ideas: ${count} allowed symbols; otherwise empty.`;
+    schema.properties.clarity = { type: "string", enum: CLARITIES };
+    schema.properties.why = { type: "string", description: "One short reason for the clarity judgement." };
+    schema.properties.question = { type: "string", description: "When not clear, one question of at most 20 words." };
+    schema.properties.options = { type: "array", items: { type: "string" }, description: "When not clear, 2 or 3 supported, complete investing ideas." };
+    schema.required = ["clarity", "why"];
+    schema.propertyOrdering = ["clarity", "why", "summary", "symbols", "question", "options"];
+  }
   const now = options.now ?? Date.now;
   const memory = options.memory ?? localMemory;
   const cache = options.cache ?? createLocalCache(now);
@@ -232,7 +265,7 @@ export function createFindStocks(options = {}) {
    * @param {{ signal?: AbortSignal, sessionId?: string, basket?: boolean }} [callOptions]
    * @returns {Promise<{ summary: string, stocks: { symbol: string, name: string }[], basket?: object }>}
    */
-  return async function findStocks({ idea } = {}, { signal, sessionId: givenSession, basket = false } = {}) {
+  return async function findStocks({ idea } = {}, { signal, sessionId: givenSession, basket = false, cacheContext = "", promptContext = "" } = {}) {
     const text = typeof idea === "string" ? idea.trim() : "";
     if (!text) throw new AgentError("invalid_idea", "idea must be a non-empty string.", 400);
     if (text.length > MAX_IDEA_LENGTH) {
@@ -241,7 +274,12 @@ export function createFindStocks(options = {}) {
     const sessionId = cleanSessionId(givenSession ?? options.sessionId ?? process.env.MYETF_SESSION_ID);
     const finish = selection => (basket ? { ...selection, basket: buildBasket(selection) } : selection);
 
-    const cacheKey = `${selection.min}:${selection.max}:${selection.companiesOnly}|${sessionId ?? "-"}|${normalizeIdea(text)}`;
+    const starters = options.starterIdeas ?? FIXED_EXAMPLES;
+    if (options.clarification && looksLikeNonsense(text)) throw new ClarifyError(NONSENSE_QUESTION, starters);
+    const record = sessionId ? await memory.load(sessionId).catch(() => ({ preferences: [], baskets: [] })) : null;
+    const keyFor = preferences => JSON.stringify([options.version ?? "1", selection, Boolean(options.clarification),
+      sessionId ?? "-", preferences ?? [], normalizeIdea(text), cacheContext]);
+    const cacheKey = keyFor(record?.preferences);
     const cached = await cache.get(cacheKey).catch(() => null);
     if (cached) {
       log({ event: "cached", sessionId });
@@ -329,16 +367,18 @@ export function createFindStocks(options = {}) {
       return { available: true, answer: answer.slice(0, 800), sources };
     }
 
-    const record = sessionId ? await memory.load(sessionId).catch(() => ({ preferences: [], baskets: [] })) : null;
     const canSearch = searchEnabled && (await budget.available(models.search, "search").catch(() => false));
-    const declarations = functionDeclarations({ memory: Boolean(sessionId), search: canSearch, selection });
-    const toolContext = { sessionId, memory, selection, search: canSearch ? groundedSearch : undefined };
+    const declarations = functionDeclarations({ memory: Boolean(sessionId), search: canSearch, selection, clarification: options.clarification });
+    const toolContext = { sessionId, memory, selection, clarification: options.clarification, search: canSearch ? groundedSearch : undefined };
+    let asked = false;
 
     const firstTurn = {
       role: "user",
       parts: [{
         text:
           `${(options.promptNotes ?? notesForPrompt)(text)}\n\n` +
+          (promptContext ? `${promptContext}\n\n` : "") +
+          (options.clarification ? `STARTER IDEAS\n${starters.join("\n")}\n\n` : "") +
           `SESSION\n${sessionBlock(record)}\n\n` +
           `IDEA\n"""${text}"""`
       }]
@@ -385,6 +425,7 @@ export function createFindStocks(options = {}) {
           const results = [];
           for (const { functionCall } of toolCalls) {
             const result = await executeTool(functionCall.name, functionCall.args, toolContext);
+            if (result.ask) asked = true;
             log({ event: "tool", name: functionCall.name });
             results.push({
               functionResponse: {
@@ -398,7 +439,14 @@ export function createFindStocks(options = {}) {
           continue;
         }
 
-        const answer = parseAnswer(parts.filter(part => part.text && !part.thought).map(part => part.text).join(""), selection);
+        const answer = parseAnswer(parts.filter(part => part.text && !part.thought).map(part => part.text).join(""), selection,
+          { clarification: options.clarification, asked, starters, coveredOption: options.coveredOption, idea: text });
+        if (answer.clarify) throw new ClarifyError(answer.clarify.question, answer.clarify.options);
+        if (answer.ok && options.validateStocks) {
+          const preferences = sessionId ? (await memory.load(sessionId)).preferences : [];
+          const errors = options.validateStocks(answer.value.stocks, preferences);
+          if (errors.length) { answer.ok = false; answer.errors = errors; }
+        }
         if (answer.ok) {
           if (sessionId) {
             await memory
@@ -410,7 +458,8 @@ export function createFindStocks(options = {}) {
               })
               .catch(() => {});
           }
-          await cache.set(cacheKey, answer.value, CACHE_TTL_MS).catch(() => {});
+          const preferences = sessionId ? (await memory.load(sessionId)).preferences : [];
+          await cache.set(keyFor(preferences), answer.value, CACHE_TTL_MS).catch(() => {});
           log({ event: "answered", model: sent.model, calls });
           return finish(answer.value);
         }
@@ -422,7 +471,7 @@ export function createFindStocks(options = {}) {
         conversation.contents = [
           ...conversation.contents,
           ...(parts.length ? [content] : []),
-          { role: "user", parts: [{ text: `That answer was rejected:\n- ${answer.errors.join("\n- ")}\nAnswer again as JSON with a summary and ${count} allowed symbols.` }] }
+          { role: "user", parts: [{ text: `That answer was rejected:\n- ${answer.errors.join("\n- ")}\nAnswer again as JSON${options.clarification ? ' with clarity first. Only "clear" may include a basket' : ""}, a summary and ${count} allowed symbols.` }] }
         ];
       }
     } catch (error) {

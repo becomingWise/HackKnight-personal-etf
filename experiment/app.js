@@ -1,5 +1,5 @@
 import { scenarioPath } from "./math.js";
-import { SESSION_KEY, createBasket, restoreBasket, deleteHolding, undoDeletion,
+import { SESSION_KEY, AGENT_SESSION_KEY, restoreAgentSession, validPreferences, createBasket, restoreBasket, deleteHolding, undoDeletion,
   parseAmountCents, formatUsdCents, changePaperAmount, paperHoldings, exportBasket } from "./session.js";
 import { escape, chartMarkup, bindCharts } from "./charts.js";
 
@@ -12,8 +12,12 @@ const sourceName = provider => provider === "kalshi" ? "Kalshi" : "Polymarket";
 const safeUrl = value => { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? escape(url.href) : "#"; } catch { return "#"; } };
 const dateTime = value => value ? new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) + " ET" : "Unavailable";
 const fitLabel = fit => fit?.status === "observed" ? "Observed association" : fit?.status === "insufficient" || !fit ? "Not enough history" : "Weak evidence";
-const state = { overview: null, saved: null, analysis: null, eventId: null, eventOpen: true, target: null, range: 63, request: 0, busy: false };
-const sessionId = crypto.randomUUID();
+let agentSession;
+try { agentSession = restoreAgentSession(sessionStorage.getItem(AGENT_SESSION_KEY)); } catch { /* memory-only browser */ }
+agentSession ??= { id: crypto.randomUUID(), preferences: [], draft: null };
+const state = { overview: null, saved: null, analysis: null, eventId: null, eventOpen: true, target: null, range: 63, request: 0, busy: false,
+  preferences: agentSession.preferences, draft: agentSession.draft, clarification: null };
+const sessionId = agentSession.id;
 const iconPaths = {
   back: 'M19 12H5 M12 19l-7-7 7-7',
   right: 'M5 12h14 M12 5l7 7-7 7',
@@ -44,11 +48,30 @@ const eventName = event => `${event.title ?? event.label}${subtitle(event) ? ` �
 async function api(path, body) {
   const response = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Session-Id": sessionId }, body: JSON.stringify(body) } : {});
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error?.message ?? "The request failed.");
+  if (!response.ok) throw Object.assign(new Error(result.error?.message ?? "The request failed."),
+    { code: result.error?.code, options: result.error?.options, preferences: result.error?.preferences });
   return result;
 }
 function error(message = "") { const node = $("#error"); if (node) { node.hidden = !message; node.textContent = message; } }
 function save() { try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state.saved)); } catch { error("This browser cannot save the basket across refreshes. You can still explore it here."); } }
+function saveAgentSession() {
+  try { sessionStorage.setItem(AGENT_SESSION_KEY, JSON.stringify({ id: sessionId, preferences: state.preferences, draft: state.draft })); }
+  catch { /* Preferences stay usable until the page reloads. */ }
+}
+function retainPreferences(preferences) { if (validPreferences(preferences)) { state.preferences = preferences; saveAgentSession(); } }
+function renderPreferences() {
+  const node = $("#preferences"); if (!node) return;
+  const open = node.querySelector("details")?.open;
+  node.hidden = !state.preferences.length;
+  node.innerHTML = state.preferences.length ? `<details ${open ? "open" : ""}><summary>Preferences</summary><ul>${state.preferences.map((p,i) =>
+    `<li><span>${escape(p)}</span><button type="button" data-forget="${i}" class="delete-button" aria-label="Remove preference: ${escape(p)}">${icon("close")}</button></li>`).join("")}</ul></details>` : "";
+}
+function renderClarification() {
+  const node = $("#clarification"); if (!node) return;
+  node.hidden = !state.clarification;
+  node.innerHTML = state.clarification ? `<p id="clarification-question">${escape(state.clarification.question)}</p><div>${state.clarification.options.map(option =>
+    `<button type="button" class="secondary" data-clarify="${escape(option)}">${escape(option)}</button>`).join("")}</div>` : "";
+}
 function header(step) {
   return `<header class="topbar"><a class="brand" href="/" data-route="/" aria-label="MyETF Lab home">${brand}</a>
     <nav class="steps" aria-label="Your basket journey">${[["Idea", "/"], ["Basket", "/basket"]].map(([name, path], i) => {
@@ -75,11 +98,12 @@ function renderIdea() {
   $("#app").innerHTML = `<main class="idea-page"><section class="chat-card glass" aria-labelledby="home-title">
     <div class="chat-header"><div class="home-brand">${brand}</div><h1 id="home-title">What would you like<br>to invest in?</h1></div>
     <form id="idea-form"><div class="chat-input-area"><label class="sr-only" for="idea">Your investing idea</label>
-      <textarea id="idea" maxlength="500" rows="2" placeholder="Your investing idea…" aria-describedby="input-hint" required ${state.busy ? "disabled" : ""}>${escape(state.saved?.idea ?? "")}</textarea>
+      <textarea id="idea" maxlength="500" rows="2" placeholder="Your investing idea…" aria-describedby="input-hint" required ${state.busy ? "disabled" : ""}>${escape(state.draft ?? state.saved?.idea ?? "")}</textarea>
       <button id="suggest" class="primary" type="submit" ${state.busy || !state.overview ? "disabled" : ""}>Send ${arrow}</button></div>
       <div class="chat-foot"><span id="loading" role="status" ${state.busy ? "" : "hidden"}>Finding your companies…</span><span id="input-hint" class="sr-only">Enter to send. Shift + Enter for a new line.</span></div></form>
-    ${errorNode}</section></main>`;
-  resizeIdea();
+    <section id="clarification" class="clarification" aria-labelledby="clarification-question" aria-live="polite" hidden></section>
+    <div id="preferences" class="preferences" hidden></div>${errorNode}</section></main>`;
+  resizeIdea(); renderClarification(); renderPreferences();
 }
 function amountDialog() {
   return `<dialog id="amount-dialog" class="amount-dialog" aria-labelledby="amount-title"><form id="amount-form" novalidate>
@@ -155,6 +179,7 @@ function renderEventDetail() {
         ${event.historyError ? `<p class="caution">Some underlying odds observations could not be downloaded: ${escape(event.historyError)}</p>` : ""}
         <p>${sourceName(event.provider)} · Affects ${event.linkedHoldings.map(escape).join(", ")}. ${escape(event.oddsKind ?? "Yes outcome price")}. Observed ${dateTime(event.observedAt)}.</p>
         <p>Contract ${escape(event.marketId ?? "unavailable")}${event.endDate ? ` · closes ${dateTime(event.endDate)}` : ""}.</p>
+        ${event.weeklyMove ? `<p>Yes odds changed ${(event.weeklyMove.change*100).toFixed(1)} percentage points over the seven-day comparison. Reference: ${dateTime(event.weeklyMove.from*1000)}; observed quote: ${dateTime(event.weeklyMove.to*1000)}. This is an odds change, not a stock return.</p>` : ""}
         <p>Basket history simulates today's holdings using daily equal weights and adjusted prices, indexed to 100 at the start. It is not an actual historical ETF.</p><p id="fit-interval"></p>
         <p>Basket evidence: ${event.fit.n} overlapping days${event.fit.start ? ` (${escape(event.fit.start)} to ${escape(event.fit.end)})` : ""}. ${Number.isFinite(event.fit.partialR2) ? `Partial R² ${(event.fit.partialR2*100).toFixed(1)}%.` : ""} ${event.fit.holdout ? `Later direction ${event.fit.holdout.directionStable ? "consistent" : "changed"}; ${event.fit.holdout.n} held-out days.` : "Not enough history for a later direction check."} ${Number.isFinite(event.fit.qValue) ? `Multiple-event q=${event.fit.qValue.toFixed(3)}.` : ""}</p>
         <p>Odds move gradually to your slider value over 20 scheduled US trading sessions. The cumulative effect is applied once, with broader-market movement and other events held fixed. Fits control for SPY, need 60 varying overlapping changes and only use odds known before the equity close, at most 18 hours old.</p>
@@ -195,7 +220,8 @@ async function loadOutlook(request) {
     if (selected?.id !== state.eventId || !Number.isFinite(state.target)) state.target = Number.isFinite(selected?.probability) ? selected.probability : null;
     state.eventId = selected?.id ?? null;
     $("#analysis-content").innerHTML = `<div class="event-feed" aria-label="Events that could affect your ETF">${data.events.map((event, i) => `<article class="event-post glass" aria-labelledby="event-title-${i}">
-        <div class="event-post-heading"><div><span class="event-source">${sourceName(event.provider)}${event.url ? `<a href="${safeUrl(event.url)}" target="_blank" rel="noreferrer" aria-label="View ${escape(eventName(event))} on ${sourceName(event.provider)}">${arrow}</a>` : ""}</span></div><span class="event-odds ${event.status === "available" ? "" : "unavailable"}">${event.status === "available" ? pct(event.probability) : "Unavailable"}<small>Observed Yes odds</small></span></div>
+        <div class="event-post-heading"><div><span class="event-source">${sourceName(event.provider)}${event.url ? `<a href="${safeUrl(event.url)}" target="_blank" rel="noreferrer" aria-label="View ${escape(eventName(event))} on ${sourceName(event.provider)}">${arrow}</a>` : ""}</span>
+          ${event.weeklyMove ? `<span class="event-weekly" aria-label="Yes odds changed ${(event.weeklyMove.change*100).toFixed(1)} percentage points in seven days">${Math.abs(event.weeklyMove.change*100) < .05 ? "Flat" : `${event.weeklyMove.change > 0 ? "+" : "−"}${Math.abs(event.weeklyMove.change*100).toFixed(1)} pts`} · 7 days</span>` : ""}</div><span class="event-odds ${event.status === "available" ? "" : "unavailable"}">${event.status === "available" ? pct(event.probability) : "Unavailable"}<small>Observed Yes odds</small></span></div>
         <button class="event-story" data-event="${escape(event.id)}" aria-expanded="false" aria-controls="scenario-panel"><span class="event-headline" id="event-title-${i}">${escape(eventName(event))}</span><span class="event-connection">${escape(event.businessLink)}</span><span class="event-holdings"><span>Affects</span>${event.linkedHoldings.map(symbol => `<span class="holding-chip">${escape(symbol)}</span>`).join("")}</span><span class="event-story-footer"><span class="event-action">Explore impact ${icon("chevronDown")}</span></span></button>
       </article>`).join("")}</div>
       <section id="scenario-panel" class="scenario-panel thread-reply" aria-label="Selected event basket scenario" hidden><div id="scenario-controls"></div>${basketChartShell()}<div id="event-detail"></div></section>
@@ -245,18 +271,30 @@ document.addEventListener("submit", async event => {
   if (event.target.id !== "idea-form") return;
   event.preventDefault(); if (state.busy || !state.overview) return;
   const idea = $("#idea").value.trim(); if (!idea) { error("Enter an idea to create your basket."); return; }
+  state.draft = idea; state.clarification = null; renderClarification(); saveAgentSession();
   state.busy = true; error(); $("#suggest").disabled = true; $("#idea").disabled = true; $("#loading").hidden = false; $("#input-hint").hidden = true;
   try {
-    const result = await api("/api/stocks", { idea });
-    state.saved = createBasket(idea, result, state.overview.stocks.map(s => s.symbol));
+    const result = await api("/api/stocks", { idea, preferences: state.preferences });
+    const next = createBasket(idea, result, state.overview.stocks.map(s => s.symbol));
+    retainPreferences(result.preferences);
+    state.saved = next;
     state.analysis = null; state.eventId = null; navigate("/basket"); save();
-  } catch (err) { error(err.message); }
+  } catch (err) {
+    if (err.code === "needs_clarification" && Array.isArray(err.options) && err.options.length >= 2 && err.options.length <= 3 && err.options.every(v => typeof v === "string" && v.length <= 100)) {
+      retainPreferences(err.preferences); state.clarification = { question: err.message, options: err.options }; renderClarification(); renderPreferences();
+    } else error(err.message);
+  }
   finally { state.busy = false; if ($("#suggest")) { $("#suggest").disabled = false; $("#idea").disabled = false; $("#loading").hidden = true; $("#input-hint").hidden = false; } }
 });
 document.addEventListener("click", async event => {
   const route = event.target.closest("[data-route]");
   if (route && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.button === 0) { event.preventDefault(); navigate(route.dataset.route); return; }
   const button = event.target.closest("button"); if (!button || button.disabled) return;
+  if (button.dataset.clarify && !state.busy) { $("#idea").value = button.dataset.clarify; resizeIdea(); $("#idea-form").requestSubmit(); return; }
+  if (button.dataset.forget !== undefined && !state.busy) {
+    state.preferences = state.preferences.filter((_,i) => i !== Number(button.dataset.forget));
+    state.clarification = null; saveAgentSession(); renderPreferences(); renderClarification(); $("#idea")?.focus(); return;
+  }
   if (button.dataset.event) {
     chooseEvent(state.analysis.events.find(e => e.id === button.dataset.event));
     button.closest(".event-post").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
@@ -294,7 +332,7 @@ document.addEventListener("click", async event => {
 });
 document.addEventListener("input", event => {
   if (event.target.id === "probability") { state.target = Number(event.target.value)/100; updateScenario(); }
-  if (event.target.id === "idea") resizeIdea();
+  if (event.target.id === "idea") { state.draft = event.target.value; state.clarification = null; renderClarification(); resizeIdea(); saveAgentSession(); }
   if (event.target.id === "amount") previewAmount();
 });
 document.addEventListener("keydown", event => {
@@ -309,6 +347,7 @@ document.addEventListener("keydown", event => {
 });
 window.addEventListener("popstate", () => { void renderPage(); });
 window.addEventListener("resize", resizeIdea);
+saveAgentSession();
 try {
   state.overview = await api("/api/overview");
   try { state.saved = restoreBasket(sessionStorage.getItem(SESSION_KEY), state.overview.stocks.map(s => s.symbol)); } catch { /* memory-only flow */ }

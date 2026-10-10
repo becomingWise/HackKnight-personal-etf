@@ -21,8 +21,16 @@ removed. Example baskets retain a concise source badge; quotes retain their obse
 label. Timestamps, calculation assumptions and fit intervals live in expandable details.
 Back, Undo, Reset, Export and Refresh use consistent inline SVG icons.
 
+Four ideas are ported from main `bccfd3b`: clarity-first suggestions, browser-session preference
+memory, observed seven-day odds moves, and versioned preference/evidence-aware caching. This
+is a selective adaptation; main's three-stock selection and odds-based weights are not merged.
+Clarification is opt-in on the shared agent, so its original three-stock API remains compatible.
+
 - `/`: MyETF Lab chat card, expanding idea input and Send button. Enter submits;
-  Shift + Enter inserts a newline. Loading and errors stay beside the input.
+  Shift + Enter inserts a newline. Unclear or uncovered ideas receive one short question
+  with 2–3 supported choices inside the chat. Clear ideas keep the direct suggestion flow.
+  Loading and errors stay beside the input. A Preferences disclosure appears only after
+  preferences exist; removing one affects the next request, not the current basket.
 - `/basket`: compact company rows, equal percentages and paper dollar allocations.
   Buy adds funds; Sell subtracts an entered amount up to the full paper balance.
   Delete/undo redistributes retained funding. Back, Undo and Export remain. Events to
@@ -33,6 +41,9 @@ Back, Undo, Reset, Export and Refresh use consistent inline SVG icons.
   Only one scenario is open at a time; closing and reopening a post retains its slider,
   while switching contracts resets it. Technical evidence stays in an expandable section.
   Event odds-history charts, dropdown selection and individual-stock effects are removed.
+  A compact seven-day odds move uses the same contract and outcome's last observation at
+  or before the seven-day reference, with at most a 24-hour gap. Missing reference data
+  produces no badge. Actual comparison timestamps and percentage-point units are in details.
 - `/events` remains a compatible bookmark and redirects to `/basket#outlook` when a
   basket exists. There are two pages in the journey: idea and basket.
 
@@ -41,6 +52,21 @@ amount through navigation and refresh. A successful new idea replaces the basket
 resets funding; failures keep both intact. Fresh protected-page visits return to `/`.
 A saved empty basket stays accessible at `/basket`, including after a refresh, so Undo
 and Sell remain usable. Buy and Explore events require at least one holding.
+
+The browser keeps a stable agent session ID, draft and preference statements separately from
+the funded basket. Preferences travel only to this loopback server and can restore its local
+memory after a restart. Explicit ticker/sector exclusions (including "exclude banks" and
+"no oil companies") are enforced in both modes; live Gemini can also remember other lasting
+preferences. If exclusions conflict with the requested theme, examples ask for another theme
+instead of substituting unrelated companies. Clarification choices also respect exclusions.
+A clarification preserves the existing holdings and funding. A hard suggestion failure also
+keeps newly proposed preferences from being committed. No shared database is used.
+
+Successful suggestions are cached for 15 minutes per session, mode, normalised idea,
+preferences and relevant event contract/status/odds context. Changed preferences, a changed
+relevant contract or odds quote, expiry, or a new prompt version invalidates reuse. Unrelated
+events and snapshot timestamps alone do not. Clarifications and failures are not cached.
+Responses expose `X-Cache: HIT/MISS` for verification; cache details are absent from the UI.
 
 Paper funding is an integer-cent balance, without a trade ledger, shares, brokerage,
 prices for executions, or profit/loss accounting. Positive USD amounts may have at most
@@ -51,8 +77,10 @@ v2 sessions without a paper amount migrate to $0. Export includes cent amounts a
 allocations, including any unallocated balance. The existing analysis API stays compatible;
 paper amounts are browser state only and never sent to a brokerage or shared database.
 
-Example suggestions are the default and are labelled on page two. They rank the allowed
-company list by sector keywords; the price and event histories are genuine observations.
+Example suggestions are the default and are labelled on page two. They recognise supported
+themes by keywords, ask when a theme cannot be recognised, and rank non-excluded companies;
+the price and event histories are genuine observations. Live mode uses Gemini's clarity
+judgement, checked in code before a basket is permitted. Only clear ideas receive 7–10 stocks.
 For live suggestions set `EXPERIMENT_SUGGESTION_MODE=gemini` and a valid `GEMINI_API_KEY` in
 this checkout's ignored `agent/.env`, then restart. Only Flash-Lite models are used, with
 local memory/cache. An invalid key produces an error, never an example fallback. The
@@ -139,3 +167,6 @@ the event feed and slider changing only the basket chart while leaving funds and
 weights fixed. Paper tests cover decimal validation, partial/full sales, overflow, exact cent
 totals, session migration, empty funding and exports. Browser checks cover cancellation,
 dialog focus and dollar scenario illustrations.
+Additional tests cover clarification choices, binding clarity checks, excluded-stock corrections,
+session restoration and separation, preference removal, evidence-aware cache reuse/invalidation,
+expiry, and seven-day comparisons without future samples or joined contracts.

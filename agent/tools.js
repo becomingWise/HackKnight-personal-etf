@@ -6,6 +6,7 @@ import { ALLOWED, ALLOWED_BY_SYMBOL } from "./retrieval.js";
 import { MAX_PREFERENCE_LENGTH } from "./memory.js";
 
 export const BASKET_SIZE = 3;
+export const CLARITIES = ["clear", "broad", "not_covered", "unclear"];
 
 /**
  * The one rule set for a selection, used by the check_selection tool and again on the final
@@ -82,12 +83,17 @@ const DECLARATIONS = {
 };
 
 /** The declarations to send to Gemini. Tools that cannot run this turn are left out. */
-export function functionDeclarations({ memory = true, search = true, selection = {} } = {}) {
+export function functionDeclarations({ memory = true, search = true, selection = {}, clarification = false } = {}) {
   const { min = BASKET_SIZE, max = BASKET_SIZE } = selection;
   const check = structuredClone(DECLARATIONS.check_selection);
   if (min !== BASKET_SIZE || max !== BASKET_SIZE) {
     check.description = `Checks a shortlist: ${min} to ${max} unique company symbols, all from the allowed list. Call before answering and fix any errors.`;
-    check.parameters.properties.symbols.description = `${min} to ${max} candidate ticker symbols. The user chooses which to add later.`;
+    check.parameters.properties.symbols.description = `${min} to ${max} candidate ticker symbols.`;
+  }
+  if (clarification) {
+    check.description += ' Only clarity "clear" can produce a basket; otherwise ask the person a question.';
+    check.parameters.properties.clarity = { type: "STRING", enum: CLARITIES };
+    check.parameters.required.push("clarity");
   }
   return [
     check,
@@ -109,6 +115,10 @@ export async function executeTool(name, args, context) {
   const input = isObject(args) ? args : {};
   switch (name) {
     case "check_selection":
+      if (context.clarification) {
+        if (!CLARITIES.includes(input.clarity)) return { ok: false, errors: ["Judge clarity before selecting stocks."] };
+        if (input.clarity !== "clear") return { ok: false, ask: true, errors: ["Ask one question with 2 or 3 supported ideas. Leave symbols empty."] };
+      }
       return checkSelection(input.symbols, context.selection);
 
     case "get_memory": {

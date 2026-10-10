@@ -15,13 +15,13 @@ test("experiment Gemini produces 7–10 company candidates, leaving the old thre
   let sent;
   const find = createSuggestions({ callModel: async request => {
     sent = request;
-    return { candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: "Companies to explore", symbols: symbols.slice(0, 8) }) }] } }] };
+    return { candidates: [{ content: { parts: [{ text: JSON.stringify({ clarity: "clear", why: "Chip companies match", summary: "Companies to explore", symbols: symbols.slice(0, 8) }) }] } }] };
   } });
   const result = await find({ idea: "AI chips" });
   assert.equal(result.stocks.length, 8);
   assert.equal(result.source, "gemini");
-  assert.equal(sent.body.generationConfig.responseJsonSchema.properties.symbols.minItems, 7);
-  assert.equal(sent.body.generationConfig.responseJsonSchema.properties.symbols.maxItems, 10);
+  assert.match(sent.body.generationConfig.responseJsonSchema.properties.symbols.description, /7 to 10/);
+  assert.deepEqual(sent.body.generationConfig.responseJsonSchema.required, ["clarity", "why"]);
   assert.match(sent.body.systemInstruction.parts[0].text, /person chooses/);
   assert.equal(checkSelection(symbols.slice(0, 3)).ok, true);
   assert.equal(checkSelection(symbols.slice(0, 6), { min: 7, max: 10 }).ok, false);

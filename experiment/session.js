@@ -1,6 +1,19 @@
 import { allocate } from "./math.js";
 
 export const SESSION_KEY = "basketlab.flow.v2";
+export const AGENT_SESSION_KEY = "basketlab.agent.v1";
+
+export function validPreferences(value) {
+  return Array.isArray(value) && value.length <= 10 && value.every(v => typeof v === "string" && v.trim() && v.length <= 200);
+}
+export function restoreAgentSession(raw) {
+  try {
+    const data = JSON.parse(raw);
+    if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(data?.id ?? "") || !validPreferences(data.preferences)) return null;
+    return { id: data.id, preferences: data.preferences,
+      draft: typeof data.draft === "string" && data.draft.length <= 500 ? data.draft : null };
+  } catch { return null; }
+}
 
 export function createBasket(idea, result, allowed) {
   const candidates = result.stocks;

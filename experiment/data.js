@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { COMPANIES } from "./suggestions.js";
 import { association, qualifyAssociations, basketHistory, allocate } from "./math.js";
 import { KALSHI_TOPICS, kalshiEvent } from "./kalshi.js";
+import { weeklyOddsChange } from "./evidence.js";
 
 const UNIVERSE = JSON.parse(await readFile(new URL("../backend/src/polyslice_api/data/universe.json", import.meta.url), "utf8"));
 const HEADER = { "User-Agent": "Mozilla/5.0 (BasketLab local research preview)" };
@@ -168,7 +169,7 @@ export function analyzeBasket(input, symbols) {
   const curves = basketHistory(symbols.map(symbol => ({ symbol, prices: snapshot.stocks[symbol]?.prices ?? [] })));
   const benchmark = snapshot.stocks.SPY?.prices ?? [];
   const related = snapshot.events.filter(e => e.linkedSymbols.some(s => symbols.includes(s)));
-  const events = related.map(e => ({ ...e, businessLink: BUSINESS[e.topicId] ?? "Related business exposure.",
+  const events = related.map(e => ({ ...e, weeklyMove: weeklyOddsChange(e), businessLink: BUSINESS[e.topicId] ?? "Related business exposure.",
     linkedHoldings: symbols.filter(s => e.linkedSymbols.includes(s)),
     fit: association(curves.basket, benchmark, e.history ?? []),
     stockFits: Object.fromEntries(symbols.filter(s => e.linkedSymbols.includes(s))
