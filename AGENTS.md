@@ -30,7 +30,7 @@ Read this before any change. It decides who owns what. Details per area live in 
 | `web/` | `pnpm dev` | `pnpm test`, `pnpm lint`, `pnpm typecheck` |
 | `backend/` | `uv run uvicorn polyslice_api.main:app --reload --port 8001` | `uv run pytest` |
 
-Run the tests for every area you touched before opening a PR.
+Run the tests for every area you touched before opening a PR. CI (`.github/workflows/ci.yml`) runs all of them on every PR; a red check means fix it before merging.
 
 ## Git
 
