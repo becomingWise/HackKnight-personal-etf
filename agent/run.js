@@ -25,7 +25,7 @@ if (!loadAgentEnv() && !process.env.GEMINI_API_KEY) {
 
 const findStocks = createFindStocks({
   log: event => {
-    if (event.event === "model_call") console.error(`  call ${event.call}: ${event.model} (${event.purpose})`);
+    if (event.event === "model_call") console.error(`  call ${event.call}: ${event.model} (${event.purpose}, ${event.ms} ms)`);
     if (event.event === "tool") console.error(`  tool: ${event.name}`);
     if (event.event === "model_failed") console.error(`  ${event.model} failed: ${event.status}`);
   }

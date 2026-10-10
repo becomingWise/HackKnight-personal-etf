@@ -23,6 +23,8 @@ export const MAX_IDEA_LENGTH = 500;
 export const MAX_SUMMARY_WORDS = 12;
 export const CACHE_TTL_MS = 15 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 25_000;
+/** One model call may take this long; after that the next model of the chain is asked. */
+const CALL_TIMEOUT_MS = 9_000;
 
 /**
  * The agent's models, in order. Both support function calling with structured output and have
@@ -122,8 +124,8 @@ const SYSTEM = `You choose the three stocks of a small portfolio that reflects a
 
 How to work:
 1. Read the project notes below. Choose only from the allowed tickers in them.
-2. If the session has saved preferences or earlier baskets, call get_memory and respect them.
-3. If the person states a lasting preference about their portfolio, call remember_preference.
+2. The SESSION block lists what this person asked for before. Saved preferences are binding: never pick a stock that breaks one. get_memory returns the same list if you need it again.
+3. If the idea states a lasting wish about the portfolio ("never", "always", "no ...", "I prefer ..."), you MUST call remember_preference with it, in the same turn as check_selection, and follow it now.
 4. Call check_selection with your three symbols, and fix whatever it reports.
 5. Then give the final answer as JSON: a summary of at most ${MAX_SUMMARY_WORDS} words and the three symbols.
 
@@ -143,7 +145,7 @@ const ANSWER_SCHEMA = {
   required: ["summary", "symbols"]
 };
 
-const thinking = model => (/^gemini-3/.test(model) ? { thinkingConfig: { thinkingLevel: "low" } } : {});
+const thinking = model => (/^gemini-3/.test(model) ? { thinkingConfig: { thinkingLevel: "minimal" } } : {});
 
 export function normalizeIdea(idea) {
   return idea.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, "");
@@ -167,6 +169,18 @@ function parseAnswer(text) {
   if (!summary) return { ok: false, errors: ["summary must be a short non-empty string."] };
   const checked = checkSelection(data?.symbols);
   return checked.ok ? { ok: true, value: { summary, stocks: checked.stocks } } : checked;
+}
+
+/** What is remembered for the session, written into the prompt so it is always applied. */
+function sessionBlock(record) {
+  if (!record) return "No session: nothing is remembered.";
+  const preferences = record.preferences.length
+    ? `Saved preferences (binding):\n${record.preferences.map(item => `- ${item}`).join("\n")}`
+    : "Saved preferences: none yet.";
+  const baskets = record.baskets.length
+    ? `Earlier baskets:\n${record.baskets.map(item => `- "${item.idea}" → ${item.symbols.join(", ")}`).join("\n")}`
+    : "Earlier baskets: none yet.";
+  return `${preferences}\n${baskets}`;
 }
 
 // ---------- The agent ----------
@@ -236,13 +250,19 @@ export function createFindStocks(options = {}) {
         }
         calls += 1;
         attempts += 1;
+        const started = now();
         try {
-          const response = await callModel({ model, body: build(model), signal: abort });
-          log({ event: "model_call", purpose, model, call: calls });
+          const response = await callModel({
+            model,
+            body: build(model),
+            signal: AbortSignal.any([abort, AbortSignal.timeout(CALL_TIMEOUT_MS)])
+          });
+          log({ event: "model_call", purpose, model, call: calls, ms: now() - started });
           return { model, response };
         } catch (error) {
           if (abort.aborted || error instanceof AgentError) throw error;
-          const status = error?.status;
+          // A call that ran into its own time limit counts like an overloaded model.
+          const status = error?.name === "TimeoutError" || error?.name === "AbortError" ? 503 : error?.status;
           const message = error instanceof Error ? error.message : "";
           if (status === 429) {
             // Never ask the same model again before its quota can have reset.
@@ -299,10 +319,7 @@ export function createFindStocks(options = {}) {
       parts: [{
         text:
           `${notesForPrompt(text)}\n\n` +
-          `SESSION\n${record
-            ? `${record.preferences.length} saved preferences and ${record.baskets.length} earlier baskets` +
-              (record.preferences.length || record.baskets.length ? ": call get_memory before choosing." : ": nothing to read yet.")
-            : "No session: nothing is remembered."}\n\n` +
+          `SESSION\n${sessionBlock(record)}\n\n` +
           `IDEA\n"""${text}"""`
       }]
     };
@@ -312,7 +329,11 @@ export function createFindStocks(options = {}) {
       for (;;) {
         // On the last permitted call the model must answer; it can no longer ask for a tool.
         const lastCall = calls >= MAX_MODEL_CALLS - 1;
-        const sent = await send("agent", models.agent, model => {
+        // The model that answered last goes first, so a conversation stays with one model.
+        const chain = conversation.answeredBy
+          ? [conversation.answeredBy, ...models.agent.filter(model => model !== conversation.answeredBy)]
+          : models.agent;
+        const sent = await send("agent", chain, model => {
           // Thought signatures belong to the model that wrote them: another model starts over.
           if (conversation.model && conversation.model !== model) conversation.contents = [firstTurn];
           conversation.model = model;
@@ -333,6 +354,7 @@ export function createFindStocks(options = {}) {
           throw new AgentError("gemini_unavailable", `No Gemini model is available right now (${tried.join("; ") || "none configured"}).`, 503);
         }
 
+        conversation.answeredBy = sent.model;
         const content = sent.response?.candidates?.[0]?.content;
         const parts = content?.parts ?? [];
         const toolCalls = parts.filter(part => part.functionCall);
