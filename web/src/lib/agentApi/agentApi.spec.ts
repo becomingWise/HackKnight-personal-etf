@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { AgentError, createFindStocks } from "../agent-core/agent/gemini.js";
+import { AgentError, ClarifyError, createFindStocks } from "../agent-core/agent/gemini.js";
 import { createMemoryStore } from "../agent-core/agent/memory.js";
 import { memoryApiCache } from "../cache/apiCache";
 import { memoryModelBudget } from "../gemini/budget";
@@ -98,6 +98,105 @@ describe("POST /api/stocks (stock agent)", () => {
     const unknown = await failing(new Error("boom"));
     expect(unknown.status).toBe(502);
     expect((await unknown.json()).error.code).toBe("upstream_error");
+  });
+
+  it("answers 422 needs_clarification with the question and the options", async () => {
+    const count = vi.fn(async () => {});
+    const { POST } = createAgentStocksHandler({
+      findStocks: async () => {
+        throw new ClarifyError("We don't cover carmakers yet. Which angle fits?", [
+          "Chips inside electric cars",
+          "Oil prices and gas stations",
+          "Car loans and banks",
+        ]);
+      },
+      count,
+      rateLimit: allow,
+    });
+    const response = await POST(post({ idea: "car" }));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "needs_clarification",
+        message: "We don't cover carmakers yet. Which angle fits?",
+        options: [
+          "Chips inside electric cars",
+          "Oil prices and gas stations",
+          "Car loans and banks",
+        ],
+      },
+    });
+    // A question is not an answer served: it is not counted for /api/savings.
+    expect(count).not.toHaveBeenCalled();
+  });
+
+  it("asks without a Gemini call for nonsense, once for an unclear idea, and never saves it", async () => {
+    const callModel = vi.fn(async () => ({
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [
+              {
+                text: JSON.stringify({
+                  status: "clarify",
+                  symbols: [],
+                  question: "We don't cover carmakers yet. Which angle fits?",
+                  options: ["Chips inside electric cars", "Car loans and banks"],
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    }));
+    const memory = createMemoryStore();
+    const findStocks = createFindStocks({
+      callModel,
+      memory,
+      cache: agentCache(memoryApiCache()),
+      budget: agentBudget(memoryModelBudget()),
+      sessionId: null,
+    }) as FindStocks;
+    const { POST } = createAgentStocksHandler({
+      findStocks,
+      signals: async () => [
+        {
+          id: "btc_100k",
+          label: "Bitcoin reaches $100k in 2026",
+          status: "live",
+          price: 0.3,
+          changes: { "1w": 0.05 },
+          betas: { IBIT: 0.9 },
+        },
+      ],
+      rateLimit: allow,
+    });
+    const ask = async (idea: string) => {
+      const response = await POST(post({ idea }, { "X-Session-Id": "tab-1" }));
+      return { status: response.status, error: (await response.json()).error };
+    };
+
+    const nonsense = await ask("asdfgh");
+    expect(nonsense.status).toBe(422);
+    expect(nonsense.error.code).toBe("needs_clarification");
+    // The examples follow this week's biggest Polymarket move.
+    expect(nonsense.error.options[0]).toBe("Bitcoin reaching $100k");
+    expect(nonsense.error.options).toHaveLength(3);
+    expect(callModel).not.toHaveBeenCalled();
+
+    const car = await ask("car");
+    expect(car).toEqual({
+      status: 422,
+      error: {
+        code: "needs_clarification",
+        message: "We don't cover carmakers yet. Which angle fits?",
+        options: ["Chips inside electric cars", "Car loans and banks"],
+      },
+    });
+    expect(await ask("Car")).toEqual(car);
+    expect(callModel).toHaveBeenCalledTimes(1);
+    expect(await memory.load("tab-1")).toEqual({ preferences: [], baskets: [] });
   });
 
   it("rejects a body that is not JSON and applies the per-IP limit", async () => {
@@ -338,6 +437,7 @@ describe("the copies of /agent", () => {
     "agent/gemini.js",
     "agent/tools.js",
     "agent/retrieval.js",
+    "agent/precheck.js",
     "agent/signals.js",
     "agent/memory.js",
     "agent/basket.js",

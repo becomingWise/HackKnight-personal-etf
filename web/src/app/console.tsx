@@ -42,7 +42,7 @@ type Reuse = { cache: string | null; moved: string | null };
 type Step<T> =
   | { state: "idle" | "running" | "skipped" }
   | { state: "done"; data: T; ms: number; reuse: Reuse }
-  | { state: "error"; message: string };
+  | { state: "error"; message: string; options?: string[] };
 const IDLE = { state: "idle" } as const;
 const RUNNING = { state: "running" } as const;
 const SKIPPED = { state: "skipped" } as const;
@@ -71,7 +71,14 @@ async function call<T>(
     body: JSON.stringify(body),
   });
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.error?.message ?? `${path} answered ${response.status}.`);
+  if (!response.ok) {
+    // A 422 needs_clarification carries ideas to choose from; they travel with the error.
+    throw Object.assign(new Error(data?.error?.message ?? `${path} answered ${response.status}.`), {
+      options: Array.isArray(data?.error?.options)
+        ? (data.error.options as unknown[]).filter((o): o is string => typeof o === "string")
+        : undefined,
+    });
+  }
   return {
     data: data as T,
     ms: Math.round(performance.now() - started),
@@ -93,6 +100,7 @@ const fetchSavings = () => fetchJson<Savings>("/api/savings");
 const failure = (err: unknown) => ({
   state: "error" as const,
   message: err instanceof Error ? err.message : "The request failed.",
+  options: (err as { options?: string[] } | null)?.options,
 });
 
 /** Equal starting weights that total exactly 100, the same way the team's controller does it. */
@@ -406,7 +414,31 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
           )
         }
       >
-        {stocks.state !== "done" ? (
+        {stocks.state === "error" && stocks.options?.length ? (
+          // The agent asks instead of answering: its question, and one button per idea it offers.
+          <div className="grid gap-3">
+            <p className="text-base font-medium">{stocks.message}</p>
+            <div className="flex flex-wrap gap-2">
+              {stocks.options.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setIdea(option);
+                    void run(option);
+                  }}
+                  className="rounded-full border border-blue px-4 py-1.5 text-left text-sm font-medium text-blue hover:bg-blue-soft disabled:opacity-50"
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted">
+              No basket was built and nothing was saved. Pick one, or type a different idea.
+            </p>
+          </div>
+        ) : stocks.state !== "done" ? (
           <Waiting
             step={stocks}
             idle="Run an idea: one Gemini agent with retrieval, tools and memory answers."

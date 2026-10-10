@@ -141,6 +141,14 @@ export function createAgentStocksHandler(deps: AgentHandlerDeps = defaultAgentDe
     } catch (err) {
       if (err instanceof AgentError) {
         deps.log?.("agent_error", { code: err.code, message: err.message.slice(0, 200) });
+        // The agent asks instead of answering: the message is its question, and the options
+        // are ideas the person can pick.
+        const options = (err as { options?: unknown }).options;
+        if (err.code === "needs_clarification" && Array.isArray(options)) {
+          return json(request, 422, {
+            error: { code: err.code, message: err.message, options },
+          });
+        }
         return error(request, err.status, err.code, err.message);
       }
       deps.log?.("error", {

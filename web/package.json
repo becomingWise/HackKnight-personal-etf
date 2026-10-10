@@ -16,6 +16,7 @@
     "db:status": "tsx --env-file-if-exists=.env.local scripts/migrate.ts --status",
     "sync:universe": "node scripts/sync-universe.mjs",
     "sync:agent": "node scripts/sync-agent.mjs",
+    "try:clarify": "tsx --env-file-if-exists=.env.local scripts/try-clarify.mts",
     "try:findstocks": "tsx --env-file-if-exists=.env.local scripts/try-findstocks.mts",
     "parity:weights": "node scripts/run-parity.mjs",
     "jobs:loop": "tsx --env-file-if-exists=.env.local scripts/jobs-loop.mts",

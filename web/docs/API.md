@@ -72,11 +72,49 @@ browser tab. Without the header nothing is remembered.
 | ------ | -------------------------------------------------------------------- | --------------------------------------------------------- |
 | 400    | `invalid_request`, `invalid_idea`                                    | Body is not JSON; `idea` missing, empty or over 500 chars |
 | 429    | `rate_limited`                                                       | More than 30 requests a minute or 600 a day from one IP   |
+| 422    | `needs_clarification`                                                | The idea needs clarifying; `error.options` has 2 or 3 ideas |
 | 502    | `invalid_selection`, `call_limit`, `gemini_failed`, `upstream_error` | Gemini did not produce a valid basket                     |
 | 503    | `gemini_unavailable`                                                 | Every model is rate limited or over its daily budget      |
 | 504    | `timeout`                                                            | No answer within 25 seconds                               |
 
 A failure is always an error: the service never substitutes demo or fallback companies.
+
+### When the idea needs clarifying — `422 needs_clarification`
+
+The agent may ask instead of answering. The success shape above does not change; a question is this
+error, with the ideas to choose from in `error.options`:
+
+```json
+{
+  "error": {
+    "code": "needs_clarification",
+    "message": "We don't cover carmakers yet. Which car-related theme?",
+    "options": ["Chips inside electric cars", "Oil prices and gas stations", "Car loans and banks"]
+  }
+}
+```
+
+- `message`: the question to show, at most 20 words, in the person's language.
+- `options`: 2 or 3 strings. Each is a complete idea: **send the one the person picks as the next
+  `idea`.** Show them as plain text (they are not HTML).
+- It happens in two ways:
+  1. **Free pre-check, no Gemini call:** text with no letters or digits (`"???"`), one character
+     repeated (`"aaaa"`) or a keyboard run (`"asdf"`, `"qwerty"`). The options are 3 example ideas, one
+     per tracked Polymarket signal, the signals with the biggest 7-day odds move first (fixed examples
+     when the signals cannot be read). Tickers, short ideas (`"AI"`, `"oil"`) and text in other
+     languages are never stopped here.
+  2. **The agent asks (normally 1 Gemini call):** it cannot tell what is meant, the idea is a broad
+     everyday word, or the idea's main companies are not among the 40 tickers ("We don't cover
+     carmakers yet."). Its question and options are checked in code like a basket; an invalid one
+     gets one correction turn.
+- Nothing is saved to the session's memory, no web search is made, and the controller should stop
+  (no `/api/weights`, no `/api/votes`). The question is cached for 15 minutes, so the same text again
+  costs nothing. It is not counted as an answer in `/api/savings`.
+- **Measured 2026-10-10 on Flash-Lite (`pnpm try:clarify`, 20 requests):** 5 of 5 clear ideas got a
+  basket ("AI chips and Taiwan risk", "TSM", "oil", "banks", "我想投资AI芯片"). Of the 6 unclear inputs
+  that completed, 3 were stopped ("car", "airlines", "asdfgh") and 3 got a basket anyway ("food",
+  "money", "banana dance"); "hello" ran out of budget mid-request, 2 inputs and all option
+  resubmits were not run. So a broad or silly idea can still slip through.
 
 ### Behaviour
 
@@ -114,7 +152,8 @@ $r.summary; $r.stocks | Format-Table symbol, name
 ```
 
 From the website: `import { findStocks } from "./stock-api.js"` (it reads `API_BASE_URL` from
-`js/config.js`).
+`js/config.js`). A rejection is an `Error` that keeps the backend's `code`; for a clarification
+`error.code === "needs_clarification"`, `error.message` is the question and `error.options` the ideas.
 
 > Sections 1b and 1c below are the earlier evidence workflow (analyst → gate → decider → checker). It is
 > no longer behind `/api/stocks`; it stays available at `POST /api/analyze` and `POST /api/decide` only.

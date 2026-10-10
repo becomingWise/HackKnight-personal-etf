@@ -10,6 +10,7 @@ export const SYNCED_FILES = [
   "agent/gemini.js",
   "agent/tools.js",
   "agent/retrieval.js",
+  "agent/precheck.js",
   "agent/signals.js",
   "agent/memory.js",
   "agent/basket.js",

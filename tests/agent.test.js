@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { AgentError, MAX_MODEL_CALLS, createFindStocks, modelChains, tidySummary } from "../agent/gemini.js";
+import { AgentError, ClarifyError, MAX_MODEL_CALLS, checkClarification, createFindStocks, modelChains, tidySummary } from "../agent/gemini.js";
+import { FIXED_EXAMPLES, NONSENSE_QUESTION, SIGNAL_IDEAS, exampleIdeas, looksLikeNonsense } from "../agent/precheck.js";
 import { createMemoryStore } from "../agent/memory.js";
 import { ALLOWED, retrieve } from "../agent/retrieval.js";
 import { checkSignalIds, oddsLine, oddsMoved, reuseCached, usableSignals } from "../agent/signals.js";
@@ -65,7 +66,7 @@ test("asks for structured output and offers the function tools", async () => {
   await agent(model, { sessionId: "s1" })({ idea: "AI chips" });
   const { body } = model.requests[0];
   assert.equal(body.generationConfig.responseMimeType, "application/json");
-  assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["summary", "symbols"]);
+  assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["status"]);
   assert.deepEqual(
     body.tools[0].functionDeclarations.map(tool => tool.name),
     ["check_selection", "get_memory", "remember_preference", "google_search"]
@@ -296,7 +297,7 @@ test("signals: one compact line per live signal goes into the prompt, with the r
   // Only live signals are shown, and only they can be named.
   assert.ok(!prompt.includes("recession:"));
   assert.deepEqual(body.generationConfig.responseJsonSchema.properties.signals.items.enum, ["taiwan", "chip_export_law", "openai_1t", "btc_100k"]);
-  assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["summary", "symbols"]);
+  assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["status"]);
 });
 
 test("signals: unknown ids and ids with no β on a picked ticker are dropped", () => {
@@ -444,4 +445,176 @@ test("reuse: the rule itself", () => {
   assert.deepEqual(reuseCached({ at: 0 }, live, HOUR, limits), { reuse: false, moved: null });
   // An entry written before this rule existed has no time: its own expiry decides.
   assert.deepEqual(reuseCached({ summary: "x" }, live, HOUR, limits), { reuse: true, moved: null });
+});
+
+// ---------- Asking instead of answering (agent/precheck.js, ClarifyError) ----------
+
+const clarify = (question = "We don't cover carmakers yet. Which angle fits?", options = ["Chips inside electric cars", "Oil prices and gas stations", "Car loans and banks"]) =>
+  text({ status: "clarify", symbols: [], question, options });
+const rejection = async promise => {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  assert.fail("expected a rejection");
+};
+
+test("pre-check: flags only text that is plainly not an idea", () => {
+  for (const nonsense of ["???", "!!!", "...", "  -- ", "🙂🙂", "aaaa", "zzz", "ZZZZZ", "1111", "aaa aaa", "asdf", "asdfgh", "qwerty", "QWERTY", "qwer", "zxcvbn", "hjkl", "lkjh", "asdf qwerty", "asdfgh!!"]) {
+    assert.equal(looksLikeNonsense(nonsense), true, nonsense);
+  }
+  for (const idea of [
+    // Tickers and the shortest real ideas.
+    "TSM", "NVDA", "AMD", "ASML", "GD", "GS", "MS", "AI", "oil", "Taiwan", "banks", "car", "a", "aa", "5G", "2026",
+    // Ordinary text, including words made of neighbouring keys.
+    "AI chips and Taiwan risk", "hello", "banana dance", "what's the weather?", "we", "power", "type", "wert", "tree",
+    // Real words next to a keyboard run: left to the model.
+    "asdf oil", "qwerty keyboards",
+    // Other languages and scripts are never judged here.
+    "我想投资AI芯片", "台湾", "哈哈哈", "石油", "énergie propre", "Öl", "нефть", "半導体"
+  ]) {
+    assert.equal(looksLikeNonsense(idea), false, idea);
+  }
+});
+
+test("pre-check: one example idea per tracked signal, biggest 7-day odds move first", async () => {
+  const notes = JSON.parse(await readFile(new URL("../backend/src/polyslice_api/data/universe.json", import.meta.url), "utf8"));
+  assert.deepEqual(Object.keys(SIGNAL_IDEAS).sort(), notes.signals.map(signal => signal.id).sort());
+  assert.equal(Object.keys(SIGNAL_IDEAS).length, 11);
+  for (const idea of Object.values(SIGNAL_IDEAS)) assert.equal(looksLikeNonsense(idea), false);
+
+  const live = usableSignals(SIGNALS);
+  // chip_export_law moved 4 points, taiwan 2, btc_100k 0, openai_1t unknown.
+  assert.deepEqual(exampleIdeas(live), ["AI chip export rules", "AI chips and Taiwan risk", "Big Tech and an OpenAI IPO"]);
+  assert.deepEqual(exampleIdeas(usableSignals([{ ...SIGNALS[3], changes: { "1w": -0.2 } }])), ["Bitcoin reaching $100k", "AI chips and Taiwan risk", "Banks if interest rates stay high"]);
+  // Signals unavailable: the fixed examples.
+  assert.deepEqual(exampleIdeas([]), FIXED_EXAMPLES);
+  assert.deepEqual(exampleIdeas(undefined), FIXED_EXAMPLES);
+  assert.equal(FIXED_EXAMPLES.length, 3);
+});
+
+test("pre-check: nonsense costs no Gemini call, saves nothing and offers examples", async () => {
+  const model = gemini(answer());
+  const memory = createMemoryStore();
+  const findStocks = agent(model, { memory });
+  const error = await rejection(findStocks({ idea: "asdfgh" }, { sessionId: "s1", signals: SIGNALS }));
+  assert.ok(error instanceof ClarifyError && error instanceof AgentError);
+  assert.equal(error.code, "needs_clarification");
+  assert.equal(error.status, 422);
+  assert.equal(error.message, NONSENSE_QUESTION);
+  assert.ok(error.message.split(" ").length <= 20);
+  assert.deepEqual(error.options, ["AI chip export rules", "AI chips and Taiwan risk", "Big Tech and an OpenAI IPO"]);
+  assert.deepEqual((await rejection(findStocks({ idea: "???" }))).options, FIXED_EXAMPLES);
+  assert.equal(model.requests.length, 0);
+  assert.deepEqual(await memory.load("s1"), { preferences: [], baskets: [] });
+});
+
+test("clarify: the agent may ask; one call, no tool, nothing saved, and the same text again is free", async () => {
+  let clock = 1_000_000;
+  const model = gemini(clarify());
+  const memory = createMemoryStore();
+  const reports = [];
+  const findStocks = agent(model, { memory, now: () => clock });
+  const ask = (idea, sessionId) => rejection(findStocks({ idea }, { sessionId, report: detail => reports.push(detail) }));
+
+  const error = await ask("car", "s1");
+  assert.ok(error instanceof ClarifyError);
+  assert.deepEqual({ code: error.code, status: error.status, message: error.message, options: error.options }, {
+    code: "needs_clarification",
+    status: 422,
+    message: "We don't cover carmakers yet. Which angle fits?",
+    options: ["Chips inside electric cars", "Oil prices and gas stations", "Car loans and banks"]
+  });
+  assert.equal(model.requests.length, 1);
+  assert.deepEqual(await memory.load("s1"), { preferences: [], baskets: [] });
+
+  // The same text again, also from another visitor, is answered from the cache.
+  assert.deepEqual((await ask(" Car. ", "s1")).options, error.options);
+  assert.deepEqual((await ask("car", "s2")).options, error.options);
+  assert.equal(model.requests.length, 1);
+  assert.deepEqual(reports, [
+    { reused: false, calls: 1, oddsMoved: null },
+    { reused: true, calls: 0, oddsMoved: null },
+    { reused: true, calls: 0, oddsMoved: null }
+  ]);
+  clock += 15 * 60 * 1000 + 1;
+  await ask("car", "s1");
+  assert.equal(model.requests.length, 2);
+});
+
+test("clarify: the schema lets the agent ask, and the prompt says when", async () => {
+  const model = gemini(answer());
+  await agent(model)({ idea: "AI chips" });
+  const { body } = model.requests[0];
+  const schema = body.generationConfig.responseJsonSchema;
+  assert.deepEqual(schema.properties.status.enum, ["basket", "clarify"]);
+  assert.deepEqual(Object.keys(schema.properties), ["status", "summary", "symbols", "question", "options"]);
+  // The count of symbols is checked in code, not by the schema.
+  assert.equal("minItems" in schema.properties.symbols, false);
+  assert.equal("maxItems" in schema.properties.symbols, false);
+  const system = body.systemInstruction.parts[0].text;
+  for (const rule of ["broad everyday word", "not in the allowed tickers", "We don't cover carmakers yet.", "do not search before asking", "at most 20 words", "any language", '"TSM", "AI chips", "oil", "Taiwan", "banks"']) {
+    assert.ok(system.includes(rule), rule);
+  }
+});
+
+test("clarify: a picked option gives a basket, and a basket still needs exactly three symbols", async () => {
+  const model = gemini(clarify(), answer(["NVDA", "TSM", "AMD"], "Your electric car chips basket"));
+  const findStocks = agent(model);
+  const error = await rejection(findStocks({ idea: "car" }));
+  const result = await findStocks({ idea: error.options[0] });
+  assert.deepEqual(result.stocks.map(stock => stock.symbol), ["NVDA", "TSM", "AMD"]);
+  assert.deepEqual(Object.keys(result).sort(), ["stocks", "summary"]);
+
+  // status "basket" with a wrong count is corrected like before.
+  const short = gemini(text({ status: "basket", summary: "Two", symbols: ["NVDA", "TSM"] }), text({ status: "basket", summary: "Three", symbols: ["NVDA", "TSM", "AMD"] }));
+  assert.equal((await agent(short)({ idea: "AI chips" })).summary, "Three");
+  assert.equal(short.requests.length, 2);
+});
+
+test("clarify: an invalid question gets the usual correction turn", async () => {
+  const long = Array.from({ length: 21 }, (_, index) => `w${index + 1}`).join(" ");
+  const model = gemini(clarify(long), clarify("Which angle fits?", ["Only one option"]), clarify());
+  const error = await rejection(agent(model)({ idea: "car" }));
+  assert.equal(error.code, "needs_clarification");
+  assert.equal(model.requests.length, 3);
+  const correction = model.requests[1].body.contents.at(-1).parts[0].text;
+  assert.match(correction, /rejected/);
+  assert.match(correction, /at most 20 words; yours has 21/);
+  assert.match(correction, /status "clarify" with a question/);
+  assert.match(model.requests[2].body.contents.at(-1).parts[0].text, /Give 2 or 3 options; you gave 1/);
+
+  // Four bad answers in a row end in an error, never in an invented basket or question.
+  const stubborn = gemini(clarify("Which?", []));
+  const failed = await rejection(agent(stubborn)({ idea: "car" }));
+  assert.equal(failed.code, "invalid_selection");
+  assert.equal(stubborn.requests.length, MAX_MODEL_CALLS);
+});
+
+test("clarify: the rules for a question and its options", () => {
+  const ok = checkClarification("  Which   angle fits? ", ["Chips inside electric cars", " Car loans and banks "], "car");
+  assert.deepEqual(ok, { ok: true, clarify: { question: "Which angle fits?", options: ["Chips inside electric cars", "Car loans and banks"] } });
+  assert.equal(checkClarification("哪个方向？", ["电动车芯片", "石油和加油站", "车贷和银行"], "车").ok, true);
+  const bad = (question, options, idea = "car") => checkClarification(question, options, idea).errors.join(" ");
+  assert.match(bad("", ["a b", "c d"]), /needs a question/);
+  assert.match(bad("Which?", ["One", "Two", "Three", "Four"]), /you gave 4/);
+  assert.match(bad("Which?", ["Same idea", "same idea."]), /different/);
+  assert.match(bad("Which?", ["Oil", 7]), /different, non-empty strings/);
+  assert.match(bad("Which?", "Oil"), /non-empty strings/);
+  assert.match(bad("Which?", ["Oil majors", "x".repeat(101)]), /at most 100 characters/);
+  // An option that is the person's own text, or unreadable, would only lead back to the question.
+  assert.match(bad("Which?", ["Car", "Car loans and banks"]), /new, complete idea/);
+  assert.match(bad("Which?", ["asdf", "Car loans and banks"]), /new, complete idea/);
+});
+
+test("clarify: once the agent asks it stops: no search, no further call", async () => {
+  // Asked on the second turn, after a tool call: the question still ends the request.
+  const model = gemini(toolCall("get_memory", {}), clarify());
+  const memory = createMemoryStore();
+  const error = await rejection(agent(model, { memory })({ idea: "food" }, { sessionId: "s1" }));
+  assert.equal(error.code, "needs_clarification");
+  assert.equal(model.requests.length, 2);
+  assert.ok(model.requests.every(request => !request.body.tools.some(tool => tool.googleSearch)));
+  assert.deepEqual(await memory.load("s1"), { preferences: [], baskets: [] });
 });
