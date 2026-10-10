@@ -20,9 +20,51 @@ type Weights = {
   evidence: Evidence[];
 };
 type Vote = { agent: string; vote: "yes" | "no" | "none"; reason: string };
+type AgentRecord = {
+  agent: string;
+  n: number;
+  correct: number;
+  pct: number | null;
+  shrunkPct: number;
+};
 type Votes = {
   summary: string;
   stocks: { symbol: string; name: string; yes: number; no: number; votes: Vote[] }[];
+  beatsSpy?: {
+    asOf: string | null;
+    yes: number;
+    no: number;
+    majority: "yes" | "no" | null;
+    calls: (Vote & { probability: number | null })[];
+  };
+  records?: AgentRecord[];
+};
+type Record90 = {
+  n: number;
+  correct: number;
+  pct: number | null;
+  range90: [number, number] | null;
+  brier: number | null;
+};
+type TrackRecord = {
+  lastClose: string | null;
+  decisions: number;
+  pending: number;
+  agents: ({ id: string; agent: string } & Record90)[];
+  majority: Record90;
+  baselines: { alwaysYes: Record90; coinFlip: { n: number; pct: number; brier: number } };
+  recent: {
+    date: string;
+    source: string;
+    idea: string;
+    symbols: string[];
+    yesVotes: number;
+    votes: number;
+    basketPct: number | null;
+    spyPct: number | null;
+    pnl: number | null;
+    correct: boolean | null;
+  }[];
 };
 type Savings = {
   day: string;
@@ -75,14 +117,15 @@ async function call<T>(
 }
 
 /** Today's counters; null when they cannot be read (the console works without them). */
-async function fetchSavings(): Promise<Savings | null> {
+async function fetchJson<T>(path: string): Promise<T | null> {
   try {
-    const response = await fetch("/api/savings", { cache: "no-store" });
-    return response.ok ? ((await response.json()) as Savings) : null;
+    const response = await fetch(path, { cache: "no-store" });
+    return response.ok ? ((await response.json()) as T) : null;
   } catch {
     return null;
   }
 }
+const fetchSavings = () => fetchJson<Savings>("/api/savings");
 
 const failure = (err: unknown) => ({
   state: "error" as const,
@@ -186,6 +229,178 @@ function ReusePill({ reuse }: { reuse: Reuse }) {
   );
 }
 
+const signedPct = (value: number | null) =>
+  value === null ? "–" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+
+/** The agents' call on the whole basket, each with its probability and its record so far. */
+function BasketCall({
+  call,
+  records,
+}: {
+  call: NonNullable<Votes["beatsSpy"]>;
+  records: AgentRecord[];
+}) {
+  return (
+    <div className="grid gap-1.5 rounded-xl border border-line p-3">
+      <p className="font-medium">
+        Will this basket beat SPY over the next week? {call.yes} of {call.calls.length} agents say
+        yes
+        {call.majority ? ` (majority: ${call.majority})` : " (no majority)"}
+      </p>
+      <ul className="grid gap-1 text-xs">
+        {call.calls.map((item) => {
+          const record = records.find((r) => r.agent === item.agent);
+          return (
+            <li key={item.agent}>
+              <span
+                className={`font-semibold ${item.vote === "yes" ? "text-up" : item.vote === "no" ? "text-down" : "text-muted"}`}
+              >
+                {item.vote === "none" ? "NO ANSWER" : item.vote.toUpperCase()}
+              </span>{" "}
+              <span className="font-medium">{item.agent}</span>
+              {item.probability !== null && (
+                <span className="font-mono"> {Math.round(item.probability * 100)}%</span>
+              )}
+              {item.vote !== "none" && <span className="text-muted">: {item.reason}</span>}
+              {record && (
+                <span className="text-muted">
+                  {" "}
+                  · record{" "}
+                  {record.n
+                    ? `${record.correct} of ${record.n} right (${record.pct}%, shrunk ${record.shrunkPct}%)`
+                    : "none yet"}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="text-xs text-muted">
+        Prices as of {call.asOf ?? "unknown"}. Scored against SPY one week later.
+      </p>
+    </div>
+  );
+}
+
+function RecordRow({ name, record }: { name: string; record: Record90 }) {
+  return (
+    <tr className="border-t border-line">
+      <td className="py-1 pr-3 font-sans font-medium">{name}</td>
+      <td className="py-1 text-right">{record.n}</td>
+      <td className="py-1 text-right">{record.correct}</td>
+      <td className="py-1 text-right">
+        {record.pct === null ? "–" : `${record.pct}% (n=${record.n})`}
+      </td>
+      <td className="py-1 text-right">
+        {record.range90 ? `${record.range90[0]}–${record.range90[1]}%` : "–"}
+      </td>
+      <td className="py-1 text-right">{record.brier === null ? "–" : record.brier.toFixed(3)}</td>
+    </tr>
+  );
+}
+
+/** How often each agent, and the majority, was right about "beats SPY next week". */
+function TrackRecordCard({ track }: { track: TrackRecord }) {
+  const coin = track.baselines.coinFlip;
+  return (
+    <Card
+      n="3 · TRACK RECORD"
+      title="How often the agents were right"
+      badge={<Pill kind="plain">GET /api/track-record</Pill>}
+    >
+      <div className="grid gap-4 text-sm">
+        <p className="text-muted">
+          The question: will the basket beat SPY over the next week? {track.decisions} decisions
+          scored, {track.pending} waiting for their week to pass; closes loaded up to{" "}
+          {track.lastClose ?? "–"}. The 90% range comes from resampling whole Fridays.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full max-w-2xl text-left">
+            <thead className="text-xs tracking-wide text-muted">
+              <tr>
+                <th className="py-1 font-medium">WHO</th>
+                <th className="py-1 text-right font-medium">N</th>
+                <th className="py-1 text-right font-medium">RIGHT</th>
+                <th className="py-1 text-right font-medium">%</th>
+                <th className="py-1 text-right font-medium">90% RANGE</th>
+                <th className="py-1 text-right font-medium">BRIER</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {track.agents.map((agent) => (
+                <RecordRow key={agent.id} name={agent.agent} record={agent} />
+              ))}
+              <RecordRow name="Majority (3 of 5)" record={track.majority} />
+              <RecordRow name="Always yes" record={track.baselines.alwaysYes} />
+              <tr className="border-t border-line">
+                <td className="py-1 pr-3 font-sans font-medium">Coin flip</td>
+                <td className="py-1 text-right">{coin.n}</td>
+                <td className="py-1 text-right">–</td>
+                <td className="py-1 text-right">
+                  {coin.pct}% (n={coin.n})
+                </td>
+                <td className="py-1 text-right">–</td>
+                <td className="py-1 text-right">{coin.brier.toFixed(3)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="text-xs tracking-wide text-muted">
+              <tr>
+                <th className="py-1 font-medium">DATE</th>
+                <th className="py-1 font-medium">IDEA</th>
+                <th className="py-1 font-medium">STOCKS</th>
+                <th className="py-1 text-right font-medium">YES</th>
+                <th className="py-1 text-right font-medium">BASKET</th>
+                <th className="py-1 text-right font-medium">SPY</th>
+                <th className="py-1 text-right font-medium">P&amp;L ON $10,000</th>
+                <th className="py-1 text-right font-medium">MAJORITY</th>
+              </tr>
+            </thead>
+            <tbody>
+              {track.recent.map((row) => (
+                <tr
+                  key={`${row.date}|${row.source}|${row.idea}|${row.symbols.join()}`}
+                  className="border-t border-line"
+                >
+                  <td className="py-1 pr-3 font-mono whitespace-nowrap">
+                    {row.date}
+                    {row.source === "live" ? " · live" : ""}
+                  </td>
+                  <td className="py-1 pr-3">{row.idea}</td>
+                  <td className="py-1 pr-3 font-mono">{row.symbols.join(" ")}</td>
+                  <td className="py-1 text-right font-mono">
+                    {row.yesVotes} of {row.votes}
+                  </td>
+                  <td className="py-1 text-right font-mono">{signedPct(row.basketPct)}</td>
+                  <td className="py-1 text-right font-mono">{signedPct(row.spyPct)}</td>
+                  <td
+                    className={`py-1 text-right font-mono ${row.pnl === null ? "text-muted" : row.pnl >= 0 ? "text-up" : "text-down"}`}
+                  >
+                    {row.pnl === null
+                      ? "pending"
+                      : `${row.pnl >= 0 ? "+" : "−"}$${Math.abs(row.pnl).toFixed(2)}`}
+                  </td>
+                  <td
+                    className={`py-1 text-right ${row.correct === null ? "text-muted" : row.correct ? "text-up" : "text-down"}`}
+                  >
+                    {row.correct === null ? "–" : row.correct ? "right" : "wrong"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-muted">
+          Paper results on past data. AI opinions, not financial advice.
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
   const [idea, setIdea] = useState<string>(demoIdeas[0] ?? "");
   const [busy, setBusy] = useState(false);
@@ -195,10 +410,14 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
   const [start, setStart] = useState<{ symbol: string; weightPct: number }[]>([]);
   const [savings, setSavings] = useState<Savings | null>(null);
 
+  const [track, setTrack] = useState<TrackRecord | null>(null);
   useEffect(() => {
     let shown = true;
     void fetchSavings().then((loaded) => {
       if (shown && loaded) setSavings(loaded);
+    });
+    void fetchJson<TrackRecord>("/api/track-record").then((loaded) => {
+      if (shown && loaded) setTrack(loaded);
     });
     return () => {
       shown = false;
@@ -392,6 +611,9 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
                 )}
                 {votes.state === "error" && <span className="text-down">{votes.message}</span>}
               </p>
+              {votes.state === "done" && votes.data.beatsSpy && (
+                <BasketCall call={votes.data.beatsSpy} records={votes.data.records ?? []} />
+              )}
               <p className="text-xs text-muted">AI opinions, not financial advice.</p>
             </div>
           </div>
@@ -472,6 +694,8 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
           </div>
         )}
       </Card>
+
+      {track && <TrackRecordCard track={track} />}
     </div>
   );
 }

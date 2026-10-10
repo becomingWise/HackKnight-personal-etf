@@ -5,9 +5,20 @@ import { memoryApiCache } from "../cache/apiCache";
 import { CHAINS } from "../gemini/models";
 import { memorySavings } from "../savings/store";
 import type { GenerateJson, GenerateJsonArgs } from "../sponsors/gemini";
+import type { NewDecision, PriceInputs } from "../track/repo";
 import type { Signal } from "../weights/engine";
 import { createVotesHandler, votesCacheKey, type VotesDeps } from "./handler";
-import { VOTERS, runPanel, tidyReason, type VotesResponse } from "./votes";
+import {
+  VOTERS,
+  agentRecord,
+  pastCallsLine,
+  readAnswer,
+  runPanel,
+  tidyReason,
+  voterPrompt,
+  type BasketInput,
+  type VotesResponse,
+} from "./votes";
 
 const STOCKS = [
   { symbol: "NVDA", name: "NVIDIA" },
@@ -27,16 +38,48 @@ const SIGNALS: Signal[] = [
     betas: { TSM: -1.0, INTC: 0.5 },
   },
 ];
+const PRICES: PriceInputs = {
+  asOf: "2026-10-09",
+  spy: { r5: 0.012, r20: 0.031 },
+  returns: {
+    NVDA: { r5: 0.021, r20: 0.08 },
+    TSM: { r5: -0.004, r20: 0.05 },
+    AMD: { r5: 0.01, r20: null },
+  },
+};
+const CONTEXT = { asOf: PRICES.asOf, spy: PRICES.spy };
+const BASKET: BasketInput = {
+  idea: "AI chips",
+  stocks: STOCKS,
+  evidence: [],
+  returns: PRICES.returns,
+};
 
 const allow = async () => ({ allowed: true, retryAfterSeconds: 0 });
 const voterOf = (args: GenerateJsonArgs) => VOTERS.find((v) => v.system === args.system)!;
-const ballot = (vote: "yes" | "no", symbols = SYMBOLS) => ({
-  votes: symbols.map((symbol) => ({ symbol, vote, reason: `${symbol} looks fine to me.` })),
+const call = (probability: number, vote: "yes" | "no" = probability >= 0.5 ? "yes" : "no") => ({
+  probability,
+  vote,
+  reason: "Momentum is on its side.",
+});
+const ballot = (
+  vote: "yes" | "no",
+  symbols = SYMBOLS,
+  probability = vote === "yes" ? 0.6 : 0.4,
+) => ({
+  baskets: [
+    {
+      basket: 1,
+      votes: symbols.map((symbol) => ({ symbol, vote, reason: `${symbol} looks fine to me.` })),
+      beatsSpy: call(probability),
+    },
+  ],
 });
 /** Every voter says yes, except the ones named here. */
 const panel = (over: Record<string, () => unknown> = {}) =>
   vi.fn<GenerateJson>(async (args) => {
     const id = voterOf(args).id;
+    args.onModel?.("gemini-3.5-flash-lite");
     return over[id] ? over[id]() : ballot("yes");
   });
 
@@ -61,7 +104,7 @@ const BODY = { idea: "AI chips and Taiwan risk", stocks: STOCKS };
 describe("the voting panel", () => {
   it("runs five separate voters in parallel, each with its own system prompt", async () => {
     const generate = panel();
-    const result = await runPanel({ idea: "AI chips", stocks: STOCKS, evidence: [] }, { generate });
+    const result = await runPanel({ basket: BASKET, context: CONTEXT }, { generate });
     expect(generate).toHaveBeenCalledTimes(5);
     const systems = generate.mock.calls.map(([args]) => args.system);
     expect(new Set(systems).size).toBe(5);
@@ -75,11 +118,12 @@ describe("the voting panel", () => {
     expect(result.complete).toBe(5);
     expect(result.response.stocks[0]).toMatchObject({ symbol: "NVDA", yes: 5, no: 0 });
     expect(result.response.summary).toBe("3 of 3 stocks backed by a majority");
+    expect(result.models).toEqual(Array(5).fill("gemini-3.5-flash-lite"));
   });
 
   it("uses only the two Flash-Lite models and splits the voters across them", async () => {
     const generate = panel();
-    await runPanel({ idea: "AI chips", stocks: STOCKS, evidence: [] }, { generate });
+    await runPanel({ basket: BASKET, context: CONTEXT }, { generate });
     const tasks = generate.mock.calls.map(([args]) => args.task);
     expect(tasks.filter((t) => t === "voteA")).toHaveLength(3);
     expect(tasks.filter((t) => t === "voteB")).toHaveLength(2);
@@ -89,41 +133,51 @@ describe("the voting panel", () => {
     expect(CHAINS.voteA[0]).not.toBe(CHAINS.voteB[0]);
   });
 
-  it("gives the Polymarket odds to the macro voter only", async () => {
+  it("gives every voter the date and the returns, and the Polymarket odds to the macro voter only", async () => {
     const generate = panel();
     const evidence = [
       { title: "Will China invade Taiwan?", probability: 0.3, change7d: 0.1, symbols: ["TSM"] },
     ];
-    await runPanel({ idea: "AI chips", stocks: STOCKS, evidence }, { generate });
+    await runPanel({ basket: { ...BASKET, evidence }, context: CONTEXT }, { generate });
     for (const [args] of generate.mock.calls) {
       const macro = voterOf(args).id === "macro";
       expect(args.prompt.includes("POLYMARKET ODDS"), voterOf(args).id).toBe(macro);
       if (macro) expect(args.prompt).toContain("Yes 30%, +10 pts over 7 days; linked to TSM");
+      expect(args.prompt).toContain("DATA AS OF 2026-10-09");
+      expect(args.prompt).toContain("SPY: 5-day +1.2%, 20-day +3.1%");
+      expect(args.prompt).toContain("- NVDA: NVIDIA (5-day +2.1%, 20-day +8%)");
+      expect(args.prompt).toContain("- AMD: Advanced Micro Devices (5-day +1%, 20-day n/a)");
+      // Every agent is asked the basket question, the fit checker included.
+      expect(args.system).toContain("beat SPY");
     }
   });
 
   it("counts yes and no per stock and names the majority", async () => {
+    const votes = (rows: [string, "yes" | "no", string][]) => ({
+      baskets: [
+        {
+          basket: 1,
+          votes: rows.map(([symbol, vote, reason]) => ({ symbol, vote, reason })),
+          beatsSpy: call(0.55),
+        },
+      ],
+    });
     const generate = panel({
       skeptic: () => ballot("no"),
-      fit: () => ({
-        votes: [
-          { symbol: "NVDA", vote: "yes", reason: "Core AI chip maker." },
-          { symbol: "TSM", vote: "no", reason: "A foundry, not a designer." },
-          { symbol: "AMD", vote: "no", reason: "Mostly CPUs." },
-        ],
-      }),
-      value: () => ({
-        votes: [
-          { symbol: "NVDA", vote: "yes", reason: "Pricey but strong." },
-          { symbol: "TSM", vote: "yes", reason: "Fair price." },
-          { symbol: "AMD", vote: "no", reason: "Rich valuation." },
-        ],
-      }),
+      fit: () =>
+        votes([
+          ["NVDA", "yes", "Core AI chip maker."],
+          ["TSM", "no", "A foundry, not a designer."],
+          ["AMD", "no", "Mostly CPUs."],
+        ]),
+      value: () =>
+        votes([
+          ["NVDA", "yes", "Pricey but strong."],
+          ["TSM", "yes", "Fair price."],
+          ["AMD", "no", "Rich valuation."],
+        ]),
     });
-    const { response } = await runPanel(
-      { idea: "AI chips", stocks: STOCKS, evidence: [] },
-      { generate },
-    );
+    const { response } = await runPanel({ basket: BASKET, context: CONTEXT }, { generate });
     expect(response.stocks.map((s) => [s.symbol, s.yes, s.no])).toEqual([
       ["NVDA", 4, 1],
       ["TSM", 3, 2],
@@ -137,26 +191,58 @@ describe("the voting panel", () => {
     });
   });
 
+  it("collects each agent's call on the basket: yes or no with a probability, majority 3 of 5", async () => {
+    const generate = panel({
+      value: () => ballot("yes", SYMBOLS, 0.35),
+      skeptic: () => ballot("yes", SYMBOLS, 0.2),
+      // A stated vote that contradicts the probability: the probability decides.
+      fit: () => ({ baskets: [{ basket: 1, votes: [], beatsSpy: call(0.7, "no") }] }),
+    });
+    const { response, answers } = await runPanel(
+      { basket: BASKET, context: CONTEXT },
+      { generate },
+    );
+    expect(response.beatsSpy).toMatchObject({
+      question: "Will this basket (equal weights) beat SPY over the next week?",
+      asOf: "2026-10-09",
+      yes: 3,
+      no: 2,
+      majority: "yes",
+    });
+    expect(response.beatsSpy.calls.map((c) => [c.agent, c.vote, c.probability])).toEqual([
+      ["Growth investor", "yes", 0.6],
+      ["Value / risk", "no", 0.35],
+      ["Macro & events", "yes", 0.6],
+      ["Skeptic", "no", 0.2],
+      ["Fit checker", "yes", 0.7],
+    ]);
+    expect(answers[4]?.call).toMatchObject({ vote: "yes", probability: 0.7 });
+  });
+
   it('shows a failed voter as "no answer" and never invents its vote', async () => {
     const log = vi.fn();
     const generate = panel({
       growth: () => {
         throw new Error("No Gemini model available");
       },
-      macro: () => ({ votes: "nonsense" }),
-      // Answers for two stocks only, one of them with a vote that is not yes or no.
+      macro: () => ({ baskets: "nonsense" }),
+      // Answers for two stocks only, one of them with a vote that is not yes or no, and a
+      // probability that is not one.
       fit: () => ({
-        votes: [
-          { symbol: "NVDA", vote: "yes", reason: "Fits." },
-          { symbol: "TSM", vote: "maybe", reason: "Unsure." },
-          { symbol: "XXXX", vote: "yes", reason: "Not in the basket." },
+        baskets: [
+          {
+            basket: 1,
+            votes: [
+              { symbol: "NVDA", vote: "yes", reason: "Fits." },
+              { symbol: "TSM", vote: "maybe", reason: "Unsure." },
+              { symbol: "XXXX", vote: "yes", reason: "Not in the basket." },
+            ],
+            beatsSpy: { probability: 60, vote: "yes", reason: "Sixty percent." },
+          },
         ],
       }),
     });
-    const result = await runPanel(
-      { idea: "AI chips", stocks: STOCKS, evidence: [] },
-      { generate, log },
-    );
+    const result = await runPanel({ basket: BASKET, context: CONTEXT }, { generate, log });
     const [nvda, tsm] = result.response.stocks;
     expect(nvda.votes.map((v) => v.vote)).toEqual(["none", "yes", "none", "yes", "yes"]);
     expect(nvda.votes[0]).toEqual({ agent: "Growth investor", vote: "none", reason: "No answer." });
@@ -167,7 +253,92 @@ describe("the voting panel", () => {
       "1 of 3 stocks backed by a majority (2 of 5 agents gave no answer)",
     );
     expect(result).toMatchObject({ complete: 2, silent: 2 });
+    // Two basket calls are not a majority either.
+    expect(result.response.beatsSpy).toMatchObject({ yes: 2, no: 0, majority: null });
+    expect(result.response.beatsSpy.calls[4]).toEqual({
+      agent: "Fit checker",
+      vote: "none",
+      probability: null,
+      reason: "No answer.",
+    });
     expect(log).toHaveBeenCalledWith(expect.objectContaining({ voter: "growth" }));
+  });
+
+  it("reads several baskets from one answer by their number", () => {
+    const other: BasketInput = {
+      idea: "Banks",
+      stocks: [{ symbol: "JPM", name: "JPMorgan Chase" }],
+      evidence: [],
+      returns: {},
+    };
+    const answers = readAnswer(
+      {
+        baskets: [
+          {
+            basket: 2,
+            votes: [
+              { symbol: "JPM", vote: "yes", reason: "A bank." },
+              { symbol: "NVDA", vote: "yes", reason: "Wrong basket." },
+            ],
+            beatsSpy: call(0.45),
+          },
+          {
+            basket: 1,
+            votes: [{ symbol: "NVDA", vote: "no", reason: "Pricey." }],
+            beatsSpy: call(0.52),
+          },
+          { basket: 7, votes: [], beatsSpy: call(0.9) },
+        ],
+      },
+      [BASKET, other],
+    );
+    expect([...answers[0].stocks.keys()]).toEqual(["NVDA"]);
+    expect(answers[0].call).toMatchObject({ vote: "yes", probability: 0.52 });
+    expect([...answers[1].stocks.keys()]).toEqual(["JPM"]);
+    expect(answers[1].call).toMatchObject({ vote: "no", probability: 0.45 });
+    expect(readAnswer(null, [BASKET, other])).toEqual([
+      { stocks: new Map(), call: null },
+      { stocks: new Map(), call: null },
+    ]);
+  });
+
+  it("tells each agent its own past calls, in one line", async () => {
+    expect(pastCallsLine({ n: 80, correct: 41 })).toBe("Your past calls: 41 of 80 right (51%).");
+    expect(pastCallsLine({ n: 0, correct: 0 })).toBe("");
+    expect(pastCallsLine(undefined)).toBe("");
+    const generate = panel();
+    await runPanel(
+      { basket: BASKET, context: CONTEXT, past: { skeptic: { n: 80, correct: 41 } } },
+      { generate },
+    );
+    for (const [args] of generate.mock.calls) {
+      expect(args.prompt.includes("Your past calls: 41 of 80 right (51%)."), voterOf(args).id).toBe(
+        voterOf(args).id === "skeptic",
+      );
+    }
+    // The replay and the live endpoint build the same prompt from the same inputs.
+    expect(voterPrompt(VOTERS[0], [BASKET], CONTEXT)).toBe(generate.mock.calls[0][0].prompt);
+  });
+
+  it("shrinks a record toward 50% so a lucky streak does not dominate", () => {
+    expect(agentRecord("Skeptic", { n: 4, correct: 4 })).toEqual({
+      agent: "Skeptic",
+      n: 4,
+      correct: 4,
+      pct: 100,
+      shrunkPct: 58.3,
+    });
+    expect(agentRecord("Skeptic", { n: 80, correct: 41 })).toMatchObject({
+      pct: 51.3,
+      shrunkPct: 51,
+    });
+    expect(agentRecord("Skeptic", undefined)).toEqual({
+      agent: "Skeptic",
+      n: 0,
+      correct: 0,
+      pct: null,
+      shrunkPct: 50,
+    });
   });
 
   it("keeps a reason to fifteen words", () => {
@@ -178,17 +349,19 @@ describe("the voting panel", () => {
 });
 
 describe("POST /api/votes", () => {
-  it("returns { stocks: [{ symbol, name, yes, no, votes }], summary }", async () => {
+  it("returns the per-stock votes unchanged, plus the basket call and the agents' records", async () => {
     const { POST } = client();
     const response = await POST(post(BODY));
     expect(response.status).toBe(200);
     expect(response.headers.get("X-Cache")).toBe("MISS");
     const body = (await response.json()) as VotesResponse;
-    expect(Object.keys(body).sort()).toEqual(["stocks", "summary"]);
+    expect(Object.keys(body).sort()).toEqual(["beatsSpy", "records", "stocks", "summary"]);
     expect(body.stocks.map((s) => s.symbol)).toEqual(SYMBOLS);
     expect(Object.keys(body.stocks[0]).sort()).toEqual(["name", "no", "symbol", "votes", "yes"]);
     expect(body.stocks[0].votes).toHaveLength(5);
     expect(Object.keys(body.stocks[0].votes[0]).sort()).toEqual(["agent", "reason", "vote"]);
+    expect(body.beatsSpy.calls).toHaveLength(5);
+    expect(body.records.map((r) => r.agent)).toEqual(VOTERS.map((v) => v.agent));
   });
 
   it("feeds the macro voter the evidence of the weights logic", async () => {
@@ -208,7 +381,88 @@ describe("POST /api/votes", () => {
     });
     expect((await POST(post(BODY))).status).toBe(200);
     const prompts = vi.mocked(deps.generate).mock.calls.map(([args]) => args.prompt);
-    expect(prompts.some((p) => p.includes("No live Polymarket market is linked"))).toBe(true);
+    expect(prompts.some((p) => p.includes("No Polymarket market is linked"))).toBe(true);
+  });
+
+  it("gives the agents the returns as of the last close and their records, and logs a live decision", async () => {
+    const saved: NewDecision[] = [];
+    const prices = vi.fn(async () => PRICES);
+    const { POST, deps } = client({
+      prices,
+      past: async () => ({ growth: { n: 30, correct: 18 }, skeptic: { n: 30, correct: 12 } }),
+      logDecision: async (decision) => void saved.push(decision),
+      now: () => new Date("2026-10-10T18:00:00Z"),
+      generate: panel({ skeptic: () => ballot("no", SYMBOLS, 0.3) }),
+    });
+    const body = (await (await POST(post(BODY))).json()) as VotesResponse;
+
+    expect(prices).toHaveBeenCalledWith(SYMBOLS, "2026-10-10");
+    const prompts = vi.mocked(deps.generate).mock.calls.map(([args]) => args.prompt);
+    expect(prompts.every((p) => p.includes("DATA AS OF 2026-10-09"))).toBe(true);
+    expect(
+      prompts.filter((p) => p.includes("Your past calls: 18 of 30 right (60%).")),
+    ).toHaveLength(1);
+    expect(body.beatsSpy).toMatchObject({ asOf: "2026-10-09", yes: 4, no: 1, majority: "yes" });
+    expect(body.records[0]).toEqual({
+      agent: "Growth investor",
+      n: 30,
+      correct: 18,
+      pct: 60,
+      shrunkPct: 56,
+    });
+    expect(body.records[1]).toMatchObject({
+      agent: "Value / risk",
+      n: 0,
+      pct: null,
+      shrunkPct: 50,
+    });
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      day: "2026-10-09",
+      source: "live",
+      idea: "AI chips and Taiwan risk",
+      symbols: SYMBOLS,
+      majority: "yes",
+    });
+    expect(saved[0].votes.map((v) => [v.agent, v.vote, v.probability])).toEqual([
+      ["growth", "yes", 0.6],
+      ["value", "yes", 0.6],
+      ["macro", "yes", 0.6],
+      ["skeptic", "no", 0.3],
+      ["fit", "yes", 0.6],
+    ]);
+    expect(saved[0].votes[0].model).toBe("gemini-3.5-flash-lite");
+    expect(saved[0].inputs).toMatchObject({
+      signals: [{ id: "taiwan", label: "China invades Taiwan", probability: 0.3, change7d: 0.1 }],
+      returns: { SPY: PRICES.spy, NVDA: PRICES.returns.NVDA },
+    });
+
+    // The same panel served again from the cache is not a new decision.
+    const again = await POST(post(BODY));
+    expect(again.headers.get("X-Cache")).toBe("HIT");
+    expect(((await again.json()) as VotesResponse).records[0].n).toBe(30);
+    expect(saved).toHaveLength(1);
+  });
+
+  it("votes without prices or records, and then logs nothing", async () => {
+    const logDecision = vi.fn(async () => {});
+    const { POST, deps } = client({
+      prices: async () => {
+        throw new Error("db down");
+      },
+      past: async () => {
+        throw new Error("db down");
+      },
+      logDecision,
+    });
+    const body = (await (await POST(post(BODY))).json()) as VotesResponse;
+    expect(body.beatsSpy).toMatchObject({ asOf: null, yes: 5 });
+    expect(body.records.every((r) => r.n === 0)).toBe(true);
+    const prompt = vi.mocked(deps.generate).mock.calls[0][0].prompt;
+    expect(prompt).toContain("DATA AS OF unknown");
+    expect(prompt).toContain("(5-day n/a, 20-day n/a)");
+    expect(logDecision).not.toHaveBeenCalled();
   });
 
   it("caches per (idea, symbols), whatever the order of the stocks", async () => {

@@ -184,10 +184,41 @@ It does not change `findStocks` or its response; it only comments on a basket.
       ]
     }
   ],
-  "summary": "2 of 3 stocks backed by a majority"
+  "summary": "2 of 3 stocks backed by a majority",
+  "beatsSpy": {
+    "question": "Will this basket (equal weights) beat SPY over the next week?",
+    "asOf": "2026-10-09",
+    "yes": 3,
+    "no": 2,
+    "majority": "yes",
+    "calls": [
+      {
+        "agent": "Growth investor",
+        "vote": "yes",
+        "probability": 0.58,
+        "reason": "Chip demand and momentum are strong."
+      }
+    ]
+  },
+  "records": [{ "agent": "Growth investor", "n": 80, "correct": 41, "pct": 51.3, "shrunkPct": 51 }]
 }
 ```
 
+- `beatsSpy` (added 2026-10-10; the per-stock votes above are unchanged): in the same call each agent
+  also answers one question about the whole basket, from its own point of view: will the
+  equal-weighted basket beat SPY over the next week? `calls` has the five agents in the usual order,
+  each with `vote` (`"yes"`, `"no"`, or `"none"` = no answer), `probability` (0 to 1 that it beats SPY;
+  `null` with no answer) and a `reason` of at most 15 words. The probability decides the vote: above
+  0.5 is yes, below is no. `majority` is `"yes"` or `"no"` with 3 or more of the 5, otherwise `null`.
+  `asOf` is the day of the last close the agents saw (`null` when no prices are loaded).
+- `records`: each agent's track record on that basket question, in the same order: `n` scored past
+  calls, `correct`, `pct` (`null` while `n` is 0) and `shrunkPct`, the share pulled toward 50% by 20
+  imaginary coin-flip calls (`(correct + 10) / (n + 20)`), so a short lucky streak does not dominate.
+  Show `shrunkPct` next to `n`. Details: `GET /api/track-record` (section 1f).
+- What the agents are given: the idea, the three stocks with their 5- and 20-trading-day price changes
+  and SPY's (from the `stock_closes` table, as of `asOf`), the linked Polymarket odds (macro voter
+  only), and one line about themselves: "Your past calls: 41 of 80 right (51%)."
+- Every new panel (not a cached one) is saved as a **live decision** and scored a week later.
 - `stocks`: in the order of the request. `votes` always has the five agents, in the order of the table.
 - `vote`: `"yes"`, `"no"` or `"none"`. `"none"` means that agent gave **no answer** (its call failed or
   its answer was unusable); `reason` is then `"No answer."`. A vote is never invented, so
@@ -243,6 +274,98 @@ const { stocks, summary } = await getVotes({ idea, stocks: selection.stocks }, {
 ```
 
 Always show the caveat **"AI opinions, not financial advice."** next to the votes.
+
+---
+
+## 1f. `GET /api/track-record` — LIVE
+
+How often each agent of the voting panel, and its majority, was right about the basket question of
+`/api/votes`: **will this basket (equal weights) beat SPY over the next week?** A "yes" is correct if
+the basket's return was higher than SPY's from the decision day's close to the close a week later;
+a "no" is correct if it was not.
+
+```json
+{
+  "generatedAt": "2026-10-10T20:00:00.000Z",
+  "question": "Will this basket (equal weights) beat SPY over the next week?",
+  "lastClose": "2026-10-09",
+  "decisions": 80,
+  "pending": 3,
+  "agents": [
+    {
+      "id": "growth",
+      "agent": "Growth investor",
+      "n": 80,
+      "correct": 41,
+      "pct": 51.3,
+      "range90": [42.5, 60],
+      "brier": 0.262,
+      "days": 8
+    }
+  ],
+  "majority": { "n": 76, "correct": 40, "pct": 52.6, "range90": [43, 62], "brier": 0.255, "days": 8 },
+  "baselines": {
+    "alwaysYes": { "n": 80, "correct": 38, "pct": 47.5, "range90": [35, 60], "brier": 0.525, "days": 8 },
+    "coinFlip": { "n": 80, "pct": 50, "brier": 0.25 }
+  },
+  "recent": [
+    {
+      "date": "2026-10-02",
+      "source": "replay",
+      "idea": "AI chips and Taiwan risk",
+      "symbols": ["NVDA", "TSM", "ASML"],
+      "yesVotes": 4,
+      "votes": 5,
+      "majority": "yes",
+      "basketPct": 1.84,
+      "spyPct": 1.16,
+      "pnl": 184.2,
+      "correct": true
+    }
+  ]
+}
+```
+
+(The numbers above are an example of the shape, not the real record.)
+
+- `agents`: the five agents in the usual order. `n` = scored calls, `correct`, `pct` = correct / n in
+  percent. **Always show `n` next to a percentage.** `range90` is the 90% range of `pct`, found by
+  resampling whole decision days (Fridays) 2,000 times, because baskets judged in the same week move
+  together; `null` with fewer than 2 days. `brier` is the mean squared error of the agent's
+  probability (0 is perfect, 0.25 is what a coin flip gets, lower is better). `days` = different
+  decision days.
+- `majority`: the same for "3 or more of the 5"; decisions without a majority are not counted. Its
+  Brier score uses the mean of the agents' probabilities.
+- `baselines.alwaysYes`: what saying "yes" every time would have scored; `coinFlip`: 50% and 0.25 by
+  definition.
+- `decisions` / `pending`: scored decisions, and decisions whose week has not passed (or whose closes
+  are not loaded yet). `lastClose`: the newest day in `stock_closes`.
+- `recent`: the last 20 decisions, newest first. `source` is `replay` or `live`; `yesVotes` of `votes`
+  agents expected the basket to beat SPY; `basketPct` and `spyPct` are the week's returns in percent;
+  `pnl` is the paper profit or loss of $10,000 in the basket; `correct` says whether the majority was
+  right. The four outcome fields are `null` while a decision is pending.
+- `503 storage_error` when the database cannot be read.
+
+**Where the record comes from**
+
+- **Replay** (`source: "replay"`, run once with `pnpm track:replay`): the same five agents, system
+  prompts and Flash-Lite models as `/api/votes`, asked on the 8 Fridays from 2026-08-14 to 2026-10-02
+  about 10 baskets (the stock agent's pick for 10 ideas covering all 7 sectors, made once without the
+  live-odds context and without web search). Each agent saw only what was known that Friday: closes
+  up to that day, and the Polymarket odds at that day's close with their 7-day change (Data API v2;
+  a market that was not trading yet is left out). An agent was told its record only from weeks that
+  had already ended. Both models were released before the window and neither could answer a question
+  about it (leak check: SPY's close on 2026-10-02).
+- **Live** (`source: "live"`): every new panel of `/api/votes`, dated by the last close it saw. The
+  same basket on the same day is one decision.
+- **Scoring** is SQL over `stock_closes`, run by the daily job `pnpm track:daily` on Lucas's machine
+  (it refreshes the closes, then scores every decision that is a week old).
+
+```powershell
+$r = Invoke-RestMethod https://prophetf.vercel.app/api/track-record
+$r.agents | Format-Table agent, n, correct, pct, range90, brier
+$r.recent | Format-Table date, idea, yesVotes, basketPct, spyPct, pnl, correct
+```
 
 ---
 

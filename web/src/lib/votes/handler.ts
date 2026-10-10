@@ -2,6 +2,8 @@
 // section 1d. It does not touch findStocks; it only reads a basket and comments on it.
 // A panel is kept with the Polymarket odds it was given: it is reused while none of those markets
 // has moved 3 points (for up to 24 hours), and every answer is counted for GET /api/savings.
+// Each agent also calls whether the basket beats SPY over the next week; a new panel is saved as a
+// live decision for the track record (src/lib/track), and each agent is told its own record.
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { oddsOf, reuseCached, usableSignals } from "../agent-core/agent/signals.js";
@@ -19,10 +21,20 @@ import { aiBuckets } from "../pipeline/budget";
 import { tigerSavings, type SavingsStore } from "../savings/store";
 import { geminiGenerateJson, type GenerateJson } from "../sponsors/gemini";
 import { STOCK_BY_SYMBOL } from "../stocks/universe";
+import { decisionOf } from "../track/decision";
+import { livePastCalls } from "../track/record";
+import { priceInputs, saveDecision, type NewDecision, type PriceInputs } from "../track/repo";
 import { adjustWeights } from "../weights/adjustWeights";
 import type { Signal } from "../weights/engine";
 import { liveSignals } from "../weights/signals";
-import { VOTERS, runPanel, type Evidence, type VotesResponse } from "./votes";
+import {
+  VOTERS,
+  agentRecord,
+  runPanel,
+  type Evidence,
+  type PastCalls,
+  type VotesResponse,
+} from "./votes";
 
 export const VOTES_CACHE_SECONDS = 30 * 60;
 /** A panel that was given Polymarket odds is kept this long, while those odds hold still. */
@@ -46,6 +58,12 @@ export type VotesDeps = {
   cache?: ApiCache;
   /** Counts the served answer for GET /api/savings. */
   count?: SavingsStore["record"];
+  /** 5- and 20-day returns from stock_closes, as of the last close on or before the given day. */
+  prices?: (symbols: string[], onOrBefore: string) => Promise<PriceInputs>;
+  /** Each agent's scored basket calls so far, by voter id. */
+  past?: () => Promise<Record<string, PastCalls>>;
+  /** Saves a new panel as a live decision for the track record. */
+  logDecision?: (decision: NewDecision) => Promise<unknown>;
   now?: () => Date;
   log?: (detail: Record<string, unknown>) => void;
 };
@@ -56,20 +74,23 @@ export const defaultVotesDeps: VotesDeps = {
   rateLimit: hit,
   cache: tigerApiCache,
   count: tigerSavings.record,
+  prices: priceInputs,
+  past: livePastCalls,
+  logDecision: saveDecision,
   log: (detail) => console.log(JSON.stringify({ at: "votes", ...detail })),
 };
 
 /** One entry per (idea, set of symbols); the order of the stocks does not matter. */
 export const votesCacheKey = (idea: string, symbols: string[]) =>
   createHash("sha256")
-    .update(`votes:v2:${normalizeIdea(idea)}:${[...symbols].sort().join(",")}`)
+    .update(`votes:v3:${normalizeIdea(idea)}:${[...symbols].sort().join(",")}`)
     .digest("hex");
 
 /** What is cached: the panel, the odds of the markets it was given, and when it voted. */
 type CachedPanel = { response: VotesResponse; odds?: Record<string, number>; at: number };
 
 /** Hao's Polymarket evidence for these stocks: the same computation as POST /api/weights. */
-function polymarketEvidence(
+export function polymarketEvidence(
   idea: string,
   symbols: string[],
   signals: Signal[],
@@ -148,6 +169,9 @@ export function createVotesHandler(deps: VotesDeps = defaultVotesDeps) {
       stocks: symbols.map((symbol) => value.stocks.find((s) => s.symbol === symbol)!),
     });
     const now = deps.now?.() ?? new Date();
+    // Optional context: without it the agents still vote, and nothing is logged.
+    const past = (await deps.past?.().catch(() => undefined)) ?? {};
+    const records = VOTERS.map((voter) => agentRecord(voter.agent, past[voter.id]));
     // Read before the cache: the live odds decide whether a cached panel may be served again.
     const signals = await deps.signals().catch((): Signal[] => []);
     const live = usableSignals(signals);
@@ -160,7 +184,8 @@ export function createVotesHandler(deps: VotesDeps = defaultVotesDeps) {
       });
       if (reuse) {
         await deps.count?.("votes", true, now).catch(() => {});
-        return json(request, 200, inRequestOrder(cached.value.response), {
+        // The votes are the cached ones; the agents' records are today's.
+        return json(request, 200, inRequestOrder({ ...cached.value.response, records }), {
           ...cacheHeaders(cached, now.getTime()),
           ...oddsMovedHeader(moved),
         });
@@ -190,7 +215,12 @@ export function createVotesHandler(deps: VotesDeps = defaultVotesDeps) {
     }
 
     const evidence = polymarketEvidence(idea, symbols, signals, now);
-    const panel = await runPanel({ idea, stocks, evidence }, deps, request.signal);
+    const prices = await deps
+      .prices?.(symbols, now.toISOString().slice(0, 10))
+      .catch(() => undefined);
+    const basket = { idea, stocks, evidence, returns: prices?.returns ?? {} };
+    const context = { asOf: prices?.asOf ?? null, spy: prices?.spy ?? null };
+    const panel = await runPanel({ basket, context, past }, deps, request.signal);
     deps.log?.({ event: "voted", complete: panel.complete, silent: panel.silent });
     if (panel.silent === VOTERS.length) {
       return error(
@@ -200,10 +230,24 @@ export function createVotesHandler(deps: VotesDeps = defaultVotesDeps) {
         "None of the AI voters answered. Please try again in a minute.",
       );
     }
+    // The markets linked to these stocks are the ones the macro voter was shown.
+    const linked = live.filter((s) => symbols.some((symbol) => symbol in s.betas));
+    const decision = decisionOf({
+      source: "live",
+      basket,
+      context,
+      signals: linked.map((s) => ({
+        id: s.id,
+        label: s.label,
+        probability: s.price,
+        change7d: s.change7d,
+      })),
+      answers: panel.answers,
+      models: panel.models,
+    });
+    if (decision) await deps.logDecision?.(decision).catch(() => {});
     // Only a full panel is kept, so a voter that was briefly unavailable gets another chance.
     if (panel.complete === VOTERS.length) {
-      // The markets linked to these stocks are the ones the macro voter was shown.
-      const linked = live.filter((s) => symbols.some((symbol) => symbol in s.betas));
       const odds = oddsOf(
         linked.map((s) => s.id),
         live,
