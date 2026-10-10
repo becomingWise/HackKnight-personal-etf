@@ -1,5 +1,10 @@
 # ProphETF — working notes for Claude Code
 
+@AGENTS.md
+
+> **Team rules first:** `AGENTS.md` (imported above) sets ownership, commands and git rules for every teammate's AI and wins where this file disagrees.
+> Everything below is **Lucas's** working notes for `web/` and his parts of the repo. If you are not Lucas, "the user" and "Lucas" below are not you: follow `AGENTS.md` and only use these notes as reference for `web/`.
+
 > A fresh session should be able to resume from this file alone. Read **Status** and **Decisions** first, then the brief.
 > The Next.js app lives in `/web`. All paths in the brief are relative to `/web` (Vercel Root Directory = `web`).
 > **Working branch: `lucas-branch`.** Commit and push only there. Leave `prophetf-app` as is. Never touch `main`.
