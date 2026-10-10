@@ -6,7 +6,6 @@ import { ALLOWED, ALLOWED_BY_SYMBOL } from "./retrieval.js";
 import { MAX_PREFERENCE_LENGTH } from "./memory.js";
 
 export const BASKET_SIZE = 3;
-/** How the agent judges an idea before anything else. Only "clear" may become a basket. */
 export const CLARITIES = ["clear", "broad", "not_covered", "unclear"];
 
 /**
@@ -15,20 +14,23 @@ export const CLARITIES = ["clear", "broad", "not_covered", "unclear"];
  * @param {unknown} symbols
  * @returns {{ ok: true, stocks: { symbol: string, name: string }[] } | { ok: false, errors: string[] }}
  */
-export function checkSelection(symbols) {
+export function checkSelection(symbols, { min = BASKET_SIZE, max = BASKET_SIZE, companiesOnly = false } = {}) {
   if (!Array.isArray(symbols) || symbols.some(symbol => typeof symbol !== "string")) {
     return { ok: false, errors: ["symbols must be an array of ticker strings."] };
   }
   const cleaned = symbols.map(symbol => symbol.trim().toUpperCase());
   const errors = [];
-  if (cleaned.length !== BASKET_SIZE) {
-    errors.push(`Choose exactly ${BASKET_SIZE} symbols; you gave ${cleaned.length}.`);
+  if (cleaned.length < min || cleaned.length > max) {
+    errors.push(`Choose ${min === max ? `exactly ${min}` : `${min} to ${max}`} symbols; you gave ${cleaned.length}.`);
   }
   const repeated = [...new Set(cleaned.filter((symbol, index) => cleaned.indexOf(symbol) !== index))];
   if (repeated.length) errors.push(`Symbols must be unique; repeated: ${repeated.join(", ")}.`);
   const unknown = [...new Set(cleaned.filter(symbol => !ALLOWED_BY_SYMBOL.has(symbol)))];
   if (unknown.length) {
     errors.push(`Not in the allowed list: ${unknown.join(", ")}. Allowed: ${ALLOWED.map(t => t.symbol).join(", ")}.`);
+  }
+  if (companiesOnly && cleaned.some(symbol => ALLOWED_BY_SYMBOL.get(symbol)?.kind === "fund")) {
+    errors.push("This shortlist accepts company stocks only, not funds.");
   }
   if (errors.length) return { ok: false, errors };
   return {
@@ -41,14 +43,13 @@ const DECLARATIONS = {
   check_selection: {
     name: "check_selection",
     description:
-      "Checks a proposed basket: exactly 3 symbols, all different, all from the allowed list. Only for an idea whose clarity is \"clear\"; for any other clarity it tells you to ask the person instead. Call it before giving the final answer and fix any errors it reports.",
+      "Checks a proposed basket: exactly 3 symbols, all different, all from the allowed list. Call it before giving the final answer and fix any errors it reports.",
     parameters: {
       type: "OBJECT",
       properties: {
-        clarity: { type: "STRING", enum: CLARITIES, description: "Your judgement of the idea: clear, broad, not_covered or unclear." },
         symbols: { type: "ARRAY", items: { type: "STRING" }, description: "The 3 ticker symbols, e.g. [\"NVDA\", \"TSM\", \"AMD\"]." }
       },
-      required: ["clarity", "symbols"]
+      required: ["symbols"]
     }
   },
   get_memory: {
@@ -82,9 +83,20 @@ const DECLARATIONS = {
 };
 
 /** The declarations to send to Gemini. Tools that cannot run this turn are left out. */
-export function functionDeclarations({ memory = true, search = true } = {}) {
+export function functionDeclarations({ memory = true, search = true, selection = {}, clarification = true } = {}) {
+  const { min = BASKET_SIZE, max = BASKET_SIZE } = selection;
+  const check = structuredClone(DECLARATIONS.check_selection);
+  if (min !== BASKET_SIZE || max !== BASKET_SIZE) {
+    check.description = `Checks a shortlist: ${min} to ${max} unique company symbols, all from the allowed list. Call before answering and fix any errors.`;
+    check.parameters.properties.symbols.description = `${min} to ${max} candidate ticker symbols.`;
+  }
+  if (clarification) {
+    check.description += ' Only clarity "clear" can produce a basket; otherwise ask the person a question.';
+    check.parameters.properties.clarity = { type: "STRING", enum: CLARITIES };
+    check.parameters.required = ["clarity", "symbols"];
+  }
   return [
-    DECLARATIONS.check_selection,
+    check,
     ...(memory ? [DECLARATIONS.get_memory, DECLARATIONS.remember_preference] : []),
     ...(search ? [DECLARATIONS.google_search] : [])
   ];
@@ -102,20 +114,12 @@ const isObject = value => value !== null && typeof value === "object" && !Array.
 export async function executeTool(name, args, context) {
   const input = isObject(args) ? args : {};
   switch (name) {
-    case "check_selection": {
-      if (!CLARITIES.includes(input.clarity)) {
-        return { ok: false, errors: [`clarity is required and must be one of: ${CLARITIES.join(", ")}.`] };
+    case "check_selection":
+      if (context.clarification !== false) {
+        if (!CLARITIES.includes(input.clarity)) return { ok: false, errors: [`clarity is required and must be one of: ${CLARITIES.join(", ")}.`] };
+        if (input.clarity !== "clear") return { ok: false, ask: true, errors: [`The idea is "${input.clarity}", so do not pick stocks. Ask the person instead: answer now with that clarity, a question and 2 or 3 options, and no symbols.`] };
       }
-      // Not clear: no basket is checked. `ask` tells the agent loop that the question is now due.
-      if (input.clarity !== "clear") {
-        return {
-          ok: false,
-          ask: true,
-          errors: [`The idea is "${input.clarity}", so do not pick stocks. Ask the person instead: answer now with that clarity, a question and 2 or 3 options, and no symbols.`]
-        };
-      }
-      return checkSelection(input.symbols);
-    }
+      return checkSelection(input.symbols, context.selection);
 
     case "get_memory": {
       if (!context.sessionId) return { preferences: [], previousBaskets: [], note: "No session: nothing is remembered." };
