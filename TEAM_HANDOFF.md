@@ -119,75 +119,74 @@ The shared controller assigns equal starting weights: 33.33%, 33.33%, 33.34%.
 An additional `basket` field is optional; the controller uses `summary` and
 `stocks`, so those fields must remain available.
 
-## 🟢 Hao — Polymarket: take selected holdings, give their weights
+## 🟢 Hao — Polymarket: take selected holdings, give their weights and evidence
 
-**FUNCTION TO EXPORT: `adjustWeights({ idea, holdings }, { signal } = {})`**
+**Already live; nothing to rebuild.** `POST https://prophetf.vercel.app/api/weights` implements
+`adjustWeights` (TypeScript in `web/`, checked against the Python reference in `backend/`).
+The browser adapter is ready in `js/weights-adapter.js`, and `js/weights-api.js` re-exports it,
+with the same signature as below (`adjustWeights({ idea, holdings }, { signal })`). The server
+side lives in `web/src/lib/weights/`, so `polymarket/weights.js` stays a pointer.
+Full contract: `web/docs/API.md` section 2.
+
+**FUNCTION: `adjustWeights({ idea, holdings }, { signal } = {})`**
 
 **TAKE:** `{ idea: string, holdings: [{ symbol: string, weightPct: number }] }`.
 
-**GIVE:** `{ status: "adjusted" | "unchanged", holdings, explanation: string, evidence: [] }`.
-`evidence` contains actual market items when present; the item fields are shown below.
+**GIVE:** `{ status: "adjusted" | "unchanged", holdings, explanation, evidence }`.
 
-Implement the server-side function in `polymarket/weights.js`:
+### How it works
 
-```js
-export async function adjustWeights({ idea, holdings }, { signal } = {}) { /* your code */ }
-```
+- The backend tracks a fixed list of 11 Polymarket markets (Fed cuts, US recession, Taiwan,
+  Ukraine ceasefire, Bitcoin $100k, …). On each request it looks each one up live on
+  Polymarket (cached 60 seconds), so probabilities are current.
+- Each market has a hand-set sensitivity per stock for the 40 tickers `findStocks` can return
+  (e.g. TLT rises if recession odds rise). A holding's weight tilts by how much its linked
+  markets moved over the past week. A holding no market is linked to keeps its weight relative
+  to the others.
+- `status: "unchanged"` (original weights) when no live market is linked (`evidence: []`) or
+  the tilt rounds away. Errors come back as `{ "error": { "code", "message" } }`; the adapter
+  turns them into a rejected promise and the controller keeps equal weights.
 
-Lucas imports this function into `backend/server.js` and exposes
-it through `POST /api/weights`. Hao owns the market matching
-and weighting formula, and supplies the browser adapter in `js/weights-api.js`.
-
-Request body:
-
-```json
-{
-  "idea": "I care about clean energy",
-  "holdings": [
-    { "symbol": "AAA", "weightPct": 33.33 },
-    { "symbol": "BBB", "weightPct": 33.33 },
-    { "symbol": "CCC", "weightPct": 33.34 }
-  ]
-}
-```
-
-Illustrative response body:
+### Evidence items
 
 ```json
 {
-  "status": "adjusted",
-  "holdings": [
-    { "symbol": "AAA", "weightPct": 50 },
-    { "symbol": "BBB", "weightPct": 30 },
-    { "symbol": "CCC", "weightPct": 20 }
-  ],
-  "explanation": "Brief adjustment note.",
-  "evidence": [
-    {
-      "title": "Example market",
-      "url": "https://example.com/market",
-      "outcome": "Yes",
-      "probability": 0.6,
-      "observedAt": "2026-10-10T12:00:00Z"
-    }
-  ]
+  "title": "Will AI-chip export licensing become law this year?",
+  "url": "https://polymarket.com/event/which-bills-will-become-law-in-2026",
+  "outcome": "Yes",
+  "probability": 0.225,
+  "observedAt": "2026-10-10T01:16:16.000Z",
+  "change7d": -0.125,
+  "symbols": ["INTC", "NVDA"]
 }
 ```
 
-The percentages and market values above are placeholders. Return exactly the
-input symbols once each, with numeric weights from 0 to 100 totaling 100%.
-Include actual market evidence for live adjustments. Probabilities range from
-0 to 1; `observedAt` is an ISO timestamp. If no relevant market exists, return
-`status: "unchanged"`, the original weights, a short explanation, and `evidence: []`.
+`probability` and `change7d` are 0–1 (multiply by 100 for % and pts); `symbols` are the
+basket's tickers this market moves; `observedAt` is when the odds were read.
 
-The browser adapter in `js/weights-api.js` exports the same `adjustWeights`
-signature, sends `{ idea, holdings }`, forwards `signal`, and returns the JSON.
-Rejected or invalid adjustments cause the controller to retain equal weights.
-The website's main basket view need not display `explanation` or `evidence`.
+### Event risk (`POST /api/risk`, live once PR #15 is merged)
 
-Both HTTP endpoints return non-2xx responses on failure, with a readable
-`{ "error": "Message to display" }` body. Both browser adapters import
-`API_BASE_URL` from `js/config.js` and reject failed requests with that message.
+Same body as `/api/weights`. For each linked market: `ifYesPct` (basket move if the event
+happens) and `ifNoPct` (if it doesn't), the `drivers` behind it, plus `uncovered` symbols and
+two caveat strings, `basis` and `note`. Contract: `web/docs/API.md` section 2b.
+
+### On screen (🟣 Kieran)
+
+The evidence is what makes the basket credible to finance judges, so show it under the basket:
+
+1. **Why these weights:** the `explanation` text.
+2. **One card per evidence item:** the market question as a link to `url`; "Yes 22.5%"; the
+   7-day move ("▼ 12.5 pts this week" from `change7d`); the affected tickers; "as of" `observedAt`.
+3. **Event risk on the same card** (once `/api/risk` is live): "If yes: +1.5% · If no: −0.1%".
+   List `uncovered` tickers as "no measurable event exposure".
+4. **Always show the caveat:** "Event probabilities indicate risk, not expected returns."
+
+If `evidence` is empty, show "No live Polymarket market is linked to these stocks." Render all
+market text as text, not HTML.
+
+**Refreshing:** the controller asks once per idea. To keep the cards live, poll `/api/risk`
+about every 60 s (odds are cached 60 s); `/api/weights` answers identical requests from a
+15-minute cache, so refreshing weights faster than that changes nothing.
 
 ## 🟣 Kieran — website: connect the functions and show the basket
 
