@@ -5,7 +5,7 @@ import { sponsorStatus } from "./flags";
 describe("sponsorStatus", () => {
   it("falls back to mock for every optional sponsor when nothing is set", () => {
     const s = sponsorStatus(parseEnv({}));
-    for (const key of ["elevenlabs", "solana", "presage", "ws"] as const) {
+    for (const key of ["elevenlabs", "ws"] as const) {
       expect(s[key].mode).toBe("mock");
     }
     expect(s.tiger).toEqual({ enabled: true, configured: false, mode: "mock" });
@@ -31,24 +31,20 @@ describe("sponsorStatus", () => {
         FEATURE_ELEVENLABS: "TRUE",
         ELEVENLABS_API_KEY: "k",
         ELEVENLABS_VOICE_ID: "v",
-        FEATURE_PRESAGE: "1",
-        PRESAGE_MODE: "sidecar",
-        PRESAGE_SIDECAR_URL: "http://localhost:8080",
       }),
     );
     expect(s.tiger.mode).toBe("live");
     expect(s.gemini.mode).toBe("live");
     expect(s.elevenlabs.mode).toBe("live");
-    // Snowflake was dropped: its flag is ignored and it is not reported.
-    expect(sponsorStatus(parseEnv({ FEATURE_SNOWFLAKE: "true" }))).not.toHaveProperty("snowflake");
-    expect(s.presage.mode).toBe("live");
+    // Snowflake, Solana and Presage were dropped: their flags are ignored and they are not reported.
+    const dropped = sponsorStatus(
+      parseEnv({ FEATURE_SNOWFLAKE: "true", FEATURE_SOLANA: "true", FEATURE_PRESAGE: "true" }),
+    );
+    for (const key of ["snowflake", "solana", "presage"]) expect(dropped).not.toHaveProperty(key);
   });
 
-  it("treats blank values as unset and PRESAGE_MODE=mock as mock", () => {
-    const s = sponsorStatus(
-      parseEnv({ DATABASE_URL: "  ", FEATURE_PRESAGE: "true", PRESAGE_MODE: "mock" }),
-    );
+  it("treats blank values as unset", () => {
+    const s = sponsorStatus(parseEnv({ DATABASE_URL: "  " }));
     expect(s.tiger.configured).toBe(false);
-    expect(s.presage.mode).toBe("mock");
   });
 });

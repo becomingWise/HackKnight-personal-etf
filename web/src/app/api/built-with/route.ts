@@ -31,8 +31,6 @@ export async function GET(request: Request) {
         ...(await geminiProof()),
       },
       elevenlabs: { ...status.elevenlabs, ...(await elevenLabsProof(baseUrl(request))) },
-      solana: status.solana,
-      presage: status.presage,
     });
   } catch (err) {
     console.log(

@@ -76,31 +76,33 @@ Follows Anthropic's "Building effective agents": a workflow (fixed code path), n
 - [ ] **Teammate:** choose option A (TypeScript module) or B (Python job → Tiger) and build the real analyst
 - [ ] **Lucas:** when the real analyst is ready, set `ANALYST_MODE` on Vercel (`npx vercel env add ANALYST_MODE production`) and redeploy
 
-## Step 4 — Sponsor APIs (each behind a flag with a mock)
+## Step 4 — Sponsor features on baskets (done, live)
 
-**Solana (b) and Presage (d) are on hold until the decision workflow has its real analyst (Lucas, 2026-10-10).**
+What the product really uses: **Gemini, Tiger Data, ElevenLabs and Polymarket data.** Dropped and never to be
+listed anywhere (plan, `/api/built-with`, `/api/health`, README, Devpost, demo): Snowflake (2026-10-09),
+Solana, Presage and the custom domain (2026-10-10). Their flags stay off and nothing reads them.
 
-Sponsors in use: Tiger Data, Gemini, ElevenLabs, Solana, Presage (plus the GoDaddy domain). **Snowflake is
-not used**: no keys, no endpoint, not listed in `/api/built-with`, and it must not appear in the Devpost text.
+- [x] ElevenLabs (LIVE, `FEATURE_ELEVENLABS=true` on Vercel and locally): `POST /api/baskets/{id}/narrate` reads the manager's note (company names, rounded weights) with `eleven_flash_v2_5`; MP3 stored once per basket in Tiger (`briefings`), served with range support from `GET /api/audio/{id}`; script-only answer when ElevenLabs is off, fails or the daily budget (30 new briefings) is used; `getBasketNarration` in the adapter
+- [x] Manager's note: `POST /api/baskets/{id}/letter`, written by Gemini, cached per basket, template fallback, numbers checked against the basket; `getBasketLetter` in the adapter
+- [x] `GET /api/built-with`: live proof for Tiger Data, Gemini and ElevenLabs
 
-- [x] a. ElevenLabs (LIVE, `FEATURE_ELEVENLABS=true` on Vercel and locally): `POST /api/baskets/{id}/narrate` reads the manager's note (company names, rounded weights) with `eleven_flash_v2_5`; MP3 stored once per basket in Tiger (`briefings`), served with range support from `GET /api/audio/{id}`; script-only answer when ElevenLabs is off, fails or the daily budget (30 new briefings) is used; `getBasketNarration` in the adapter; proof in `/api/built-with`
-- [ ] b. Solana devnet: `POST /api/baskets/{id}/publish` → memo tx with the basket hash + odds snapshot; `GET /api/baskets/{id}/verify`
-- [x] c. Manager's note: `POST /api/baskets/{id}/letter`, written by Gemini (Snowflake was dropped on 2026-10-09), cached per basket, template fallback, numbers checked against the basket; `getBasketLetter` in the adapter
-- [ ] d. Presage: `POST /api/tilt-check` (mock first) the frontend can call before saving a basket
+## Step 5 — What is left (in this order, nothing else)
 
-## Step 5 — `GET /api/built-with`
-
-- [x] Tiger and Gemini sections (built in step 3)
-- [ ] Per-sponsor proof for step 4: attestation links, briefing counts, tilt checks (letter counts are already under `gemini`)
-
-## Later / optional
-
-- [ ] Candidates for `/api/stocks` from Tiger + pgvector instead of live search
-- [ ] Custom GoDaddy domain on Vercel + DNS records
-- [ ] README backend sections, `DEVPOST.md` backend paragraphs (no "How we used Snowflake" section; the manager's note is a Gemini feature), `docs/DEMO.md` backend notes
+1. **Integrate the teammate's analyst** when it is ready (HANDOFF option A or B, `ANALYST_MODE`).
+   - [ ] Teammate chooses the option and delivers; then: `/api/analyze` passes the gate for the 4 demo ideas, `pnpm eval:decider`, set `ANALYST_MODE` on Vercel, redeploy
+2. **Help the frontend connect and go live.**
+   - [ ] Frontend wires `js/stocks-adapter.js`, `js/weights-adapter.js`, `js/baskets-adapter.js` (see `docs/API.md`, "Frontend adapters")
+   - [ ] The GitHub Pages site is down (404): republish it, or tell Lucas the new origin so it is added to CORS
+3. **Write-ups listing only what we really use.**
+   - [x] `web/README.md` (architecture diagram, setup, how each technology is used)
+   - [x] `web/DEVPOST.md` draft (frontend and analyst paragraphs marked for the teammates to fill in)
+   - [x] `web/docs/DEMO.md`: the 2-minute demo script and the checklist before going on stage
+4. **Final testing.**
+   - [ ] The demo script end to end against production with the real frontend
+   - [ ] Demo ideas warm, `/api/health` shows Gemini budget left, tick job running
 
 ## Needs from Lucas
 
 - [ ] Schedule `POST https://prophetf.vercel.app/api/jobs/tick` every minute on cron-job.org with header `Authorization: Bearer <CRON_SECRET from web/.env.local>`
 - [ ] The GitHub Pages site is down (404): someone with access must republish it (frontend owner)
-- [ ] Step 4: fund the Solana devnet attester, Presage key
+- [ ] On demo day: `pnpm demo:warm --loop` in `/web` (or cron-job.org `POST /api/jobs/warm` every 3 minutes)

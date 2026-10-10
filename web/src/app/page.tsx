@@ -6,8 +6,6 @@ const SPONSOR_LABELS = {
   tiger: "Tiger Data",
   gemini: "Gemini",
   elevenlabs: "ElevenLabs",
-  solana: "Solana devnet",
-  presage: "Presage",
   ws: "Live WebSocket",
 } as const;
 

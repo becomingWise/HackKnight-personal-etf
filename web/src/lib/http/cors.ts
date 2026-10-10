@@ -14,7 +14,7 @@ export function isAllowedOrigin(origin: string | null, extra: string[] = extraOr
   return ALLOWED_ORIGINS.includes(origin) || extra.includes(origin);
 }
 
-/** Extra origins from CORS_ORIGINS (comma-separated), e.g. a custom domain added later. */
+/** Extra origins from CORS_ORIGINS (comma-separated), e.g. another frontend host. */
 function extraOrigins(): string[] {
   return (process.env.CORS_ORIGINS ?? "")
     .split(",")
