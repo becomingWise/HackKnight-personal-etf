@@ -8,13 +8,26 @@
   	<meta name="description" content="Build a personal investment basket with fictional companies and explore sample price changes.">
 	<title>MyETF-Begin</title>
 	<link rel="stylesheet" href="./css/home-styles.css">
+	<link type="module" href="./js/home-scripts.js"
 </head>
 
 <body class="edge-gradient">
-	<div id="homepage-prompt-container">
-		<h1 style="font-size: 300%;">My EFT Lab</h1>
-		<input type="text" placeholder="ai prompt i think" style="width:10%; height:5%; text-align: center;">
-		<a href=./index.html id="prompt-submit-btn">Start</button>
+	<!--<div id="homepage-prompt-container">
+		<h1 class="title">My EFT Lab</h1>
+		<textarea id="prompt-input" placeholder="ai prompt i think"></textarea>
+		<a href=./index.html id="prompt-submit-btn">Start</a>
+	</div>-->
+	<!-- started from gemini -->
+	<div class="chat-container">
+		<div class="chat-header">My EFT Lab</div>
+		<div id="chatMessages" class="chat-messages">
+			<div class="message bot">Hello! How would you like to configure your EFT?</div>
+		</div>
+		<div class="chat-input-area">
+			<!--<input type="text" id="userInput" placeholder="Type a message..." autocomplete="off">-->
+			<textarea id="userInput placeholder=Type a message..." autocomplete="off"></textarea>
+			<button id="sendButton">Send</button>
+		</div>
 	</div>
 </body>
 
