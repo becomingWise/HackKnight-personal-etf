@@ -34,8 +34,10 @@ describe("pnpm sync:lab", () => {
   // On Vercel only /web exists; the comparison runs wherever the repository root is present.
   it.skipIf(!hasLab)("the committed copies match /experiment (run `pnpm sync:lab`)", () => {
     for (const file of LAB_FILES) {
+      // Compared as text without CRLF: a Windows checkout may convert either side.
+      const text = (bytes: Buffer) => bytes.toString("utf8").replace(/\r\n/g, "\n");
       const expected = labCopy(file, readFileSync(path.join(labDir, file.from)));
-      expect(readFileSync(file.to).equals(expected), file.to).toBe(true);
+      expect(text(readFileSync(file.to)) === text(expected), file.to).toBe(true);
     }
   });
 
