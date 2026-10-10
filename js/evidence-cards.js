@@ -16,6 +16,7 @@
 // Market text is always set as text, never as HTML.
 
 export const CAVEAT = "Event probabilities indicate risk, not expected returns.";
+const CAVEAT_STEM = CAVEAT.slice(0, -1);
 export const EMPTY_MESSAGE = "No live Polymarket market is linked to these stocks.";
 
 const defaultFormatTime = (iso) =>
@@ -60,10 +61,14 @@ export function buildEvidenceCards(adjustment, risk = null, { formatTime = defau
   });
 
   const uncovered = risk?.uncovered?.length ? `No measurable event exposure: ${risk.uncovered.join(", ")}` : null;
-  const notes = [CAVEAT, ...(risk ? [risk.note, risk.basis].filter(Boolean) : [])];
+  // The API texts may already carry the caveat (the explanation ends with it, the risk note starts with it):
+  // show it once, in the notes.
+  const riskNotes = risk ? [risk.note, risk.basis].filter(Boolean) : [];
+  const notes = riskNotes.some((note) => note.includes(CAVEAT_STEM)) ? riskNotes : [CAVEAT, ...riskNotes];
+  const explanation = (adjustment?.explanation ?? "").replace(CAVEAT, "").trim();
 
   return {
-    explanation: adjustment?.explanation ?? "",
+    explanation,
     cards,
     uncovered,
     notes,
