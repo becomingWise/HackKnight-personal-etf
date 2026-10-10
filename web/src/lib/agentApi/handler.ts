@@ -4,10 +4,14 @@
 // Failures are errors, never substitute companies. Contract: docs/API.md section 1.
 // The live Polymarket signals of /api/weights go to the agent as context (no extra Gemini call);
 // when they cannot be read the agent answers exactly as it does without them.
+// Headers: X-Cache (HIT when no Gemini call was needed) and X-Odds-Moved. Every answer is counted
+// for GET /api/savings.
 import { AgentError, createFindStocks } from "../agent-core/agent/gemini.js";
+import { oddsMovedHeader } from "../cache/apiCache";
 import { preflight } from "../http/cors";
 import { clientIp, hit, ipKey, type Limit, type RateResult } from "../http/rateLimit";
 import { error, json } from "../http/respond";
+import { tigerSavings, type SavingsStore } from "../savings/store";
 import { geminiBudget } from "../sponsors/gemini";
 import type { Signal } from "../weights/engine";
 import { liveSignals } from "../weights/signals";
@@ -18,15 +22,25 @@ type Selection = {
   stocks: { symbol: string; name: string }[];
   basket?: unknown;
 };
+/** How the agent made an answer: reused from its cache or with new Gemini calls. */
+export type AgentReport = { reused: boolean; calls: number; oddsMoved: number | null };
 export type FindStocks = (
   input: { idea: unknown },
-  options: { signal?: AbortSignal; sessionId?: string; basket?: boolean; signals?: Signal[] },
+  options: {
+    signal?: AbortSignal;
+    sessionId?: string;
+    basket?: boolean;
+    signals?: Signal[];
+    report?: (detail: AgentReport) => void;
+  },
 ) => Promise<Selection>;
 
 export type AgentHandlerDeps = {
   findStocks: FindStocks;
   /** The live Polymarket signals; optional context, so a failure here never fails the request. */
   signals?: () => Promise<Signal[]>;
+  /** Counts the served answer for GET /api/savings. */
+  count?: SavingsStore["record"];
   rateLimit: (limits: Limit[]) => Promise<RateResult>;
   log?: (event: string, detail?: Record<string, unknown>) => void;
 };
@@ -69,6 +83,7 @@ export const defaultAgentDeps: AgentHandlerDeps = {
     return agent(input, options);
   },
   signals: liveSignals,
+  count: tigerSavings.record,
   rateLimit: hit,
 };
 
@@ -104,11 +119,25 @@ export function createAgentStocksHandler(deps: AgentHandlerDeps = defaultAgentDe
     try {
       const sessionId = request.headers.get("x-session-id") ?? undefined;
       const signals = await signalsOrNone(deps.signals);
+      const made: { report?: AgentReport } = {};
       const result = await deps.findStocks(
         { idea: body?.idea },
-        { signal: request.signal, sessionId, basket: body?.basket === true, signals },
+        {
+          signal: request.signal,
+          sessionId,
+          basket: body?.basket === true,
+          signals,
+          report: (detail) => {
+            made.report = detail;
+          },
+        },
       );
-      return json(request, 200, result);
+      const reused = made.report?.reused === true;
+      await deps.count?.("stocks", reused).catch(() => {});
+      return json(request, 200, result, {
+        "X-Cache": reused ? "HIT" : "MISS",
+        ...oddsMovedHeader(made.report?.oddsMoved),
+      });
     } catch (err) {
       if (err instanceof AgentError) {
         deps.log?.("agent_error", { code: err.code, message: err.message.slice(0, 200) });

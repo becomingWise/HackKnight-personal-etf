@@ -99,3 +99,40 @@ export function oddsLine(ids, signals) {
     });
   return parts.length ? `Live Polymarket odds: ${parts.join(", ")}.` : "";
 }
+
+// ---------- Reusing an answer while the odds hold still ----------
+
+/** A cached answer is decided again once a market it cites has moved this many points. */
+export const ODDS_MOVE_POINTS = 3;
+
+/** The Yes odds of the given signals right now: { id: price }. Ids that are not live are left out. */
+export function oddsOf(ids, signals) {
+  const byId = new Map(signals.map(signal => [signal.id, signal.price]));
+  return Object.fromEntries((ids ?? []).filter(id => byId.has(id)).map(id => [id, byId.get(id)]));
+}
+
+/**
+ * How far the cited markets have moved since `odds` was stored: the largest move, in points
+ * (0.08 → 0.11 is 3). Null when nothing is cited or a cited market has no live odds to compare.
+ */
+export function oddsMoved(odds, signals) {
+  const ids = Object.keys(odds ?? {});
+  if (!ids.length) return null;
+  const live = oddsOf(ids, signals);
+  if (ids.some(id => !(id in live))) return null;
+  // Rounded so that 0.11 - 0.08 counts as 3 points, not 2.9999999.
+  return Math.max(...ids.map(id => Math.round(Math.abs(live[id] - odds[id]) * 1e6) / 1e4));
+}
+
+/**
+ * May a cached answer { odds, at } be served again? An answer that cites markets is reused while
+ * none of them has moved ODDS_MOVE_POINTS or more, for up to `citedTtlMs`. An answer that cites
+ * none, or whose markets cannot be compared right now, keeps the plain time limit.
+ * @returns {{ reuse: boolean, moved: number | null }}
+ */
+export function reuseCached(entry, signals, now, { plainTtlMs, citedTtlMs }) {
+  const age = now - (entry?.at ?? now);
+  const moved = oddsMoved(entry?.odds, signals);
+  if (moved === null) return { reuse: age < plainTtlMs, moved: null };
+  return { reuse: moved < ODDS_MOVE_POINTS && age < citedTtlMs, moved };
+}

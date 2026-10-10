@@ -7,6 +7,7 @@ import { AgentError, createFindStocks } from "../agent-core/agent/gemini.js";
 import { createMemoryStore } from "../agent-core/agent/memory.js";
 import { memoryApiCache } from "../cache/apiCache";
 import { memoryModelBudget } from "../gemini/budget";
+import { memorySavings } from "../savings/store";
 import type { Signal } from "../weights/engine";
 import { agentBudget, agentCache } from "./adapters";
 import { createAgentStocksHandler, type FindStocks } from "./handler";
@@ -211,6 +212,114 @@ describe("POST /api/stocks (stock agent)", () => {
       stocks: SELECTION.stocks,
     });
     expect(callModel).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses an answer until its odds move 3 points, and says so in the headers", async () => {
+    let now = Date.UTC(2026, 9, 10, 12);
+    let taiwan = 0.08;
+    const callModel = vi.fn(async () => ({
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [
+              {
+                text: JSON.stringify({
+                  summary: "Your AI chips basket",
+                  symbols: ["NVDA", "TSM", "AMD"],
+                  signals: ["taiwan"],
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    }));
+    const findStocks = createFindStocks({
+      callModel,
+      memory: createMemoryStore(),
+      cache: agentCache(memoryApiCache(() => now)),
+      budget: agentBudget(memoryModelBudget()),
+      sessionId: null,
+      now: () => now,
+    }) as FindStocks;
+    const store = memorySavings((day) =>
+      day === "d:2026-10-10" ? callModel.mock.calls.length : 0,
+    );
+    const { POST } = createAgentStocksHandler({
+      findStocks,
+      signals: async () => [
+        {
+          id: "taiwan",
+          label: "China invades Taiwan",
+          status: "live",
+          price: taiwan,
+          changes: { "1w": -0.02 },
+          betas: { TSM: -1.0 },
+        },
+      ],
+      count: (endpoint, reused) => store.record(endpoint, reused, new Date(now)),
+      rateLimit: allow,
+    });
+    const ask = async (session: string) => {
+      const response = await POST(
+        post({ idea: "AI chips and Taiwan risk" }, { "X-Session-Id": session }),
+      );
+      const body = await response.json();
+      expect(Object.keys(body).sort()).toEqual(["stocks", "summary"]);
+      return [response.headers.get("X-Cache"), response.headers.get("X-Odds-Moved"), body.summary];
+    };
+
+    expect(await ask("tab-1")).toEqual([
+      "MISS",
+      null,
+      "Your AI chips basket Live Polymarket odds: China invades Taiwan 8% (▼2 pts this week).",
+    ]);
+    // Another visitor, three hours later, odds 2 points higher: reused, with today's odds.
+    now += 3 * 3600_000;
+    taiwan = 0.1;
+    expect(await ask("tab-2")).toEqual([
+      "HIT",
+      "2",
+      "Your AI chips basket Live Polymarket odds: China invades Taiwan 10% (▼2 pts this week).",
+    ]);
+    expect(callModel).toHaveBeenCalledTimes(1);
+    // 3 points away from the answer: Gemini decides again.
+    taiwan = 0.11;
+    expect((await ask("tab-3")).slice(0, 2)).toEqual(["MISS", "3"]);
+    expect(callModel).toHaveBeenCalledTimes(2);
+    expect((await ask("tab-1")).slice(0, 2)).toEqual(["HIT", "0"]);
+
+    expect(await store.read(new Date(now))).toEqual({
+      day: "2026-10-10",
+      answers: 4,
+      newAnswers: 2,
+      reused: 2,
+      reusedPct: 50,
+      geminiCalls: 2,
+    });
+  });
+
+  it("does not count a failed request, and a counting problem never fails an answer", async () => {
+    const count = vi.fn(async () => {
+      throw new Error("db down");
+    });
+    const ok = createAgentStocksHandler({
+      findStocks: async () => SELECTION,
+      count,
+      rateLimit: allow,
+    });
+    expect((await ok.POST(post({ idea: "AI chips" }))).status).toBe(200);
+    expect(count).toHaveBeenCalledWith("stocks", false);
+    const failing = createAgentStocksHandler({
+      findStocks: async () => {
+        throw new AgentError("gemini_unavailable", "No Gemini model is available right now.", 503);
+      },
+      count,
+      rateLimit: allow,
+    });
+    await failing.POST(post({ idea: "AI chips" }));
+    expect(count).toHaveBeenCalledTimes(1);
   });
 
   it("counts the agent's calls against the model budgets and keeps search blocks apart", async () => {

@@ -147,6 +147,15 @@ export function memoryApiCache(now: () => number = Date.now): ApiCache {
   };
 }
 
+/**
+ * X-Odds-Moved: how many points the Polymarket odds an answer rests on have moved since it was
+ * made (the largest move among its markets). Left out when the answer cites no market, or when
+ * the odds could not be compared.
+ */
+export function oddsMovedHeader(moved: number | null | undefined): Record<string, string> {
+  return typeof moved === "number" ? { "X-Odds-Moved": String(Math.round(moved * 10) / 10) } : {};
+}
+
 /** Headers that tell a client whether the answer came from the cache. */
 export function cacheHeaders(
   entry: { createdAt: Date } | null,

@@ -5,7 +5,7 @@ import test from "node:test";
 import { AgentError, MAX_MODEL_CALLS, createFindStocks, modelChains, tidySummary } from "../agent/gemini.js";
 import { createMemoryStore } from "../agent/memory.js";
 import { ALLOWED, retrieve } from "../agent/retrieval.js";
-import { checkSignalIds, oddsLine, usableSignals } from "../agent/signals.js";
+import { checkSignalIds, oddsLine, oddsMoved, reuseCached, usableSignals } from "../agent/signals.js";
 import { checkSelection, executeTool } from "../agent/tools.js";
 
 const text = value => ({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(value) }] } }] });
@@ -134,18 +134,51 @@ test("forwards the caller's signal and rejects when it aborts", async () => {
   await assert.rejects(createFindStocks({ callModel, sessionId: null })({ idea: "AI chips" }, { signal: controller.signal }));
 });
 
-test("identical (session, idea) is answered from the cache for 15 minutes", async () => {
+test("an identical idea is answered from the cache for 15 minutes, across sessions without preferences", async () => {
   let clock = 1_000_000;
   const model = gemini(answer());
   const findStocks = agent(model, { now: () => clock });
-  const first = await findStocks({ idea: "AI chips and Taiwan risk" }, { sessionId: "a" });
-  assert.deepEqual(await findStocks({ idea: "  ai chips and taiwan risk. " }, { sessionId: "a" }), first);
+  const reports = [];
+  const report = detail => reports.push(detail);
+  const first = await findStocks({ idea: "AI chips and Taiwan risk" }, { sessionId: "a", report });
+  assert.deepEqual(await findStocks({ idea: "  ai chips and taiwan risk. " }, { sessionId: "a", report }), first);
+  // Another session, and no session at all, share the entry: nobody has a saved preference.
+  assert.deepEqual(await findStocks({ idea: "AI chips and Taiwan risk" }, { sessionId: "b", report }), first);
+  assert.deepEqual(await findStocks({ idea: "AI chips and Taiwan risk" }, { report }), first);
   assert.equal(model.requests.length, 1);
-  await findStocks({ idea: "AI chips and Taiwan risk" }, { sessionId: "b" });
-  assert.equal(model.requests.length, 2);
+  assert.deepEqual(reports.map(detail => detail.reused), [false, true, true, true]);
+  assert.deepEqual(reports[0], { reused: false, calls: 1, oddsMoved: null });
   clock += 15 * 60 * 1000 + 1;
   await findStocks({ idea: "AI chips and Taiwan risk" }, { sessionId: "a" });
-  assert.equal(model.requests.length, 3);
+  assert.equal(model.requests.length, 2);
+});
+
+test("a session with a saved preference has its own cache entries", async () => {
+  const model = gemini(answer());
+  const memory = createMemoryStore();
+  const findStocks = agent(model, { memory });
+  await memory.rememberPreference("picky", "no oil companies");
+  await findStocks({ idea: "AI chips" }, { sessionId: "open" });
+  // The shared answer was made without the preference, so it is not served to this session.
+  await findStocks({ idea: "AI chips" }, { sessionId: "picky" });
+  assert.equal(model.requests.length, 2);
+  await findStocks({ idea: "AI chips" }, { sessionId: "picky" });
+  await findStocks({ idea: "AI chips" }, { sessionId: "open" });
+  assert.equal(model.requests.length, 2);
+  // And its answers are never shared with others.
+  await findStocks({ idea: "Clean energy" }, { sessionId: "picky" });
+  await findStocks({ idea: "Clean energy" }, { sessionId: "open" });
+  assert.equal(model.requests.length, 4);
+});
+
+test("a preference stated in the request does not cost a second call on the repeat", async () => {
+  const model = gemini(toolCall("remember_preference", { preference: "no oil companies" }), answer());
+  const findStocks = agent(model);
+  const idea = "I never want oil companies. AI chips please";
+  const first = await findStocks({ idea }, { sessionId: "a" });
+  assert.equal(model.requests.length, 2);
+  assert.deepEqual(await findStocks({ idea }, { sessionId: "a" }), first);
+  assert.equal(model.requests.length, 2);
 });
 
 test("memory is per session: preferences and baskets do not leak", async () => {
@@ -321,4 +354,94 @@ test("signals: missing or failed signals behave exactly as before", async () => 
   }
   assert.ok(!("signals" in plain.requests[0].body.generationConfig.responseJsonSchema.properties));
   assert.deepEqual(usableSignals(dead), []);
+});
+
+// ---------- Gemini thinks again only when the odds move ----------
+
+const taiwanAt = price => [{ ...SIGNALS[0], price }, ...SIGNALS.slice(1)];
+const HOUR = 3600_000;
+
+test("reuse: an answer that cites a market is reused while its odds moved less than 3 points", async () => {
+  let clock = 1_000_000;
+  const model = gemini(withSignals(["taiwan"]));
+  const findStocks = agent(model, { now: () => clock });
+  const reports = [];
+  const ask = signals => findStocks({ idea: "AI chips and Taiwan risk" }, { signals, report: detail => reports.push(detail) });
+
+  await ask(taiwanAt(0.08));
+  clock += 5 * HOUR; // far beyond the 15 minutes of an answer without markets
+  const reused = await ask(taiwanAt(0.105));
+  assert.equal(model.requests.length, 1);
+  assert.match(reused.summary, /China invades Taiwan 11%/);
+  assert.deepEqual(reports[1], { reused: true, calls: 0, oddsMoved: 2.5 });
+
+  // 3 points or more: Gemini decides again, and the new odds become the reference.
+  clock += HOUR;
+  await ask(taiwanAt(0.11));
+  assert.equal(model.requests.length, 2);
+  assert.deepEqual(reports[2], { reused: false, calls: 1, oddsMoved: 3 });
+  await ask(taiwanAt(0.13));
+  assert.equal(model.requests.length, 2);
+  assert.equal(reports[3].oddsMoved, 2);
+  // A fall counts like a rise.
+  await ask(taiwanAt(0.07));
+  assert.equal(model.requests.length, 3);
+  assert.equal(reports[4].oddsMoved, 4);
+});
+
+test("reuse: 24 hours is the limit even when the odds never move", async () => {
+  let clock = 1_000_000;
+  const model = gemini(withSignals(["taiwan"]));
+  const findStocks = agent(model, { now: () => clock });
+  const ask = () => findStocks({ idea: "AI chips and Taiwan risk" }, { signals: SIGNALS });
+  await ask();
+  clock += 24 * HOUR - 1000;
+  await ask();
+  assert.equal(model.requests.length, 1);
+  clock += 2000;
+  await ask();
+  assert.equal(model.requests.length, 2);
+});
+
+test("reuse: an answer with no cited market, or odds that cannot be compared, keeps the 15 minutes", async () => {
+  let clock = 1_000_000;
+  const plain = gemini(withSignals([]));
+  const noMarket = agent(plain, { now: () => clock });
+  await noMarket({ idea: "AI chips" }, { signals: SIGNALS });
+  clock += 14 * 60_000;
+  await noMarket({ idea: "AI chips" }, { signals: taiwanAt(0.5) });
+  assert.equal(plain.requests.length, 1);
+  clock += 2 * 60_000;
+  await noMarket({ idea: "AI chips" }, { signals: SIGNALS });
+  assert.equal(plain.requests.length, 2);
+
+  // Cited, but Polymarket cannot be read when serving: reused for 15 minutes only.
+  clock = 1_000_000;
+  const model = gemini(withSignals(["taiwan"]));
+  const findStocks = agent(model, { now: () => clock });
+  const reports = [];
+  await findStocks({ idea: "Taiwan risk" }, { signals: SIGNALS });
+  clock += 14 * 60_000;
+  await findStocks({ idea: "Taiwan risk" }, { report: detail => reports.push(detail) });
+  assert.equal(model.requests.length, 1);
+  assert.deepEqual(reports[0], { reused: true, calls: 0, oddsMoved: null });
+  clock += 2 * 60_000;
+  await findStocks({ idea: "Taiwan risk" });
+  assert.equal(model.requests.length, 2);
+});
+
+test("reuse: the rule itself", () => {
+  const live = usableSignals(taiwanAt(0.11));
+  const limits = { plainTtlMs: 15 * 60_000, citedTtlMs: 24 * HOUR };
+  assert.equal(oddsMoved({ taiwan: 0.08 }, live), 3);
+  assert.equal(oddsMoved({ taiwan: 0.08, chip_export_law: 0.3 }, live), 3);
+  assert.equal(oddsMoved({ taiwan: 0.08, gone: 0.5 }, live), null);
+  assert.equal(oddsMoved({}, live), null);
+  assert.equal(oddsMoved(undefined, live), null);
+  assert.deepEqual(reuseCached({ odds: { taiwan: 0.0801 }, at: 0 }, live, HOUR, limits), { reuse: true, moved: 2.99 });
+  assert.deepEqual(reuseCached({ odds: { taiwan: 0.08 }, at: 0 }, live, HOUR, limits), { reuse: false, moved: 3 });
+  assert.deepEqual(reuseCached({ odds: { taiwan: 0.11 }, at: 0 }, live, 25 * HOUR, limits), { reuse: false, moved: 0 });
+  assert.deepEqual(reuseCached({ at: 0 }, live, HOUR, limits), { reuse: false, moved: null });
+  // An entry written before this rule existed has no time: its own expiry decides.
+  assert.deepEqual(reuseCached({ summary: "x" }, live, HOUR, limits), { reuse: true, moved: null });
 });

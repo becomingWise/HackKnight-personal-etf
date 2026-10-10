@@ -3,7 +3,7 @@
 // Backend test console: idea → POST /api/stocks (the Gemini stock agent) → POST /api/votes (five
 // AI voters on that basket) and POST /api/weights.
 // Not the product UI (that is the frontend teammate's); it only shows what the API returns.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 type Stocks = { summary: string; stocks: { symbol: string; name: string }[] };
 type Evidence = {
@@ -24,9 +24,19 @@ type Votes = {
   summary: string;
   stocks: { symbol: string; name: string; yes: number; no: number; votes: Vote[] }[];
 };
+type Savings = {
+  day: string;
+  answers: number;
+  newAnswers: number;
+  reused: number;
+  reusedPct: number;
+  geminiCalls: number;
+};
+/** X-Cache and X-Odds-Moved of an answer: was it reused, and how far have its odds moved? */
+type Reuse = { cache: string | null; moved: string | null };
 type Step<T> =
   | { state: "idle" | "running" | "skipped" }
-  | { state: "done"; data: T; ms: number }
+  | { state: "done"; data: T; ms: number; reuse: Reuse }
   | { state: "error"; message: string };
 const IDLE = { state: "idle" } as const;
 const RUNNING = { state: "running" } as const;
@@ -45,7 +55,10 @@ function sessionId(): string {
   }
 }
 
-async function call<T>(path: string, body: unknown): Promise<{ data: T; ms: number }> {
+async function call<T>(
+  path: string,
+  body: unknown,
+): Promise<{ data: T; ms: number; reuse: Reuse }> {
   const started = performance.now();
   const response = await fetch(path, {
     method: "POST",
@@ -54,7 +67,21 @@ async function call<T>(path: string, body: unknown): Promise<{ data: T; ms: numb
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new Error(data?.error?.message ?? `${path} answered ${response.status}.`);
-  return { data: data as T, ms: Math.round(performance.now() - started) };
+  return {
+    data: data as T,
+    ms: Math.round(performance.now() - started),
+    reuse: { cache: response.headers.get("X-Cache"), moved: response.headers.get("X-Odds-Moved") },
+  };
+}
+
+/** Today's counters; null when they cannot be read (the console works without them). */
+async function fetchSavings(): Promise<Savings | null> {
+  try {
+    const response = await fetch("/api/savings", { cache: "no-store" });
+    return response.ok ? ((await response.json()) as Savings) : null;
+  } catch {
+    return null;
+  }
 }
 
 const failure = (err: unknown) => ({
@@ -148,6 +175,17 @@ function StockVotes({ stock }: { stock: Votes["stocks"][number] }) {
   );
 }
 
+/** Reused or new, and how far the odds behind the answer have moved since it was made. */
+function ReusePill({ reuse }: { reuse: Reuse }) {
+  if (!reuse.cache) return null;
+  const moved = reuse.moved === null ? "" : ` · odds moved ${reuse.moved} pts`;
+  return reuse.cache === "HIT" ? (
+    <Pill kind="ok">reused, no Gemini call{moved}</Pill>
+  ) : (
+    <Pill kind="plain">new answer{moved}</Pill>
+  );
+}
+
 export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
   const [idea, setIdea] = useState<string>(demoIdeas[0] ?? "");
   const [busy, setBusy] = useState(false);
@@ -155,6 +193,17 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
   const [votes, setVotes] = useState<Step<Votes>>(IDLE);
   const [weights, setWeights] = useState<Step<Weights>>(IDLE);
   const [start, setStart] = useState<{ symbol: string; weightPct: number }[]>([]);
+  const [savings, setSavings] = useState<Savings | null>(null);
+
+  useEffect(() => {
+    let shown = true;
+    void fetchSavings().then((loaded) => {
+      if (shown && loaded) setSavings(loaded);
+    });
+    return () => {
+      shown = false;
+    };
+  }, []);
 
   async function run(text: string) {
     const wanted = text.trim();
@@ -165,7 +214,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
     setWeights(IDLE);
     setStart([]);
     try {
-      let picked: { data: Stocks; ms: number };
+      let picked: { data: Stocks; ms: number; reuse: Reuse };
       try {
         picked = await call<Stocks>("/api/stocks", { idea: wanted });
         setStocks({ state: "done", ...picked });
@@ -192,6 +241,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
       ]);
     } finally {
       setBusy(false);
+      void fetchSavings().then((loaded) => loaded && setSavings(loaded));
     }
   }
 
@@ -243,17 +293,64 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
         </div>
         <p className="mt-3 rounded-xl bg-warn-soft px-3 py-2 text-sm text-warn">
           A new idea uses Gemini quota (free tier): 2 calls normally, 4 at most, for the stocks,
-          plus 5 Flash-Lite calls for the voting panel. Repeating an idea in this tab within 15
-          minutes is free (votes: 30 minutes). This tab is one session: preferences you state (for
+          plus 5 Flash-Lite calls for the voting panel. An answer that rests on Polymarket markets
+          is reused, for everyone, until one of them moves 3 points (24 hours at most); other
+          answers for 15 minutes (votes: 30). This tab is one session: preferences you state (for
           example &quot;no oil companies&quot;) are remembered for it.
         </p>
+      </section>
+
+      <section className="rounded-panel border border-line bg-surface px-5 py-4">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <p className="text-xs font-semibold tracking-[0.18em] text-blue">SAVED TODAY</p>
+          <p className="text-sm text-muted">
+            Gemini thinks again only when the Polymarket odds behind an answer move 3 points.
+          </p>
+          <Pill kind="plain">GET /api/savings</Pill>
+        </div>
+        {savings ? (
+          <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            <div>
+              <dt className="text-xs text-muted">Answers served</dt>
+              <dd className="font-mono text-lg font-semibold">{savings.answers}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">Reused, no Gemini call</dt>
+              <dd className="font-mono text-lg font-semibold text-up">
+                {savings.reused} ({savings.reusedPct}%)
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">Needed new Gemini calls</dt>
+              <dd className="font-mono text-lg font-semibold">{savings.newAnswers}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">Gemini calls today</dt>
+              <dd className="font-mono text-lg font-semibold">{savings.geminiCalls}</dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="mt-2 text-sm text-muted">Loading the counters…</p>
+        )}
+        {savings && (
+          <p className="mt-2 text-xs text-muted">
+            Stocks and votes answers since midnight Pacific time ({savings.day}).
+          </p>
+        )}
       </section>
 
       <Card
         n="1 · STOCKS"
         title="Gemini picks three stocks"
         time={stocks.state === "done" ? seconds(stocks.ms) : undefined}
-        badge={stocks.state === "done" && <Pill kind="plain">POST /api/stocks</Pill>}
+        badge={
+          stocks.state === "done" && (
+            <>
+              <Pill kind="plain">POST /api/stocks</Pill>
+              <ReusePill reuse={stocks.reuse} />
+            </>
+          )
+        }
       >
         {stocks.state !== "done" ? (
           <Waiting
@@ -284,6 +381,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
                   <>
                     <span className="font-medium">{votes.data.summary}</span>
                     <Pill kind="plain">POST /api/votes</Pill>
+                    <ReusePill reuse={votes.reuse} />
                     <span className="ml-auto font-mono text-xs text-muted">
                       {seconds(votes.ms)}
                     </span>

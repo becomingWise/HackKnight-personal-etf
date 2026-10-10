@@ -10,7 +10,8 @@
 //   3. Every model turn is sent back complete, thought signatures included, as Gemini 3 requires.
 //   4. The final answer is checked again in code; a wrong one gets one correction turn.
 // A caller may pass live Polymarket signals (signals.js): they add one block to the prompt and a
-// line of live odds to the served summary, with no extra Gemini call.
+// line of live odds to the served summary, with no extra Gemini call. An answer that cites live
+// markets is reused until one of them has moved 3 points (for up to 24 hours).
 // Google Search grounding runs as a separate grounded call inside the google_search tool.
 //
 // Plain Node 20+ (global fetch), no dependencies. The deployed backend runs this same file with
@@ -18,13 +19,15 @@
 import { buildBasket } from "./basket.js";
 import { cleanSessionId, localMemory } from "./memory.js";
 import { ALLOWED, notesForPrompt } from "./retrieval.js";
-import { checkSignalIds, oddsLine, signalsForPrompt, usableSignals } from "./signals.js";
+import { checkSignalIds, oddsLine, oddsOf, reuseCached, signalsForPrompt, usableSignals } from "./signals.js";
 import { BASKET_SIZE, checkSelection, executeTool, functionDeclarations } from "./tools.js";
 
 export const MAX_MODEL_CALLS = 4;
 export const MAX_IDEA_LENGTH = 500;
 export const MAX_SUMMARY_WORDS = 12;
 export const CACHE_TTL_MS = 15 * 60 * 1000;
+/** An answer that cites live Polymarket markets is kept this long, while their odds hold still. */
+export const ODDS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 25_000;
 /** One model call may take this long; after that the next model of the chain is asked. */
 const CALL_TIMEOUT_MS = 9_000;
@@ -232,9 +235,10 @@ export function createFindStocks(options = {}) {
    * @param {{ idea: string }} input
    * @param {{ signal?: AbortSignal, sessionId?: string, basket?: boolean, signals?: object[] }} [callOptions]
    *   signals: optional live Polymarket signals (see signals.js); without them nothing changes.
+   *   report: told how the answer was made: { reused, calls, oddsMoved } (oddsMoved in points, or null).
    * @returns {Promise<{ summary: string, stocks: { symbol: string, name: string }[], basket?: object }>}
    */
-  return async function findStocks({ idea } = {}, { signal, sessionId: givenSession, basket = false, signals } = {}) {
+  return async function findStocks({ idea } = {}, { signal, sessionId: givenSession, basket = false, signals, report } = {}) {
     const text = typeof idea === "string" ? idea.trim() : "";
     if (!text) throw new AgentError("invalid_idea", "idea must be a non-empty string.", 400);
     if (text.length > MAX_IDEA_LENGTH) {
@@ -243,7 +247,7 @@ export function createFindStocks(options = {}) {
     const sessionId = cleanSessionId(givenSession ?? options.sessionId ?? process.env.MYETF_SESSION_ID);
     const live = usableSignals(signals);
     /** The public response: the odds line is built now, from the live figures. */
-    const finish = ({ signalIds, ...selection }) => {
+    const finish = ({ signalIds, odds, at, ...selection }) => {
       const line = oddsLine(signalIds, live);
       return {
         ...selection,
@@ -252,11 +256,32 @@ export function createFindStocks(options = {}) {
       };
     };
 
-    const cacheKey = `${sessionId ?? "-"}|${normalizeIdea(text)}`;
+    const tell = detail => {
+      try {
+        report?.(detail);
+      } catch {
+        // A reporting problem never fails the request.
+      }
+    };
+
+    const record = sessionId ? await memory.load(sessionId).catch(() => ({ preferences: [], baskets: [] })) : null;
+    // Saved preferences are binding and shape the answer, so only a session that has some gets its
+    // own entries. Everyone else shares one entry per idea.
+    const sharedKey = `-|${normalizeIdea(text)}`;
+    const sessionKey = `${sessionId}|${normalizeIdea(text)}`;
+    const cacheKey = record?.preferences.length ? sessionKey : sharedKey;
     const cached = await cache.get(cacheKey).catch(() => null);
+    /** Points the cited odds had moved when a cached answer was given up. */
+    let movedSince = null;
     if (cached) {
-      log({ event: "cached", sessionId });
-      return finish(cached);
+      const { reuse, moved } = reuseCached(cached, live, now(), { plainTtlMs: CACHE_TTL_MS, citedTtlMs: ODDS_CACHE_TTL_MS });
+      if (reuse) {
+        log({ event: "cached", sessionId, oddsMoved: moved });
+        tell({ reused: true, calls: 0, oddsMoved: moved });
+        return finish(cached);
+      }
+      movedSince = moved;
+      log({ event: "cache_stale", oddsMoved: moved });
     }
 
     const models = options.models ?? modelChains();
@@ -340,7 +365,6 @@ export function createFindStocks(options = {}) {
       return { available: true, answer: answer.slice(0, 800), sources };
     }
 
-    const record = sessionId ? await memory.load(sessionId).catch(() => ({ preferences: [], baskets: [] })) : null;
     const canSearch = searchEnabled && (await budget.available(models.search, "search").catch(() => false));
     const declarations = functionDeclarations({ memory: Boolean(sessionId), search: canSearch });
     const toolContext = { sessionId, memory, search: canSearch ? groundedSearch : undefined };
@@ -356,6 +380,7 @@ export function createFindStocks(options = {}) {
       }]
     };
     const conversation = { model: null, contents: [firstTurn] };
+    let savedPreference = false;
 
     try {
       for (;;) {
@@ -398,6 +423,7 @@ export function createFindStocks(options = {}) {
           for (const { functionCall } of toolCalls) {
             const result = await executeTool(functionCall.name, functionCall.args, toolContext);
             log({ event: "tool", name: functionCall.name });
+            if (functionCall.name === "remember_preference") savedPreference = true;
             results.push({
               functionResponse: {
                 name: functionCall.name,
@@ -422,9 +448,17 @@ export function createFindStocks(options = {}) {
               })
               .catch(() => {});
           }
-          await cache.set(cacheKey, answer.value, CACHE_TTL_MS).catch(() => {});
+          // The odds the answer rests on are stored with it; they decide how long it is reused.
+          const cited = answer.value.signalIds ?? [];
+          const entry = { ...answer.value, ...(cited.length ? { odds: oddsOf(cited, live) } : {}), at: now() };
+          // A session that stated its first preference in this request finds the answer again too.
+          const keys = new Set([cacheKey, ...(sessionId && savedPreference ? [sessionKey] : [])]);
+          for (const key of keys) {
+            await cache.set(key, entry, cited.length ? ODDS_CACHE_TTL_MS : CACHE_TTL_MS).catch(() => {});
+          }
           log({ event: "answered", model: sent.model, calls });
-          return finish(answer.value);
+          tell({ reused: false, calls, oddsMoved: movedSince });
+          return finish(entry);
         }
 
         if (calls >= MAX_MODEL_CALLS) {

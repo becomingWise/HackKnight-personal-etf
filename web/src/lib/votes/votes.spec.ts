@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { memoryApiCache } from "../cache/apiCache";
 import { CHAINS } from "../gemini/models";
+import { memorySavings } from "../savings/store";
 import type { GenerateJson, GenerateJsonArgs } from "../sponsors/gemini";
 import type { Signal } from "../weights/engine";
 import { createVotesHandler, votesCacheKey, type VotesDeps } from "./handler";
@@ -210,9 +211,8 @@ describe("POST /api/votes", () => {
     expect(prompts.some((p) => p.includes("No live Polymarket market is linked"))).toBe(true);
   });
 
-  it("caches per (idea, symbols) for 30 minutes, whatever the order of the stocks", async () => {
-    let now = Date.UTC(2026, 9, 10, 12);
-    const { POST, deps } = client({ cache: memoryApiCache(() => now) });
+  it("caches per (idea, symbols), whatever the order of the stocks", async () => {
+    const { POST, deps } = client();
     await POST(post(BODY));
     const again = await POST(
       post({ idea: "  ai chips and taiwan risk. ", stocks: [...STOCKS].reverse() }),
@@ -222,14 +222,90 @@ describe("POST /api/votes", () => {
       [...SYMBOLS].reverse(),
     );
     expect(deps.generate).toHaveBeenCalledTimes(5);
-
     // Another idea, or another set of stocks, is another panel.
     expect(votesCacheKey("AI chips", SYMBOLS)).not.toBe(votesCacheKey("AI chips", ["NVDA"]));
+  });
+
+  it("keeps a panel with no linked market for 30 minutes", async () => {
+    let now = Date.UTC(2026, 9, 10, 12);
+    const { POST, deps } = client({
+      signals: async () => [],
+      cache: memoryApiCache(() => now),
+      now: () => new Date(now),
+    });
+    const first = await POST(post(BODY));
+    expect(first.headers.get("X-Odds-Moved")).toBeNull();
+    now += 29 * 60_000;
+    const hit = await POST(post(BODY));
+    expect(hit.headers.get("X-Cache")).toBe("HIT");
+    expect(hit.headers.get("X-Odds-Moved")).toBeNull();
+    now += 2 * 60_000;
+    expect((await POST(post(BODY))).headers.get("X-Cache")).toBe("MISS");
+    expect(deps.generate).toHaveBeenCalledTimes(10);
+  });
+
+  it("votes again only when the odds it was given moved 3 points, for up to 24 hours", async () => {
+    let now = Date.UTC(2026, 9, 10, 12);
+    let taiwan = 0.3;
+    const { POST, deps } = client({
+      signals: async () => [{ ...SIGNALS[0], price: taiwan }],
+      cache: memoryApiCache(() => now),
+      now: () => new Date(now),
+    });
+    const ask = async () => {
+      const response = await POST(post(BODY));
+      return [response.headers.get("X-Cache"), response.headers.get("X-Odds-Moved")];
+    };
+    expect(await ask()).toEqual(["MISS", null]);
+
+    // Five hours later and 2.9 points away: the same panel, no Gemini call.
+    now += 5 * 3600_000;
+    taiwan = 0.329;
+    expect(await ask()).toEqual(["HIT", "2.9"]);
+    expect(deps.generate).toHaveBeenCalledTimes(5);
+
+    // 3 points: the five voters are asked again, with the new odds as the reference.
+    taiwan = 0.33;
+    expect(await ask()).toEqual(["MISS", "3"]);
+    expect(deps.generate).toHaveBeenCalledTimes(10);
+    expect(await ask()).toEqual(["HIT", "0"]);
+
+    // The odds stand still, but a day has passed.
+    now += 24 * 3600_000 - 1000;
+    expect(await ask()).toEqual(["HIT", "0"]);
+    now += 2000;
+    expect((await ask())[0]).toBe("MISS");
+    expect(deps.generate).toHaveBeenCalledTimes(15);
+  });
+
+  it("falls back to 30 minutes when the odds cannot be compared", async () => {
+    let now = Date.UTC(2026, 9, 10, 12);
+    let down = false;
+    const { POST, deps } = client({
+      signals: async () => {
+        if (down) throw new Error("gamma down");
+        return SIGNALS;
+      },
+      cache: memoryApiCache(() => now),
+      now: () => new Date(now),
+    });
+    await POST(post(BODY));
+    down = true;
     now += 29 * 60_000;
     expect((await POST(post(BODY))).headers.get("X-Cache")).toBe("HIT");
     now += 2 * 60_000;
     expect((await POST(post(BODY))).headers.get("X-Cache")).toBe("MISS");
     expect(deps.generate).toHaveBeenCalledTimes(10);
+  });
+
+  it("counts every answer: new or reused", async () => {
+    const store = memorySavings();
+    const { POST } = client({ count: store.record });
+    await POST(post(BODY));
+    await POST(post(BODY));
+    await POST(post(BODY));
+    await POST(post({ idea: "", stocks: STOCKS })); // an error is not an answer
+    expect(await store.read()).toMatchObject({ answers: 3, newAnswers: 1, reused: 2 });
   });
 
   it("does not cache a panel with a missing voter", async () => {

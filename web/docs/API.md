@@ -81,7 +81,16 @@ A failure is always an error: the service never substitutes demo or fallback com
 ### Behaviour
 
 - **Gemini calls per request:** 2 normally (the model calls `check_selection`, then answers), 4 at most,
-  0 for a repeat. Identical (session, idea) pairs are answered from a 15-minute cache.
+  0 for a reused answer.
+- **Gemini thinks again only when the odds move.** An answer that rests on live Polymarket markets is
+  stored with their odds and reused until one of them has moved **3 points or more** (compared with
+  the live odds when serving), for up to 24 hours. An answer that rests on no market, or whose markets
+  cannot be read right now, is reused for 15 minutes. Identical ideas are shared across visitors; only
+  a session with saved preferences gets entries of its own (its preferences shape the answer).
+- **Headers:** `X-Cache: HIT` (reused, no Gemini call) or `MISS` (new Gemini calls), and
+  `X-Odds-Moved`: the largest move of the answer's markets since it was made, in points (`"2.5"`). On
+  a `MISS` it is the move that made the old answer stale. Absent when the answer rests on no market.
+  Every answer is counted for `GET /api/savings` (section 1e).
 - **Models:** `gemini-3.5-flash-lite`, then `gemini-3.1-flash-lite`, counted against the per-model
   budgets shown in `GET /api/health`. A call that takes over 9 seconds moves on to the next model.
 - **Tools:** `check_selection` (exactly 3, unique, allowed), `get_memory`, `remember_preference`, and
@@ -186,7 +195,9 @@ It does not change `findStocks` or its response; it only comments on a basket.
 - `reason`: at most 15 words.
 - `summary`: a stock is "backed by a majority" with 3 or more yes votes. When agents are missing it
   ends with e.g. `(1 of 5 agents gave no answer)`.
-- Headers: `X-Cache: HIT | MISS` (and `X-Cache-Age` in seconds on a hit).
+- Headers: `X-Cache: HIT | MISS` (and `X-Cache-Age` in seconds on a hit), and `X-Odds-Moved`: how many
+  points the Polymarket odds the panel was given have moved since it voted (absent when no market is
+  linked to the stocks).
 
 ### Error responses
 
@@ -202,8 +213,11 @@ It does not change `findStocks` or its response; it only comments on a basket.
 - **Gemini calls per request:** 5 (one per voter), 0 for a repeat. Flash-Lite only: three voters start
   on `gemini-3.5-flash-lite` and two on `gemini-3.1-flash-lite`, each with the other model as its only
   backup. Calls are counted against the per-model budgets in `GET /api/health`.
-- **Cache:** 30 minutes per (idea, set of symbols); the order of the stocks does not matter. Only a
-  complete panel is cached, so a voter that was briefly unavailable gets another chance.
+- **Cache:** per (idea, set of symbols); the order of the stocks does not matter. A panel is stored
+  with the odds of the Polymarket markets linked to its stocks and reused until one of them has moved
+  **3 points or more**, for up to 24 hours. With no linked market, or when the odds cannot be read, it
+  is reused for 30 minutes. Only a complete panel is cached, so a voter that was briefly unavailable
+  gets another chance. Every answer is counted for `GET /api/savings` (section 1e).
 - **Caps:** an uncached panel counts as two requests against the shared caps of the evidence workflow
   (`ai:minute`, `ai:30min`, `ai:day`, per IP per 30 minutes).
 - **Typical time:** 2 to 4 seconds; each voter has 9 seconds.
@@ -229,6 +243,36 @@ const { stocks, summary } = await getVotes({ idea, stocks: selection.stocks }, {
 ```
 
 Always show the caveat **"AI opinions, not financial advice."** next to the votes.
+
+---
+
+## 1e. `GET /api/savings` — LIVE
+
+What reusing answers saved today. `/api/stocks` and `/api/votes` count every answer they serve: did it
+need new Gemini calls, or was it reused because the odds behind it had not moved 3 points?
+
+```json
+{
+  "day": "2026-10-10",
+  "answers": 42,
+  "newAnswers": 11,
+  "reused": 31,
+  "reusedPct": 73.8,
+  "geminiCalls": 187
+}
+```
+
+- `day`: the current day in Pacific time, which is how Google counts the daily Gemini quota.
+- `answers`: answers served that day by `/api/stocks` and `/api/votes` (errors are not counted).
+  `newAnswers` needed new Gemini calls; `reused` came from the cache; `answers = newAnswers + reused`.
+- `reusedPct`: `reused / answers` in percent, one decimal; `0` when nothing was served yet.
+- `geminiCalls`: every Gemini call the app made that day, all models and endpoints (table
+  `gemini_usage`), so it also includes the manager's note and failed attempts.
+- No request body, no cache. `503 storage_error` when the database cannot be read.
+
+```powershell
+Invoke-RestMethod https://prophetf.vercel.app/api/savings
+```
 
 ---
 
