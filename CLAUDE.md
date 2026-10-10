@@ -11,7 +11,9 @@
 
 _Updated: 2026-10-09 (session 1)_
 
-- **Current phase:** Phase 0 done and deployed. **findStocks is LIVE** at https://prophetf.vercel.app/api/stocks (alias `/api/findstock`), contract in `web/docs/API.md` section 1. Next: Phase 1 (Data core) as backend/API work per `web/docs/PLAN.md`.
+- **Product (re-planned 2026-10-09, overrides the brief below):** a stock basket picked by Gemini (`POST /api/stocks`), weighted by Polymarket odds moves (`POST /api/weights`), with the odds behind it saved, tracked and charted in Tiger. The brief's paper-ETF-of-Polymarket-outcomes design (NAV, holdings of YES/NO, leaderboard, ETF math in section 3) is DROPPED; its hard rules (section 1), stack (section 4), Polymarket API notes (section 5) and sponsor notes (section 7) still apply where relevant.
+- **Backend order (details in `web/docs/PLAN.md`):** 1) end-to-end flow idea → stocks → weights on live URLs; 2) saved baskets `POST/GET /api/baskets`; 3) odds history in Tiger (`odds_ticks` hypertable, tick job, hourly cagg, market + basket history endpoints, backfill); 4) sponsor APIs on baskets (ElevenLabs narrate, Solana publish/verify, Snowflake letter, Presage tilt-check); 5) `GET /api/built-with`. After each step: tests, deploy, update `web/docs/API.md`, short note for the teammate.
+- **Current step: 1, STOPPED waiting for Lucas.** Finding: `POST /api/weights` runs nowhere public (local FastAPI in `/backend`, port 8001, no deploy config on any branch, no frontend weights adapter). Options proposed: port to a TypeScript route in `/web` (recommended), or deploy the Python app. Also found: the GitHub Pages site answers 404. findStocks is LIVE at https://prophetf.vercel.app/api/stocks.
 - **Branches:** `lucas-branch` = `origin/main` tree + `prophetf-app` (merged 2026-10-09) + findStocks work. `prophetf-app` is frozen.
 - **findStocks code:** `web/src/lib/stocks/` (`findStocks.ts` pipeline, `handler.ts` HTTP layer, `universe.ts` + `universe.data.json` copied from `/backend` by `pnpm sync:universe`), `web/src/lib/polymarket/search.ts`, `web/src/lib/sponsors/gemini.ts`, `web/src/lib/http/` (CORS, rate limit), `/js/stocks-adapter.js` (frontend adapter, not wired in). Manual check: `pnpm try:findstocks "idea"`.
 - **Commands (run in `web/`):** `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm format`, `pnpm db:migrate`, `pnpm db:status`.
@@ -27,7 +29,7 @@ _Updated: 2026-10-09 (session 1)_
 - **Lucas (this session's user) owns the BACKEND only:** database, Polymarket ingestion, jobs, ETF math, and API routes under `web/src/app/api`.
 - **A teammate owns the FRONTEND.** Do not build or redesign UI pages. Touch frontend code only when an API change forces a tiny fix, and tell Lucas first.
 - Page work in the brief (sections 2 and 8) becomes "API the frontend needs". Every endpoint is documented in `web/docs/API.md` with request/response examples.
-- **Top priority: `findStocks`** (contract in `web/docs/API.md` section 1), then the backend phases in `web/docs/PLAN.md`.
+- Work order: the five steps in `web/docs/PLAN.md` (findStocks is done).
 - Other teammates' work on `origin/main` / `origin/lucas-branch`: a chat-first JS framework (`js/controller.js`, `js/services.js`, `docs/team-contracts.md`) with two ports, `findStocks` (ours) and `adjustWeights` (Polymarket teammate, Python FastAPI in `/backend`, `POST /api/weights`).
 - Frontend origins for CORS: `https://becomingwise.github.io`, `http://localhost:8000`, `http://127.0.0.1:8000`, `http://localhost:3000`, `http://127.0.0.1:3000`.
 - Never merge, rebase or delete branches without Lucas's OK. Never push to `main`.

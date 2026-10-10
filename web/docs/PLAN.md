@@ -1,92 +1,68 @@
 # ProphETF plan (backend / API only)
 
-Team split since 2026-10-09: Lucas owns the backend (database, Polymarket ingestion, jobs, ETF math, API
-routes under `src/app/api`). A teammate owns the frontend. No UI pages are built or redesigned here.
-Every endpoint goes into `docs/API.md` with request and response examples.
+**The product (re-planned 2026-10-09):** a stock basket picked by Gemini (`POST /api/stocks`), weighted by
+Polymarket odds moves (`POST /api/weights`), with the odds behind it saved, tracked and charted in Tiger.
+The older plan (paper ETFs made of Polymarket outcomes, NAV, leaderboard) is dropped.
 
-At the end of every phase: run tests, deploy, update `/CLAUDE.md` + this file + `docs/API.md`, 5-line summary.
+Lucas owns the backend; a teammate owns the frontend. No UI pages are built here. Every endpoint goes into
+`docs/API.md` with request and response examples.
 
-## Section 0 — First actions
+After each step: tests, `npx vercel --prod --yes` from `/web`, update `docs/API.md` + `/CLAUDE.md` + this
+file, and a short note Lucas can forward to the frontend teammate.
 
-- [x] Brief saved to `/CLAUDE.md` with Status + Decisions
-- [x] `docs/PLAN.md` (this file)
-- [x] `.env.example`
-- [x] Tiger Cloud service created (`prophetf`, `v5idwzv5iv`, us-east-1, free) and `DATABASE_URL` written to `.env.local`
+## Done
 
-## Phase 0 — Scaffold
+- [x] Scaffold: Next.js 16 in `/web`, env validation, sponsor flags with mocks, Tiger client, migration runner, `GET /api/health`
+- [x] Tiger Cloud service `prophetf` (`v5idwzv5iv`), deployed at https://prophetf.vercel.app
+- [x] findStocks: `POST /api/stocks` (+ alias `/api/findstock`), Gemini picks backed by live Polymarket odds, fallback, CORS, rate limits, contract tests, `/js/stocks-adapter.js`
 
-- [x] Next.js app in `/web` (Next 16, App Router, TypeScript, Tailwind 4, pnpm)
-- [x] Lint + format, typecheck, vitest
-- [x] Env validation (`src/lib/env.ts`) and sponsor flags with mock fallback (`src/lib/flags.ts`)
-- [x] DB client singleton, max 3 connections (`src/lib/db/client.ts`)
-- [x] Migration runner (`pnpm db:migrate`, `pnpm db:status`) + `0001_extensions.sql`
-- [x] `GET /api/health`
-- [x] First Vercel deploy, health OK on https://prophetf.vercel.app/api/health
+## Step 1 — End-to-end flow: idea → stocks → weights on live URLs
 
-## Priority 1 — findStocks (done, live)
+- [x] Find where `POST /api/weights` runs: **nowhere public**. It is a local FastAPI app (`/backend`, port 8001); no deploy config and no public URL on any branch, and no frontend weights adapter exists.
+- [x] Found: the GitHub Pages site (`https://becomingwise.github.io/HackKnight-personal-etf/`) currently answers 404
+- [ ] **Waiting for Lucas:** choose how to make weights public (options in the step 1 message)
+- [ ] Build the chosen option; contract test with the team's `validateAdjustment`
+- [ ] `/js/weights-adapter.js` for the frontend (not wired in), documented in `docs/API.md`
+- [ ] Live check: idea → `/api/stocks` → `/api/weights` from an allowed origin
 
-- [x] Read `lucas-branch`, find every findStocks call, write the contract to `docs/API.md`
-- [x] Decisions from Lucas: stocks per the contract with Polymarket evidence, 40-ticker universe, 3 to 5 stocks, work on `lucas-branch`
-- [x] `POST /api/stocks` + alias `POST /api/findstock`: zod input, Gamma search candidates, Gemini (`gemini-3.5-flash`, structured output), zod output, fabricated markets dropped, odds verified, one retry
-- [x] Keyword fallback when Gemini fails or exceeds 20 s (`source: "fallback"`)
-- [x] CORS for the frontend origins + `OPTIONS`
-- [x] Rate limit per IP and global, counters in Tiger (`api_rate_limits`)
-- [x] Contract tests with mocked Gemini, including the team's real `js/controller.js`
-- [x] `/js/stocks-adapter.js` for the frontend teammate (not wired in)
-- [x] Deployed with `npx vercel --prod`: https://prophetf.vercel.app/api/stocks
-- [ ] Later: use the Tiger `markets` table + pgvector for candidates once Phase 1 and 3 data exists
+## Step 2 — Saved baskets (Tiger)
 
-## Phase 1 — Data core
+- [ ] Migration: `baskets` (short id, idea, summary, stocks, weights, cited market ids, odds at creation, created_at)
+- [ ] `POST /api/baskets` → `{ id, url }`; `GET /api/baskets/{id}`
+- [ ] zod validation, rate limit, CORS, tests
+- [ ] Adapter docs: how the frontend saves and loads a basket
 
-Done when: ≥ 500 markets in Tiger and prices landing every minute.
+## Step 3 — Odds history (Tiger showcase)
 
-- [ ] Verify Polymarket docs (SDK `@polymarket/client`, Gamma keyset, CLOB midpoints/last-trades, Data API v2 history, v1/v2 IDs)
-- [ ] Schema migration: markets, market_embeddings, price_ticks hypertable + columnstore policy, price_1h cagg + refresh policy, etfs, etf_holdings, etf_events, etf_nav hypertable + etf_nav_1h cagg, briefings, tilt_checks
-- [ ] `src/lib/polymarket` wrapper with zod validation, batching, 429 backoff
-- [ ] `POST /api/jobs/sync-markets` (top ~1,500 by volume/liquidity, v1/v2 IDs, resolution status)
-- [ ] `POST /api/jobs/tick` (poll-prices for held + top 200; compute-nav)
-- [ ] `CRON_SECRET` auth on jobs; `pnpm jobs:loop`
-- [ ] Backfill 30 days from Data API v2
-- [ ] API the frontend needs: `GET /api/markets` (keyword search, filters: sector, tag, ends-by, min liquidity; YES price + sparkline points), `GET /api/markets/[id]`
-- [ ] cron-job.org URLs and schedules handed to Lucas
+- [ ] `odds_ticks` hypertable (time, market_id, outcome, probability), unique (market_id, outcome, time), columnstore policy
+- [ ] `markets` table for cited markets (id, question, url, token ids, end date, resolved)
+- [ ] Every `/api/stocks` call records the odds it observed
+- [ ] `POST /api/jobs/tick` (cron, `CRON_SECRET`): refresh odds every minute for all markets cited by saved baskets; `pnpm jobs:loop`
+- [ ] `odds_1h` continuous aggregate + refresh policy
+- [ ] `GET /api/markets/{id}/history?range=1d|7d|30d`, backfilled from Data API v2 `prices-history` the first time a market is seen
+- [ ] `GET /api/baskets/{id}/odds`: all cited markets' history in one call
+- [ ] Query latency recorded for `GET /api/built-with`
+- [ ] cron-job.org URL and schedule handed to Lucas
 
-## Phase 2 — ETF engine
+## Step 4 — Sponsor APIs (each behind a flag with a mock)
 
-Done when: an ETF can be created through the API and its NAV moves.
+- [ ] a. ElevenLabs: `POST /api/baskets/{id}/narrate` → MP3 briefing of the summary and key odds, cached in Tiger; `GET /api/audio/{id}`
+- [ ] b. Solana devnet: `POST /api/baskets/{id}/publish` → memo tx with the basket hash + odds snapshot; `GET /api/baskets/{id}/verify`
+- [ ] c. Snowflake Cortex: `POST /api/baskets/{id}/letter` → short "manager's note"
+- [ ] d. Presage: `POST /api/tilt-check` (mock first) the frontend can call before saving a basket
 
-- [ ] `src/lib/etf` pure math + vitest (inception NAV = C0, win/loss/50-50, rebalance preserves NAV, NO side, validation)
-- [ ] Anonymous `owner_id` cookie, owner-only writes
-- [ ] API the frontend needs: `POST /api/etf/preview` (section 3 stats before creating), `POST /api/etf` (create), `GET /api/etf/[ticker]` (factsheet data: stats, holdings, sectors, events), `GET /api/etf/[ticker]/nav?range=1D|1W|1M|ALL`, `GET /api/etf/[ticker]/live` (polled every 15 s), `POST /api/etf/[ticker]/rebalance`, `GET /api/leaderboard?created_by=ai|human`
-- [ ] NAV computation in the tick job; resolution handling
-- [ ] SQL backtest (time_bucket_gapfill + locf), labelled "Simulated": `POST /api/etf/backtest`
-- [ ] Seed $AIBULL, $SOFTLND, $CHAOS with 30-day simulated history; `GET /api/etf/featured`
+## Step 5 — `GET /api/built-with`
 
-## Phase 3 — AI Fund Architect (API)
+- [ ] JSON proof per sponsor: row counts, last tick, query latencies, attestation links, briefing and letter counts, tilt checks
 
-Done when: thesis → valid ETF proposal in under 30 s.
+## Later / optional
 
-- [ ] Verify Gemini docs (model id, embedding model, 768 dims, structured output)
-- [ ] Embeddings in the `enrich` job + HNSW/diskann index
-- [ ] `GET /api/markets?mode=semantic`
-- [ ] `POST /api/architect` — thesis → claims/queries → candidates → basket JSON, zod validate, retry once, progress steps streamed
-- [ ] Per-owner rate limit on AI endpoints
-
-## Phase 4 — Sponsor APIs (in order, each behind a flag with a mock)
-
-- [ ] 1. ElevenLabs "Morning Bell": `POST /api/etf/[ticker]/briefing`, `GET /api/audio/[id]`
-- [ ] 2. Solana devnet: `POST /api/wallet/link` (signed message), attest on publish / rebalance / daily job, `GET /api/etf/[ticker]/verify`
-- [ ] 3. Snowflake Cortex: sector classification in `enrich`, `GET /api/etf/[ticker]/letter`
-- [ ] 4. Presage: `POST /api/tilt-check` (mock first; report the simplest real path)
-- [ ] Stretch: `scripts/ws-listener.ts`, Token-2022 share certificate
-
-## Phase 5 — Ship (backend side)
-
-- [ ] `GET /api/built-with` (row counts, last ingest, query latency, attestation links, briefing count, tilt checks)
-- [ ] Custom domain on Vercel + DNS records for Lucas
-- [ ] Consistent error shape and CORS on every public endpoint
-- [ ] README backend sections (Mermaid architecture, setup, per-sponsor notes), `DEVPOST.md` backend paragraphs, `docs/DEMO.md` backend notes
+- [ ] Candidates for `/api/stocks` from Tiger + pgvector instead of live search
+- [ ] Custom GoDaddy domain on Vercel + DNS records
+- [ ] README backend sections, `DEVPOST.md` backend paragraphs, `docs/DEMO.md` backend notes
 
 ## Needs from Lucas
 
-- [ ] Phase 4: ElevenLabs key + voice id, Snowflake account URL + PAT, fund the Solana devnet attester, Presage key
-- [ ] Phase 5: register the GoDaddy domain
+- [ ] Step 1: the weights decision
+- [ ] The GitHub Pages site is down (404): someone with access must republish it (frontend owner)
+- [ ] Step 4: ElevenLabs key + voice id, Snowflake account URL + PAT, fund the Solana devnet attester, Presage key
