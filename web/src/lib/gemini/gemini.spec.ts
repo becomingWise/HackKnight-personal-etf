@@ -69,6 +69,8 @@ describe("model chains", () => {
     for (const chain of Object.values(CHAINS)) {
       const retiring = chain.map((m) => "retiring" in MODELS[m]);
       expect(retiring[0]).toBe(false);
+      // The voting chains have no retiring model at all.
+      if (!retiring.includes(true)) continue;
       expect(retiring.indexOf(true)).toBe(retiring.lastIndexOf(false) + 1);
     }
     expect(chainFor("decide", "gemini-3.1-flash-lite")[0]).toBe("gemini-3.1-flash-lite");

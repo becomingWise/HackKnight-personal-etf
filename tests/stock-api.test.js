@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
-import { AgentError } from "../agent/gemini.js";
+import { AgentError, ClarifyError } from "../agent/gemini.js";
 import { createApp } from "../backend/server.js";
 import { createFindStocks } from "../js/stock-api.js";
 
@@ -109,5 +109,32 @@ test("server: POST /api/weights is forwarded unchanged to the live endpoint", as
     const response = await post(`${base}/api/weights`, body);
     assert.deepEqual(await response.json(), upstream);
     assert.deepEqual(forwarded, [{ url: "https://prophetf.vercel.app/api/weights", body: JSON.stringify(body) }]);
+  });
+});
+
+const question = { code: "needs_clarification", message: "We don't cover carmakers yet. Which angle fits?", options: ["Chips inside electric cars", "Oil prices and gas stations", "Car loans and banks"] };
+
+test("adapter: a clarification rejects with an Error that keeps code and options", async () => {
+  const findStocks = createFindStocks({ baseUrl: "https://api.example", fetch: async () => json({ error: question }, 422) });
+  const error = await findStocks({ idea: "car" }).then(() => assert.fail("expected a rejection"), caught => caught);
+  assert.ok(error instanceof Error);
+  assert.equal(error.message, question.message);
+  assert.equal(error.code, "needs_clarification");
+  assert.deepEqual(error.options, question.options);
+
+  // Other failures keep their code and have no options.
+  const down = createFindStocks({ baseUrl: "https://api.example", fetch: async () => json({ error: { code: "gemini_unavailable", message: "No Gemini model is available right now." } }, 503) });
+  const failed = await down({ idea: "AI chips" }).catch(caught => caught);
+  assert.equal(failed.code, "gemini_unavailable");
+  assert.equal("options" in failed, false);
+  const plain = createFindStocks({ baseUrl: "https://api.example", fetch: async () => new Response("oops", { status: 500 }) });
+  assert.equal("code" in (await plain({ idea: "x" }).catch(caught => caught)), false);
+});
+
+test("server: a clarification is 422 needs_clarification with the options", async () => {
+  await withServer({ findStocks: async () => { throw new ClarifyError(question.message, question.options); } }, async base => {
+    const response = await post(`${base}/api/stocks`, { idea: "car" });
+    assert.equal(response.status, 422);
+    assert.deepEqual(await response.json(), { error: question });
   });
 });

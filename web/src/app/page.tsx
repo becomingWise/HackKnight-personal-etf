@@ -68,8 +68,9 @@ export default function Home() {
         </h1>
         <p className="max-w-3xl text-muted">
           This page calls the live API in order: <code>/api/stocks</code> (a Gemini agent picks
-          three stocks for the idea), then <code>/api/weights</code> (the weights are tilted by how
-          Polymarket odds moved).
+          three stocks for the idea), then <code>/api/votes</code> (five AI agents vote on each
+          stock) and <code>/api/weights</code> (the weights are tilted by how Polymarket odds
+          moved).
         </p>
       </section>
 

@@ -24,7 +24,8 @@ Back, Undo, Reset, Export and Refresh use consistent inline SVG icons.
 Four ideas are ported from main `bccfd3b`: clarity-first suggestions, browser-session preference
 memory, observed seven-day odds moves, and versioned preference/evidence-aware caching. This
 is a selective adaptation; main's three-stock selection and odds-based weights are not merged.
-Clarification is opt-in on the shared agent, so its original three-stock API remains compatible.
+The shared agent retains main's clarity-first three-stock API; the experiment supplies its own
+prompt and 7–10-company selection range without changing the public response contract.
 
 - `/`: MyETF Lab chat card, expanding idea input and Send button. Enter submits;
   Shift + Enter inserts a newline. Unclear or uncovered ideas receive one short question

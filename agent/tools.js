@@ -83,7 +83,7 @@ const DECLARATIONS = {
 };
 
 /** The declarations to send to Gemini. Tools that cannot run this turn are left out. */
-export function functionDeclarations({ memory = true, search = true, selection = {}, clarification = false } = {}) {
+export function functionDeclarations({ memory = true, search = true, selection = {}, clarification = true } = {}) {
   const { min = BASKET_SIZE, max = BASKET_SIZE } = selection;
   const check = structuredClone(DECLARATIONS.check_selection);
   if (min !== BASKET_SIZE || max !== BASKET_SIZE) {
@@ -93,7 +93,7 @@ export function functionDeclarations({ memory = true, search = true, selection =
   if (clarification) {
     check.description += ' Only clarity "clear" can produce a basket; otherwise ask the person a question.';
     check.parameters.properties.clarity = { type: "STRING", enum: CLARITIES };
-    check.parameters.required.push("clarity");
+    check.parameters.required = ["clarity", "symbols"];
   }
   return [
     check,
@@ -115,9 +115,9 @@ export async function executeTool(name, args, context) {
   const input = isObject(args) ? args : {};
   switch (name) {
     case "check_selection":
-      if (context.clarification) {
-        if (!CLARITIES.includes(input.clarity)) return { ok: false, errors: ["Judge clarity before selecting stocks."] };
-        if (input.clarity !== "clear") return { ok: false, ask: true, errors: ["Ask one question with 2 or 3 supported ideas. Leave symbols empty."] };
+      if (context.clarification !== false) {
+        if (!CLARITIES.includes(input.clarity)) return { ok: false, errors: [`clarity is required and must be one of: ${CLARITIES.join(", ")}.`] };
+        if (input.clarity !== "clear") return { ok: false, ask: true, errors: [`The idea is "${input.clarity}", so do not pick stocks. Ask the person instead: answer now with that clarity, a question and 2 or 3 options, and no symbols.`] };
       }
       return checkSelection(input.symbols, context.selection);
 

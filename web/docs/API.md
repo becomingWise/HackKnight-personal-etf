@@ -57,31 +57,95 @@ browser tab. Without the header nothing is remembered.
 - `stocks`: exactly 3, unique symbols, always from the 40 tickers the weighting service can tilt
   (`agent/project-notes.json`, taken from `backend/src/polyslice_api/data/universe.json`). Names are the
   list's own, not written by the model.
-- `summary`: at most 12 words.
+- `summary`: at most 12 words from Gemini. When the pick rests on live Polymarket markets, the server
+  appends one sentence with their odds (at most 2 markets), for example
+  `"Your AI chips and Taiwan risk basket Live Polymarket odds: China invades Taiwan 8% (▼2 pts this week)."`
+  That sentence is built by the server from the live figures when the answer is served (also for a
+  cached answer), never written by Gemini. No market, or Polymarket unreachable: no sentence.
 - With `"basket": true` the response also has
   `"basket": { "title", "allocationMethod": "equal", "holdings": [{ "symbol", "name", "weightPct" }] }`
   (33.33 / 33.33 / 33.34, from the controller's `startingWeights`).
 
 ### Error responses
 
-| Status | `error.code`                                                         | When                                                      |
-| ------ | -------------------------------------------------------------------- | --------------------------------------------------------- |
-| 400    | `invalid_request`, `invalid_idea`                                    | Body is not JSON; `idea` missing, empty or over 500 chars |
-| 429    | `rate_limited`                                                       | More than 30 requests a minute or 600 a day from one IP   |
-| 502    | `invalid_selection`, `call_limit`, `gemini_failed`, `upstream_error` | Gemini did not produce a valid basket                     |
-| 503    | `gemini_unavailable`                                                 | Every model is rate limited or over its daily budget      |
-| 504    | `timeout`                                                            | No answer within 25 seconds                               |
+| Status | `error.code`                                                         | When                                                        |
+| ------ | -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 400    | `invalid_request`, `invalid_idea`                                    | Body is not JSON; `idea` missing, empty or over 500 chars   |
+| 429    | `rate_limited`                                                       | More than 30 requests a minute or 600 a day from one IP     |
+| 422    | `needs_clarification`                                                | The idea needs clarifying; `error.options` has 2 or 3 ideas |
+| 502    | `invalid_selection`, `call_limit`, `gemini_failed`, `upstream_error` | Gemini did not produce a valid basket                       |
+| 503    | `gemini_unavailable`                                                 | Every model is rate limited or over its daily budget        |
+| 504    | `timeout`                                                            | No answer within 25 seconds                                 |
 
 A failure is always an error: the service never substitutes demo or fallback companies.
+
+### When the idea needs clarifying — `422 needs_clarification`
+
+The agent may ask instead of answering. The success shape above does not change; a question is this
+error, with the ideas to choose from in `error.options`:
+
+```json
+{
+  "error": {
+    "code": "needs_clarification",
+    "message": "We don't cover carmakers yet. Which car-related theme?",
+    "options": ["Chips inside electric cars", "Oil prices and gas stations", "Car loans and banks"]
+  }
+}
+```
+
+- `message`: the question to show, at most 20 words, in the person's language.
+- `options`: 2 or 3 strings. Each is a complete idea: **send the one the person picks as the next
+  `idea`.** Show them as plain text (they are not HTML).
+- It happens in two ways:
+  1. **Free pre-check, no Gemini call:** text with no letters or digits (`"???"`), one character
+     repeated (`"aaaa"`) or a keyboard run (`"asdf"`, `"qwerty"`). The options are 3 example ideas, one
+     per tracked Polymarket signal, the signals with the biggest 7-day odds move first (fixed examples
+     when the signals cannot be read). Tickers, short ideas (`"AI"`, `"oil"`) and text in other
+     languages are never stopped here.
+  2. **The agent asks (normally 1 Gemini call):** the model first judges the idea (`clarity`:
+     clear, broad, not_covered or unclear, generated before any symbol) and the server enforces it:
+     **only `clear` can become a basket.** Anything else is this question ("We don't cover
+     carmakers yet."). Options that touch none of the covered sectors are dropped; when the model's
+     question or options are unusable, the example ideas of the pre-check are offered instead. For
+     "I don't know", "help me" or a greeting the options are those example ideas (this week's
+     biggest Polymarket moves).
+- Nothing is saved to the session's memory, no web search is made, and the controller should stop
+  (no `/api/weights`, no `/api/votes`). The question is cached for 15 minutes, so the same text again
+  costs nothing. It is not counted as an answer in `/api/savings`.
+- Every cache key starts with the agent's version (`AGENT_VERSION` in `agent/gemini.js`); raising it
+  when the agent's rules change empties the cache for everyone.
+- **Measured 2026-10-10 on Flash-Lite (`pnpm try:clarify`, 41 requests in two runs):** 7 of 7 clear
+  ideas got a basket ("AI chips and Taiwan risk", "TSM", "oil", "banks", "我想投资AI芯片", "crypto",
+  "defense stocks"); 12 of 12 other inputs got a question ("car", "food", "airlines", "money",
+  "asdfgh", "banana dance", "hello", "what's the weather?", "???", "cat", "I don't know", "travel");
+  the first option of each question gave a basket (12 of 12, after "food" and "travel" were re-run
+  with the option rule above).
 
 ### Behaviour
 
 - **Gemini calls per request:** 2 normally (the model calls `check_selection`, then answers), 4 at most,
-  0 for a repeat. Identical (session, idea) pairs are answered from a 15-minute cache.
+  0 for a reused answer.
+- **Gemini thinks again only when the odds move.** An answer that rests on live Polymarket markets is
+  stored with their odds and reused until one of them has moved **3 points or more** (compared with
+  the live odds when serving), for up to 24 hours. An answer that rests on no market, or whose markets
+  cannot be read right now, is reused for 15 minutes. Identical ideas are shared across visitors; only
+  a session with saved preferences gets entries of its own (its preferences shape the answer).
+- **Headers:** `X-Cache: HIT` (reused, no Gemini call) or `MISS` (new Gemini calls), and
+  `X-Odds-Moved`: the largest move of the answer's markets since it was made, in points (`"2.5"`). On
+  a `MISS` it is the move that made the old answer stale. Absent when the answer rests on no market.
+  Every answer is counted for `GET /api/savings` (section 1e).
 - **Models:** `gemini-3.5-flash-lite`, then `gemini-3.1-flash-lite`, counted against the per-model
   budgets shown in `GET /api/health`. A call that takes over 9 seconds moves on to the next model.
 - **Tools:** `check_selection` (exactly 3, unique, allowed), `get_memory`, `remember_preference`, and
   `google_search` (a separate grounded Gemini call; when it has no quota the agent decides without it).
+- **Live Polymarket context (no extra Gemini call):** the handler loads the same live signals as
+  `/api/weights` (`liveSignals`, cached 60 s, waited for at most 3 s) and the agent's prompt gets one
+  line per live signal: id, question, Yes odds, 7-day change and β per ticker. The stocks must fit the
+  idea first; when the idea touches one of these events the agent prefers the fitting tickers with
+  the largest |β| and names the signal ids it used in an internal field. The server drops unknown ids
+  and ids with no β on a picked ticker; what is left feeds the odds sentence. If the signals fail or
+  are missing, the request runs exactly as it did before (the local `backend/server.js` passes none).
 - **Typical time:** 1.5 to 5 seconds; a repeat is instant.
 
 ### Try it
@@ -94,10 +158,303 @@ $r.summary; $r.stocks | Format-Table symbol, name
 ```
 
 From the website: `import { findStocks } from "./stock-api.js"` (it reads `API_BASE_URL` from
-`js/config.js`).
+`js/config.js`). A rejection is an `Error` that keeps the backend's `code`; for a clarification
+`error.code === "needs_clarification"`, `error.message` is the question and `error.options` the ideas.
 
 > Sections 1b and 1c below are the earlier evidence workflow (analyst → gate → decider → checker). It is
 > no longer behind `/api/stocks`; it stays available at `POST /api/analyze` and `POST /api/decide` only.
+
+---
+
+## 1d. AI voting panel — `POST /api/votes` — LIVE
+
+Five AI voters look at the basket `/api/stocks` returned and each votes yes or no on every stock
+(the "parallelization: voting" pattern of Anthropic's "Building effective agents"). Each voter is a
+separate Gemini call with its own system prompt, all five run in parallel, and code counts the votes.
+It does not change `findStocks` or its response; it only comments on a basket.
+
+| Agent (`votes[].agent`) | Point of view                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `Growth investor`       | Upside and demand                                                                |
+| `Value / risk`          | Price, debt, concentration                                                       |
+| `Macro & events`        | The live Polymarket odds and 7-day moves of `/api/weights` (its `evidence` list) |
+| `Skeptic`               | Reasons the stock does NOT fit the idea                                          |
+| `Fit checker`           | Does the company really match what the user asked?                               |
+
+### Request
+
+```json
+{
+  "idea": "AI chips and Taiwan risk",
+  "stocks": [
+    { "symbol": "NVDA", "name": "NVIDIA" },
+    { "symbol": "TSM", "name": "Taiwan Semiconductor" },
+    { "symbol": "AMD", "name": "Advanced Micro Devices" }
+  ]
+}
+```
+
+- `idea`: 1 to 500 characters, the idea the basket was built for.
+- `stocks`: 1 to 5 stocks, exactly as `/api/stocks` returned them. Only the 40 tickers `/api/stocks`
+  can return are accepted; the names shown to the voters come from the server's own list.
+
+### Success response — `200`
+
+```json
+{
+  "stocks": [
+    {
+      "symbol": "NVDA",
+      "name": "NVIDIA",
+      "yes": 4,
+      "no": 1,
+      "votes": [
+        {
+          "agent": "Growth investor",
+          "vote": "yes",
+          "reason": "AI chip demand keeps growing fast."
+        },
+        {
+          "agent": "Value / risk",
+          "vote": "no",
+          "reason": "Rich price leaves little room for error."
+        },
+        {
+          "agent": "Macro & events",
+          "vote": "yes",
+          "reason": "Taiwan invasion odds are low and steady."
+        },
+        { "agent": "Skeptic", "vote": "yes", "reason": "No serious reason it does not fit." },
+        { "agent": "Fit checker", "vote": "yes", "reason": "Designs the leading AI chips." }
+      ]
+    }
+  ],
+  "summary": "2 of 3 stocks backed by a majority",
+  "beatsSpy": {
+    "question": "Will this basket (equal weights) beat SPY over the next week?",
+    "asOf": "2026-10-09",
+    "yes": 3,
+    "no": 2,
+    "majority": "yes",
+    "calls": [
+      {
+        "agent": "Growth investor",
+        "vote": "yes",
+        "probability": 0.58,
+        "reason": "Chip demand and momentum are strong."
+      }
+    ]
+  },
+  "records": [{ "agent": "Growth investor", "n": 80, "correct": 41, "pct": 51.3, "shrunkPct": 51 }]
+}
+```
+
+- `beatsSpy` (added 2026-10-10; the per-stock votes above are unchanged): in the same call each agent
+  also answers one question about the whole basket, from its own point of view: will the
+  equal-weighted basket beat SPY over the next week? `calls` has the five agents in the usual order,
+  each with `vote` (`"yes"`, `"no"`, or `"none"` = no answer), `probability` (0 to 1 that it beats SPY;
+  `null` with no answer) and a `reason` of at most 15 words. The probability decides the vote: above
+  0.5 is yes, below is no. `majority` is `"yes"` or `"no"` with 3 or more of the 5, otherwise `null`.
+  `asOf` is the day of the last close the agents saw (`null` when no prices are loaded).
+- `records`: each agent's track record on that basket question, in the same order: `n` scored past
+  calls, `correct`, `pct` (`null` while `n` is 0) and `shrunkPct`, the share pulled toward 50% by 20
+  imaginary coin-flip calls (`(correct + 10) / (n + 20)`), so a short lucky streak does not dominate.
+  Show `shrunkPct` next to `n`. Details: `GET /api/track-record` (section 1f).
+- What the agents are given: the idea, the three stocks with their 5- and 20-trading-day price changes
+  and SPY's (from the `stock_closes` table, as of `asOf`), the linked Polymarket odds (macro voter
+  only), and one line about themselves: "Your past calls: 41 of 80 right (51%)."
+- Every new panel (not a cached one) is saved as a **live decision** and scored a week later.
+- `stocks`: in the order of the request. `votes` always has the five agents, in the order of the table.
+- `vote`: `"yes"`, `"no"` or `"none"`. `"none"` means that agent gave **no answer** (its call failed or
+  its answer was unusable); `reason` is then `"No answer."`. A vote is never invented, so
+  `yes + no` can be less than 5. Show `"none"` as "no answer".
+- `reason`: at most 15 words.
+- `summary`: a stock is "backed by a majority" with 3 or more yes votes. When agents are missing it
+  ends with e.g. `(1 of 5 agents gave no answer)`.
+- Headers: `X-Cache: HIT | MISS` (and `X-Cache-Age` in seconds on a hit), and `X-Odds-Moved`: how many
+  points the Polymarket odds the panel was given have moved since it voted (absent when no market is
+  linked to the stocks).
+
+### Error responses
+
+| Status | `error.code`        | When                                                                              |
+| ------ | ------------------- | --------------------------------------------------------------------------------- |
+| 400    | `invalid_request`   | Body is not JSON; `idea` or `stocks` missing; duplicate or unknown symbols        |
+| 429    | `rate_limited`      | More than 20 requests a minute or 300 a day from one IP                           |
+| 503    | `ai_budget_used_up` | The shared caps for AI requests are used up; `Retry-After` says when to try again |
+| 503    | `votes_unavailable` | None of the five voters answered                                                  |
+
+### Behaviour
+
+- **Gemini calls per request:** 5 (one per voter), 0 for a repeat. Flash-Lite only: three voters start
+  on `gemini-3.5-flash-lite` and two on `gemini-3.1-flash-lite`, each with the other model as its only
+  backup. Calls are counted against the per-model budgets in `GET /api/health`.
+- **Cache:** per (idea, set of symbols); the order of the stocks does not matter. A panel is stored
+  with the odds of the Polymarket markets linked to its stocks and reused until one of them has moved
+  **3 points or more**, for up to 24 hours. With no linked market, or when the odds cannot be read, it
+  is reused for 30 minutes. Only a complete panel is cached, so a voter that was briefly unavailable
+  gets another chance. Every answer is counted for `GET /api/savings` (section 1e).
+- **Caps:** an uncached panel counts as two requests against the shared caps of the evidence workflow
+  (`ai:minute`, `ai:30min`, `ai:day`, per IP per 30 minutes).
+- **Typical time:** 2 to 4 seconds; each voter has 9 seconds.
+
+### Try it
+
+PowerShell:
+
+```powershell
+$body = '{"idea":"AI chips and Taiwan risk","stocks":[{"symbol":"NVDA","name":"NVIDIA"},{"symbol":"TSM","name":"Taiwan Semiconductor"},{"symbol":"AMD","name":"Advanced Micro Devices"}]}'
+$r = Invoke-RestMethod -Method Post -Uri https://prophetf.vercel.app/api/votes -ContentType "application/json" -Body $body
+$r.summary; $r.stocks | ForEach-Object { "{0}: {1} yes, {2} no" -f $_.symbol, $_.yes, $_.no; $_.votes | Format-Table agent, vote, reason -Wrap }
+```
+
+From the website: `/js/votes-api.js` (same style as `stock-api.js`; reads `API_BASE_URL` from
+`js/config.js`, rejects on any non-2xx status).
+
+```js
+import { getVotes } from "./votes-api.js";
+
+const { stocks, summary } = await getVotes({ idea, stocks: selection.stocks }, { signal });
+// per stock: `${s.yes} of ${s.votes.length} agents say yes`, a yes/no bar, and one line per vote.
+```
+
+Always show the caveat **"AI opinions, not financial advice."** next to the votes.
+
+---
+
+## 1f. `GET /api/track-record` — LIVE
+
+How often each agent of the voting panel, and its majority, was right about the basket question of
+`/api/votes`: **will this basket (equal weights) beat SPY over the next week?** A "yes" is correct if
+the basket's return was higher than SPY's from the decision day's close to the close a week later;
+a "no" is correct if it was not.
+
+```json
+{
+  "generatedAt": "2026-10-10T20:00:00.000Z",
+  "question": "Will this basket (equal weights) beat SPY over the next week?",
+  "lastClose": "2026-10-09",
+  "decisions": 80,
+  "pending": 3,
+  "agents": [
+    {
+      "id": "growth",
+      "agent": "Growth investor",
+      "n": 80,
+      "correct": 41,
+      "pct": 51.3,
+      "range90": [42.5, 60],
+      "brier": 0.262,
+      "days": 8
+    }
+  ],
+  "majority": {
+    "n": 76,
+    "correct": 40,
+    "pct": 52.6,
+    "range90": [43, 62],
+    "brier": 0.255,
+    "days": 8
+  },
+  "baselines": {
+    "alwaysYes": {
+      "n": 80,
+      "correct": 38,
+      "pct": 47.5,
+      "range90": [35, 60],
+      "brier": 0.525,
+      "days": 8
+    },
+    "coinFlip": { "n": 80, "pct": 50, "brier": 0.25 }
+  },
+  "recent": [
+    {
+      "date": "2026-10-02",
+      "source": "replay",
+      "idea": "AI chips and Taiwan risk",
+      "symbols": ["NVDA", "TSM", "ASML"],
+      "yesVotes": 4,
+      "votes": 5,
+      "majority": "yes",
+      "basketPct": 1.84,
+      "spyPct": 1.16,
+      "pnl": 184.2,
+      "correct": true
+    }
+  ]
+}
+```
+
+(The numbers above are an example of the shape, not the real record.)
+
+- `agents`: the five agents in the usual order. `n` = scored calls, `correct`, `pct` = correct / n in
+  percent. **Always show `n` next to a percentage.** `range90` is the 90% range of `pct`, found by
+  resampling whole decision days (Fridays) 2,000 times, because baskets judged in the same week move
+  together; `null` with fewer than 2 days. `brier` is the mean squared error of the agent's
+  probability (0 is perfect, 0.25 is what a coin flip gets, lower is better). `days` = different
+  decision days.
+- `majority`: the same for "3 or more of the 5"; decisions without a majority are not counted. Its
+  Brier score uses the mean of the agents' probabilities.
+- `baselines.alwaysYes`: what saying "yes" every time would have scored; `coinFlip`: 50% and 0.25 by
+  definition.
+- `decisions` / `pending`: scored decisions, and decisions whose week has not passed (or whose closes
+  are not loaded yet). `lastClose`: the newest day in `stock_closes`.
+- `recent`: the last 20 decisions, newest first. `source` is `replay` or `live`; `yesVotes` of `votes`
+  agents expected the basket to beat SPY; `basketPct` and `spyPct` are the week's returns in percent;
+  `pnl` is the paper profit or loss of $10,000 in the basket; `correct` says whether the majority was
+  right. The four outcome fields are `null` while a decision is pending.
+- `503 storage_error` when the database cannot be read.
+
+**Where the record comes from**
+
+- **Replay** (`source: "replay"`, run once with `pnpm track:replay`): the same five agents, system
+  prompts and Flash-Lite models as `/api/votes`, asked on the 8 Fridays from 2026-08-14 to 2026-10-02
+  about 10 baskets (the stock agent's pick for 10 ideas covering all 7 sectors, made once without the
+  live-odds context and without web search). Each agent saw only what was known that Friday: closes
+  up to that day, and the Polymarket odds at that day's close with their 7-day change (Data API v2;
+  a market that was not trading yet is left out). An agent was told its record only from weeks that
+  had already ended. Both models were released before the window and neither could answer a question
+  about it (leak check: SPY's close on 2026-10-02).
+- **Live** (`source: "live"`): every new panel of `/api/votes`, dated by the last close it saw. The
+  same basket on the same day is one decision.
+- **Scoring** is SQL over `stock_closes`, run by the daily job `pnpm track:daily` on Lucas's machine
+  (it refreshes the closes, then scores every decision that is a week old).
+
+```powershell
+$r = Invoke-RestMethod https://prophetf.vercel.app/api/track-record
+$r.agents | Format-Table agent, n, correct, pct, range90, brier
+$r.recent | Format-Table date, idea, yesVotes, basketPct, spyPct, pnl, correct
+```
+
+---
+
+## 1e. `GET /api/savings` — LIVE
+
+What reusing answers saved today. `/api/stocks` and `/api/votes` count every answer they serve: did it
+need new Gemini calls, or was it reused because the odds behind it had not moved 3 points?
+
+```json
+{
+  "day": "2026-10-10",
+  "answers": 42,
+  "newAnswers": 11,
+  "reused": 31,
+  "reusedPct": 73.8,
+  "geminiCalls": 187
+}
+```
+
+- `day`: the current day in Pacific time, which is how Google counts the daily Gemini quota.
+- `answers`: answers served that day by `/api/stocks` and `/api/votes` (errors are not counted).
+  `newAnswers` needed new Gemini calls; `reused` came from the cache; `answers = newAnswers + reused`.
+- `reusedPct`: `reused / answers` in percent, one decimal; `0` when nothing was served yet.
+- `geminiCalls`: every Gemini call the app made that day, all models and endpoints (table
+  `gemini_usage`), so it also includes the manager's note and failed attempts.
+- No request body, no cache. `503 storage_error` when the database cannot be read.
+
+```powershell
+Invoke-RestMethod https://prophetf.vercel.app/api/savings
+```
 
 ---
 

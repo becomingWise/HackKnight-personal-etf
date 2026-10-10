@@ -6,10 +6,30 @@ import { addExplicitPreferences, excludedSymbols, createSessionMemory } from "..
 import { weeklyOddsChange } from "../experiment/evidence.js";
 import { restoreAgentSession } from "../experiment/session.js";
 import { createExperimentServer } from "../experiment/server.mjs";
+import { createFindStocks, createLocalCache } from "../agent/gemini.js";
 
 const symbols = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "MU", "INTC", "MSFT"];
 const answer = data => ({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(data) }] } }] });
 const clear = { clarity: "clear", why: "Matches chips", summary: "AI chip companies", symbols };
+
+test("main and experiment keep separate selection caches, including changed browser preferences", async () => {
+  const cache = createLocalCache(), memory = createSessionMemory();
+  const main = createFindStocks({ cache, memory, callModel: async () => answer({ ...clear, symbols: symbols.slice(0, 3) }) });
+  let calls = 0;
+  const experiment = createSuggestions({ cache, memory, callModel: async () => {
+    calls++;
+    return answer(calls === 1 ? clear : { ...clear, symbols: [...symbols.slice(1), "AAPL"] });
+  } });
+  const input = { idea: "AI chips" }, context = { sessionId: "same-browser" };
+  assert.equal((await main(input, context)).stocks.length, 3);
+  assert.equal((await experiment(input, context)).stocks.length, 8);
+  assert.equal((await experiment(input, context)).stocks.length, 8);
+  assert.equal(calls, 1);
+  await memory.replacePreferences(context.sessionId, ["Exclude NVDA"]);
+  const updated = await experiment(input, context);
+  assert.equal(updated.stocks.some(s => s.symbol === "NVDA"), false);
+  assert.equal(calls, 2, "changed preferences invalidate the experiment's cached answer");
+});
 
 test("ambiguous and unsupported example ideas ask rather than fabricate a basket", () => {
   for (const idea of ["asdf", "???", "hello", "food", "car", "banana dance", "no idea"]) {
