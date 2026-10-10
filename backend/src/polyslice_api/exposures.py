@@ -45,8 +45,8 @@ class Fit:
     symbols: list[str]
 
 
-def abnormal_returns(members: list[dict[str, Any]]) -> pd.DataFrame:
-    """Daily stock − SPY returns with the pre-registered cleaning rules applied."""
+def daily_returns() -> pd.DataFrame:
+    """Daily returns (SPY included) with stale-price runs masked; not yet capped."""
     frame = pd.read_csv(universe.PRICE_CACHE, index_col=0, parse_dates=True)
     frame.index = frame.index.date
     r = frame.pct_change(fill_method=None)
@@ -56,17 +56,32 @@ def abnormal_returns(members: list[dict[str, Any]]) -> pd.DataFrame:
     stale = window_end.copy()
     for k in range(1, STALE_RUN):
         stale |= window_end.shift(-k, fill_value=False)
-    r = r.mask(stale)
-    # Market model: β_mkt from the prior MARKET_WINDOW days only (shifted, so no lookahead).
-    m = r["SPY"]
+    return r.mask(stale)
+
+
+def market_betas(r: pd.DataFrame, market: str = "SPY") -> pd.DataFrame:
+    """β_mkt usable on each date: from the prior MARKET_WINDOW days only (shifted, so no lookahead)."""
+    m = r[market]
     win = dict(window=MARKET_WINDOW, min_periods=120)
     cov = r.mul(m, axis=0).rolling(**win).mean() - r.rolling(**win).mean().mul(m.rolling(**win).mean(), axis=0)
-    beta_mkt = cov.div(m.rolling(**win).var(ddof=0), axis=0).shift(1)
-    ar = (r - beta_mkt.mul(m, axis=0)).drop(columns="SPY")
-    # Ignore each stock before it joined the index (partial survivorship fix).
-    for m in members:
-        if m["added"] and m["yf"] in ar.columns:
-            ar.loc[ar.index < date.fromisoformat(m["added"]), m["yf"]] = np.nan
+    return cov.div(m.rolling(**win).var(ddof=0), axis=0).shift(1)
+
+
+def before_join(index: pd.Index, columns: pd.Index, members: list[dict[str, Any]], day=lambda x: x) -> pd.DataFrame:
+    """True where a stock hadn't yet joined the index (partial survivorship fix)."""
+    days = np.array([day(x) for x in index])
+    mask = pd.DataFrame(False, index=index, columns=columns)
+    for mem in members:
+        if mem["added"] and mem["yf"] in columns:
+            mask[mem["yf"]] = days < date.fromisoformat(mem["added"])
+    return mask
+
+
+def abnormal_returns(members: list[dict[str, Any]]) -> pd.DataFrame:
+    """Daily stock − β_mkt × SPY returns with the pre-registered cleaning rules applied."""
+    r = daily_returns()
+    ar = (r - market_betas(r).mul(r["SPY"], axis=0)).drop(columns="SPY")
+    ar = ar.mask(before_join(ar.index, ar.columns, members))
     return ar.clip(-RETURN_CAP, RETURN_CAP)
 
 

@@ -73,3 +73,11 @@ Primary metric: max drawdown during spike windows (spike day through +10 days) v
 5. *Pooling estimator.* The first method-of-moments version left Taiwan βs at the ±1.5 cap with t ≈ 0 (heavy-tailed noise inflated the between-industry variance). τ² and ω² now use the DerSimonian–Laird estimator, the standard method-of-moments estimator for random effects.
 6. *Return cap also applies to exposure estimation,* so estimates and tests use the same cleaned data.
 
+
+**2026-10-10, implementing H1, before H1 was run on any real data.** Clarifications where the plan left details open; none changes a threshold:
+
+7. *Hourly grid.* Odds are sampled at HH:30 UTC (last print at or before), the boundaries of US stocks' hourly bars, so each hourly odds change spans exactly one stock bar. Hourly series chain contracts exactly like the daily ones.
+8. *"Occurring 14:30–20:00 UTC on a US trading day."* The whole hour of the change lies in that window (it ends 15:30–19:30 UTC) and SPY has a bar for that hour, which drops holidays and half-day afternoons. z uses the prior 168 hourly changes of the chained series (all hours, as the daily test uses all days), σ floored at 0.5 pt as in the daily test (this floor can't change a decision once |Δp| ≥ 3 pts). No contract-age filter, as written. Cooldown counts only between spikes.
+9. *Hour axis.* −6h…+6h are trading bars relative to bar 0 (the spike's hour), so windows crossing the close include the overnight move in the next session's first bar. Bar returns are close-to-close; abnormal return uses that day's walk-forward β_mkt (amendment 4), uncapped (amendment 2), with the index-join filter (amendment 1). Cumulative abnormal return is the sum over bars.
+10. *Most-exposed stocks.* The 20 largest |β| from the pooled walk-forward model as of the spike's date (stocks with |β| < 0.05 are excluded first, the model's default); weights are |β|.
+11. *Inference.* Spikes on the same trading day are averaged into one score (date clustering), t-test across dates. Placebo: each spike keeps its series and direction and moves to a random in-session hour of the same series in the same period; 500 runs, seed 7, two-sided. Development period by default; the holdout run (`--holdout`) happens once, at the end, with H2–H3.

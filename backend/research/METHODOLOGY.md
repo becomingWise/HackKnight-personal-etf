@@ -11,9 +11,9 @@ When a prediction market's odds move sharply, do the stocks exposed to that even
 | Source | What | Code |
 | --- | --- | --- |
 | Polymarket Gamma API | Market discovery: live and resolved events, questions, volumes | `polymarket.py`, `history.py` |
-| Polymarket CLOB API | Price history per outcome token: daily (`interval=max`) and hourly (≤14-day windows) | `history.py` |
+| Polymarket CLOB API | Price history per outcome token: daily (`interval=max`) and hourly (≤14-day windows); sampled at 20:00 UTC (daily) or HH:30 UTC (hourly, H1) | `history.py` |
 | Wikipedia, S&P 500 list | 503 constituents with GICS sector, sub-industry and index-join date (as of 2026-10-09) | `universe.py` |
-| Yahoo Finance (`yfinance`) | Daily adjusted closes, Jan 2023 → today, for 513 instruments + SPY | `universe.py`, `prices.py` |
+| Yahoo Finance (`yfinance`) | Daily adjusted closes, Jan 2023 → today, for 513 instruments + SPY; hourly bars for the last ~730 days (H1) | `universe.py`, `prices.py`, `intraday.py` |
 
 **Long odds series.** Live markets only go back months, so expiring contracts are chained like rolled futures: each day uses the nearest contract with enough time left, and changes are only measured within a contract (a roll is never a move). Five series: Fed cut at the next meeting (29 contracts, from Mar 2023), China invades Taiwan (9, from Oct 2023), Russia–Ukraine ceasefire (42, from Sep 2024), US recession (3, from Jan 2025), Trump wins 2024 (1).
 
@@ -41,11 +41,14 @@ Walk-forward means a β used on date d is fit only on data before the first of d
 
 - **Event study** (`eventstudy.py`): for each spike, exposure-weighted abnormal return in windows around it, signed so positive = moved as predicted. One score per date (same-day events can't double count), t-test across dates, binomial hit rate, and a placebo that moves the same spikes to 500 random dates.
 - **Backtest** (`backtest.py`): daily replay of tilted vs. static weights using only odds known at each close, 5 bp per unit turnover, stats per half-period. Continuous and spike-triggered modes.
-- **Pre-registered H1–H3** (intraday lead-lag, cross-sectional dose-response, live mechanism on the holdout): see the plan.
+- **H1, intraday lead-lag** (`intraday.py`): hourly spikes in hourly chained odds (HH:30 UTC grid, aligned with stocks' hourly bars); for each, the |β|-weighted, signed abnormal return of the 20 most-exposed stocks bar by bar from −6 to +6. H1a sums bars +1..+6, H1b bars −6..−1; one score per date, t-test, 500-run placebo. Hourly stock bars come from Yahoo (last ~730 days, so Oct 2024 on). Details in amendments 7–11. `uv run python -m polyslice_api.intraday`.
+- **Pre-registered H2–H3** (cross-sectional dose-response, live mechanism on the holdout): see the plan.
 
 ## Results log
 
 Newest first. "Tests run" counts distinct statistical tests behind each claim, for multiple-testing context.
+
+**2026-10-10: H1 implemented, not yet run.** Code and tests are in place (`intraday.py`, `tests/test_intraday.py`). An end-to-end run on synthetic data recovered a planted +1..+3-bar effect and found no lead where none was planted. No real results yet: the session that built it could not reach Polymarket or Yahoo. Next: build the hourly caches and run on the development period.
 
 **2026-10-09: Universe-wide exposures (development data, fit as of 2026-04-01).** Stocks with raw |t| > 2 vs. ~22 expected by chance among 489:
 - Fed cut odds: 44; 6 FDR discoveries: homebuilders (DHI, LEN), IEF, SHY, ALGN, RMD. Economically sensible (rate-sensitive).
@@ -77,4 +80,5 @@ Newest first. "Tests run" counts distinct statistical tests behind each claim, f
 - Survivorship bias only partly corrected (no removed stocks).
 - Earlier analyses saw data through 2026-10-09; the holdout is clean only for H1–H3.
 - Prediction-market odds are event probabilities, not return forecasts.
+- Intraday bars aren't dividend-adjusted, so an ex-dividend overnight drop lands in one H1 bar. This adds noise, not bias, because the score's sign follows the odds move.
 - Chained series mix contract horizons; the Ukraine series mixes "ceasefire" and "ceasefire agreement" questions.

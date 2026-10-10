@@ -7,6 +7,7 @@ previous day *within the same contract*. Changes, not levels, are what chain
 cleanly: a roll from a 2025 contract to a 2026 one is not a move in the odds.
 
 Run `uv run python -m polyslice_api.history` to (re)build the on-disk cache.
+`load_hourly` builds the same chain at hourly resolution (HH:30 UTC) for H1.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from .polymarket import CLOB, GAMMA, HEADERS
 
 SERIES = json.loads(resources.files(__package__).joinpath("data/series.json").read_text())["series"]
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "series"
+HOURLY_CACHE_DIR = CACHE_DIR.parent / "series_hourly"
 CACHE_TTL = 6 * 3600
 DAY = 86_400
 CHUNK = 14 * DAY  # longest window the CLOB serves at hourly fidelity
@@ -47,19 +49,18 @@ async def _events(client: httpx.AsyncClient, query: str) -> list[dict[str, Any]]
         page += 1
 
 
-async def _daily_prices(client: httpx.AsyncClient, token: str, sem: asyncio.Semaphore) -> dict[date, float]:
-    """One price per calendar day: the last hourly print at or before the US close (20:00 UTC).
+async def _prints(client: httpx.AsyncClient, token: str, sem: asyncio.Semaphore) -> list[tuple[int, float]]:
+    """Every hourly print for a token, sorted by time.
 
-    Sampling at the close lines each day's odds change up with that day's stock
-    close-to-close return. The CLOB only serves hourly data in short windows, so
-    first find the token's lifespan from the coarse history, then page through it.
+    The CLOB only serves hourly data in short windows, so first find the token's
+    lifespan from the coarse history, then page through it.
     """
     async with sem:
         r = await client.get(f"{CLOB}/prices-history", params={"market": token, "interval": "max", "fidelity": 1440})
     r.raise_for_status()
     coarse = r.json().get("history") or []
     if not coarse:
-        return {}
+        return []
     first, last = min(h["t"] for h in coarse) - DAY, max(h["t"] for h in coarse) + DAY
 
     async def chunk(start: int) -> list[dict[str, float]]:
@@ -76,25 +77,49 @@ async def _daily_prices(client: httpx.AsyncClient, token: str, sem: asyncio.Sema
         return []
 
     pages = await asyncio.gather(*(chunk(t) for t in range(first, last, CHUNK)))
-    prints = sorted({h["t"]: h["p"] for page in pages for h in page}.items())
-    if not prints:
-        return {}
+    return sorted({h["t"]: float(h["p"]) for page in pages for h in page}.items())
 
-    out: dict[date, float] = {}
-    day = datetime.fromtimestamp(prints[0][0], timezone.utc).date()
-    end_day = datetime.fromtimestamp(prints[-1][0], timezone.utc).date()
+
+def _sample(prints: list[tuple[int, float]], cutoffs: list[datetime]) -> dict[datetime, float]:
+    """The last print at or before each cutoff, skipping cutoffs before the first print."""
     times = [t for t, _ in prints]
-    while day <= end_day:
-        cutoff = datetime.combine(day, CLOSE_UTC, tzinfo=timezone.utc).timestamp()
-        i = bisect.bisect_right(times, cutoff)
+    out = {}
+    for cutoff in cutoffs:
+        i = bisect.bisect_right(times, cutoff.timestamp())
         if i:
-            out[day] = float(prints[i - 1][1])
-        day += timedelta(days=1)
+            out[cutoff] = prints[i - 1][1]
     return out
 
 
-async def contracts(spec: dict[str, Any], client: httpx.AsyncClient) -> list[dict[str, Any]]:
-    """Every event matching the spec, with its matching markets' daily prices summed."""
+async def _daily_prices(client: httpx.AsyncClient, token: str, sem: asyncio.Semaphore) -> dict[date, float]:
+    """One price per calendar day: the last hourly print at or before the US close (20:00 UTC).
+
+    Sampling at the close lines each day's odds change up with that day's stock
+    close-to-close return.
+    """
+    prints = await _prints(client, token, sem)
+    if not prints:
+        return {}
+    day = datetime.fromtimestamp(prints[0][0], timezone.utc).date()
+    end_day = datetime.fromtimestamp(prints[-1][0], timezone.utc).date()
+    cutoffs = [datetime.combine(day + timedelta(days=k), CLOSE_UTC, tzinfo=timezone.utc)
+               for k in range((end_day - day).days + 1)]
+    return {c.date(): p for c, p in _sample(prints, cutoffs).items()}
+
+
+async def _hourly_prices(client: httpx.AsyncClient, token: str, sem: asyncio.Semaphore) -> dict[datetime, float]:
+    """One price per hour at HH:30 UTC, the boundaries of US stocks' hourly bars (9:30 ET open)."""
+    prints = await _prints(client, token, sem)
+    if not prints:
+        return {}
+    start = datetime.fromtimestamp(prints[0][0], timezone.utc).replace(minute=30, second=0, microsecond=0)
+    end = datetime.fromtimestamp(prints[-1][0], timezone.utc)
+    cutoffs = [start + timedelta(hours=k) for k in range(int((end - start).total_seconds() // 3600) + 1)]
+    return _sample(prints, cutoffs)
+
+
+async def contracts(spec: dict[str, Any], client: httpx.AsyncClient, sampler=_daily_prices) -> list[dict[str, Any]]:
+    """Every event matching the spec, with its matching markets' prices summed (daily unless `sampler` says otherwise)."""
     title_re = re.compile(spec["event_title"])
     needle = spec["markets"].lower()
     found: dict[str, dict[str, Any]] = {}
@@ -116,7 +141,7 @@ async def contracts(spec: dict[str, Any], client: httpx.AsyncClient) -> list[dic
     sem = asyncio.Semaphore(12)
     out = []
     for name, slug, end, markets in groups:
-        legs = await asyncio.gather(*(_daily_prices(client, json.loads(m["clobTokenIds"])[0], sem) for m in markets))
+        legs = await asyncio.gather(*(sampler(client, json.loads(m["clobTokenIds"])[0], sem) for m in markets))
         days = set().union(*legs)
         # Only days where every leg has a price, so the sum isn't missing a piece.
         prices = {d: min(1.0, sum(leg[d] for leg in legs)) for d in days if all(d in leg for leg in legs)}
@@ -162,6 +187,30 @@ def chain(contract_list: list[dict[str, Any]], min_days_to_expiry: int, until: d
     return rows
 
 
+def chain_hourly(contract_list: list[dict[str, Any]], min_days_to_expiry: int) -> list[dict[str, Any]]:
+    """Hourly rows {t, p, dp, contract}, chained like `chain`; prices are keyed by HH:30 UTC datetimes."""
+    if not contract_list:
+        return []
+    t = min(min(c["prices"]) for c in contract_list)
+    end = max(max(c["prices"]) for c in contract_list)
+    rows, prev = [], None
+    while t <= end:
+        active = next(
+            (c for c in contract_list
+             if (c["end"] - t.date()).days >= min_days_to_expiry and t in c["prices"]),
+            None,
+        )
+        if active is not None:
+            p = active["prices"][t]
+            same = prev is not None and prev["contract"] == active["event"]
+            rows.append({"t": t.isoformat(), "p": p, "dp": p - prev["p"] if same else None, "contract": active["event"]})
+            prev = rows[-1]
+        else:
+            prev = None
+        t += timedelta(hours=1)
+    return rows
+
+
 async def build(spec: dict[str, Any]) -> dict[str, Any]:
     async with httpx.AsyncClient(headers=HEADERS, timeout=30.0) as client:
         cs = await contracts(spec, client)
@@ -195,6 +244,40 @@ async def load(series_id: str, refresh: bool = False) -> dict[str, Any]:
 
 async def load_all(refresh: bool = False) -> list[dict[str, Any]]:
     return list(await asyncio.gather(*(load(s["id"], refresh) for s in SERIES)))
+
+
+async def build_hourly(spec: dict[str, Any]) -> dict[str, Any]:
+    async with httpx.AsyncClient(headers=HEADERS, timeout=30.0) as client:
+        cs = await contracts(spec, client, sampler=_hourly_prices)
+    return {
+        "id": spec["id"],
+        "label": spec["label"],
+        "built_at": time.time(),
+        "contracts": [
+            {"event": c["event"], "slug": c["slug"], "end": c["end"].isoformat(), "volume": c["volume"],
+             "first": min(c["prices"]).isoformat(), "hours": len(c["prices"])}
+            for c in cs
+        ],
+        "rows": chain_hourly(cs, spec["min_days_to_expiry"]),
+    }
+
+
+async def load_hourly(series_id: str, refresh: bool = False) -> dict[str, Any]:
+    """Hourly chained series, cached separately from the daily one (`.cache/series_hourly`)."""
+    spec = next(s for s in SERIES if s["id"] == series_id)
+    path = HOURLY_CACHE_DIR / f"{series_id}.json"
+    if not refresh and path.exists():
+        cached = json.loads(path.read_text())
+        if time.time() - cached["built_at"] < CACHE_TTL:
+            return cached
+    data = await build_hourly(spec)
+    HOURLY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
+    return data
+
+
+async def load_all_hourly(refresh: bool = False) -> list[dict[str, Any]]:
+    return [await load_hourly(s["id"], refresh) for s in SERIES]
 
 
 def as_history(series: dict[str, Any]) -> list[dict[str, float]]:
