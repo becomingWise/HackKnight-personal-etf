@@ -1,7 +1,10 @@
-# ProphETF plan
+# ProphETF plan (backend / API only)
 
-Checklist of the phases in section 8 of the brief (`/CLAUDE.md`). Tick items as they are finished.
-At the end of every phase: run tests, push (Vercel deploys), update CLAUDE.md + this file, 5-line summary.
+Team split since 2026-10-09: Lucas owns the backend (database, Polymarket ingestion, jobs, ETF math, API
+routes under `src/app/api`). A teammate owns the frontend. No UI pages are built or redesigned here.
+Every endpoint goes into `docs/API.md` with request and response examples.
+
+At the end of every phase: run tests, deploy, update `/CLAUDE.md` + this file + `docs/API.md`, 5-line summary.
 
 ## Section 0 — First actions
 
@@ -12,80 +15,79 @@ At the end of every phase: run tests, push (Vercel deploys), update CLAUDE.md + 
 
 ## Phase 0 — Scaffold
 
-Done when: the Vercel URL shows health OK.
-
 - [x] Next.js app in `/web` (Next 16, App Router, TypeScript, Tailwind 4, pnpm)
-- [x] Lint + format (eslint, prettier), typecheck, vitest
-- [x] Env loading validated with zod (`src/lib/env.ts`) and sponsor flags with mock fallback (`src/lib/flags.ts`)
+- [x] Lint + format, typecheck, vitest
+- [x] Env validation (`src/lib/env.ts`) and sponsor flags with mock fallback (`src/lib/flags.ts`)
 - [x] DB client singleton, max 3 connections (`src/lib/db/client.ts`)
 - [x] Migration runner (`pnpm db:migrate`, `pnpm db:status`) + `0001_extensions.sql`
-- [x] `/api/health` (DB + every flag)
-- [x] Layout with the required footer on every page
-- [ ] First Vercel deploy — **user: import the repo into Vercel** (see below)
-- [ ] Vercel URL shows health OK
+- [x] `GET /api/health`
+- [ ] First Vercel deploy, health OK on the Vercel URL
+
+## Priority 1 — findStocks (before anything else)
+
+- [x] Read `lucas-branch`, find every findStocks call, write the contract to `docs/API.md`
+- [ ] **Blocked:** answers to the open questions in `docs/API.md` section 1
+- [ ] **Blocked:** OK on how to combine `lucas-branch` and `prophetf-app`
+- [ ] Route at the agreed path: zod input, candidates, Gemini (`gemini-3.5-flash`, structured output), zod output, drop unknown IDs, retry once
+- [ ] Fallback when Gemini fails or takes > ~20 s
+- [ ] CORS for `https://becomingwise.github.io`, `localhost:8000`, `127.0.0.1:8000`, `localhost:3000` + `OPTIONS`
+- [ ] Per-IP rate limit
+- [ ] Contract test against the shape in `docs/API.md` with a mocked Gemini
+- [ ] `npx vercel --prod` from `/web`; hand over live URL, `Invoke-RestMethod` command, note for the teammate
 
 ## Phase 1 — Data core
 
-Done when: ≥ 500 markets, prices landing every minute, `/markets` loads fast.
+Done when: ≥ 500 markets in Tiger and prices landing every minute.
 
 - [ ] Verify Polymarket docs (SDK `@polymarket/client`, Gamma keyset, CLOB midpoints/last-trades, Data API v2 history, v1/v2 IDs)
 - [ ] Schema migration: markets, market_embeddings, price_ticks hypertable + columnstore policy, price_1h cagg + refresh policy, etfs, etf_holdings, etf_events, etf_nav hypertable + etf_nav_1h cagg, briefings, tilt_checks
 - [ ] `src/lib/polymarket` wrapper with zod validation, batching, 429 backoff
-- [ ] `/api/jobs/sync-markets` (top ~1,500 by volume/liquidity, v1/v2 IDs, resolution status)
-- [ ] `/api/jobs/tick` (poll-prices for held + top 200; compute-nav stub)
+- [ ] `POST /api/jobs/sync-markets` (top ~1,500 by volume/liquidity, v1/v2 IDs, resolution status)
+- [ ] `POST /api/jobs/tick` (poll-prices for held + top 200; compute-nav)
 - [ ] `CRON_SECRET` auth on jobs; `pnpm jobs:loop`
 - [ ] Backfill 30 days from Data API v2
-- [ ] `/markets` with keyword search, filters, YES price and sparklines
-- [ ] shadcn/ui + lightweight-charts set up
-- [ ] cron-job.org URLs and schedules handed to the user
+- [ ] API the frontend needs: `GET /api/markets` (keyword search, filters: sector, tag, ends-by, min liquidity; YES price + sparkline points), `GET /api/markets/[id]`
+- [ ] cron-job.org URLs and schedules handed to Lucas
 
 ## Phase 2 — ETF engine
 
-Done when: I can create an ETF and watch its NAV move on the deployed site.
+Done when: an ETF can be created through the API and its NAV moves.
 
 - [ ] `src/lib/etf` pure math + vitest (inception NAV = C0, win/loss/50-50, rebalance preserves NAV, NO side, validation)
-- [ ] Anonymous `owner_id` cookie, owner-only edits
-- [ ] Manual builder at `/build` with preview stats (and the what-if slider idea from MyETF)
-- [ ] Factsheet `/etf/[ticker]`: stats, NAV chart, holdings table, sector donut, event timeline, Rebalance
-- [ ] `/api/etf/[ticker]/live` polled every 15 s
+- [ ] Anonymous `owner_id` cookie, owner-only writes
+- [ ] API the frontend needs: `POST /api/etf/preview` (section 3 stats before creating), `POST /api/etf` (create), `GET /api/etf/[ticker]` (factsheet data: stats, holdings, sectors, events), `GET /api/etf/[ticker]/nav?range=1D|1W|1M|ALL`, `GET /api/etf/[ticker]/live` (polled every 15 s), `POST /api/etf/[ticker]/rebalance`, `GET /api/leaderboard?created_by=ai|human`
 - [ ] NAV computation in the tick job; resolution handling
-- [ ] SQL backtest (time_bucket_gapfill + locf), labelled "Simulated"
-- [ ] `/leaderboard` (AI-built vs hand-built filter)
-- [ ] Seed $AIBULL, $SOFTLND, $CHAOS with 30-day simulated history
-- [ ] Landing page with three featured ETFs and sparklines
+- [ ] SQL backtest (time_bucket_gapfill + locf), labelled "Simulated": `POST /api/etf/backtest`
+- [ ] Seed $AIBULL, $SOFTLND, $CHAOS with 30-day simulated history; `GET /api/etf/featured`
 
-## Phase 3 — AI Fund Architect
+## Phase 3 — AI Fund Architect (API)
 
-Done when: thesis → valid ETF in under 30 s.
+Done when: thesis → valid ETF proposal in under 30 s.
 
 - [ ] Verify Gemini docs (model id, embedding model, 768 dims, structured output)
-- [ ] Embeddings job (`enrich`) + HNSW/diskann index
-- [ ] Semantic search on `/markets`
-- [ ] Pipeline: thesis → claims/queries → candidates → basket JSON, zod validate, retry once
-- [ ] Streamed progress steps, editable preview, backtest toggle
+- [ ] Embeddings in the `enrich` job + HNSW/diskann index
+- [ ] `GET /api/markets?mode=semantic`
+- [ ] `POST /api/architect` — thesis → claims/queries → candidates → basket JSON, zod validate, retry once, progress steps streamed
 - [ ] Per-owner rate limit on AI endpoints
 
-## Phase 4 — Light touches (in order, each behind a flag with a mock)
+## Phase 4 — Sponsor APIs (in order, each behind a flag with a mock)
 
-- [ ] 1. ElevenLabs "Morning Bell" (script by Gemini, MP3 in `briefings`, `/api/audio/[id]`)
-- [ ] 2. Solana devnet attestations (memo tx, Phantom sign-in, Verify button, explorer links)
-- [ ] 3. Snowflake Cortex "Sector desk" (sector classification, daily fund letter)
-- [ ] 4. Presage "Tilt check" (mock first; report simplest real path)
+- [ ] 1. ElevenLabs "Morning Bell": `POST /api/etf/[ticker]/briefing`, `GET /api/audio/[id]`
+- [ ] 2. Solana devnet: `POST /api/wallet/link` (signed message), attest on publish / rebalance / daily job, `GET /api/etf/[ticker]/verify`
+- [ ] 3. Snowflake Cortex: sector classification in `enrich`, `GET /api/etf/[ticker]/letter`
+- [ ] 4. Presage: `POST /api/tilt-check` (mock first; report the simplest real path)
 - [ ] Stretch: `scripts/ws-listener.ts`, Token-2022 share certificate
 
-## Phase 5 — Ship
+## Phase 5 — Ship (backend side)
 
-- [ ] 5. GoDaddy domain on Vercel + DNS records for the user
-- [ ] Loading / empty / error states, mobile layout
-- [ ] `/built-with` live proof per sponsor
-- [ ] README (Mermaid architecture, setup, per-sponsor notes)
-- [ ] `DEVPOST.md` draft
-- [ ] `docs/DEMO.md` 2-minute script
+- [ ] `GET /api/built-with` (row counts, last ingest, query latency, attestation links, briefing count, tilt checks)
+- [ ] Custom domain on Vercel + DNS records for Lucas
+- [ ] Consistent error shape and CORS on every public endpoint
+- [ ] README backend sections (Mermaid architecture, setup, per-sponsor notes), `DEVPOST.md` backend paragraphs, `docs/DEMO.md` backend notes
 
-## Needs from the user
+## Needs from Lucas
 
-- [ ] **Now:** import the GitHub repo into Vercel (Root Directory `web`, branch `prophetf-app`) and add env vars — see the Phase 0 summary.
-- [ ] Phase 1: nothing new (a `CRON_SECRET` is generated locally; copy it into Vercel and cron-job.org).
-- [ ] Phase 3: `GEMINI_API_KEY` — already in `.env.local`; add it to Vercel too.
-- [ ] Phase 4: ElevenLabs key + voice id, Snowflake account URL + PAT, fund the Solana devnet attester, Presage key (if a real path is chosen).
-- [ ] Phase 5: register the GoDaddy domain.
+- [ ] Answers to the findStocks questions (`docs/API.md` section 1) and the merge direction
+- [ ] Vercel: confirm the project is linked (a `web/.vercel` folder appeared) and env vars are set
+- [ ] Phase 4: ElevenLabs key + voice id, Snowflake account URL + PAT, fund the Solana devnet attester, Presage key
+- [ ] Phase 5: register the GoDaddy domain

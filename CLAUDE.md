@@ -9,7 +9,8 @@
 
 _Updated: 2026-10-09 (session 1)_
 
-- **Current phase:** Phase 0 (Scaffold) built and verified locally (build, lint, typecheck, tests, `/api/health` 200). Blocked only on the first Vercel deploy (user imports the repo). Next: Phase 1 (Data core), starting with verifying the Polymarket docs.
+- **Current phase:** Phase 0 built and verified locally. **Now: findStocks, STOPPED waiting for Lucas** on (a) the open questions in `web/docs/API.md` section 1 — chiefly that the frontend contract returns stocks `{symbol,name,reason}` while Lucas described Polymarket markets — and (b) the OK to merge `origin/lucas-branch` into `prophetf-app` (dry run is conflict-free). No findStocks code written yet.
+- **Branches:** `origin/lucas-branch` has the same tree as `origin/main` (`cd8f130`); `prophetf-app` adds one commit (`d1f6e46`, only `CLAUDE.md` + `web/`). `origin/dev` already contains `prophetf-app` via PR #4.
 - **Commands (run in `web/`):** `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm format`, `pnpm db:migrate`, `pnpm db:status`.
 - **Env:** `web/.env.local` has DATABASE_URL, GEMINI_API_KEY (user-provided), CRON_SECRET (generated locally), APP_BASE_URL and all FEATURE_* flags false. Other sponsor keys are still missing.
 - **Shell note:** multi-file bash heredocs fail in this harness on Windows; create files with the Write tool.
@@ -17,6 +18,16 @@ _Updated: 2026-10-09 (session 1)_
 - **Tiger Cloud service:** `prophetf`, id `v5idwzv5iv`, us-east-1, free shared plan, DEV. `DATABASE_URL` is in `web/.env.local`.
 - **Vercel:** not imported yet (user action).
 - **Waiting on the user for:** see "Needs from the user" at the bottom of `web/docs/PLAN.md`.
+
+## Team split (since 2026-10-09, overrides the brief where they conflict)
+
+- **Lucas (this session's user) owns the BACKEND only:** database, Polymarket ingestion, jobs, ETF math, and API routes under `web/src/app/api`.
+- **A teammate owns the FRONTEND.** Do not build or redesign UI pages. Touch frontend code only when an API change forces a tiny fix, and tell Lucas first.
+- Page work in the brief (sections 2 and 8) becomes "API the frontend needs". Every endpoint is documented in `web/docs/API.md` with request/response examples.
+- **Top priority: `findStocks`** (contract in `web/docs/API.md` section 1), then the backend phases in `web/docs/PLAN.md`.
+- Other teammates' work on `origin/main` / `origin/lucas-branch`: a chat-first JS framework (`js/controller.js`, `js/services.js`, `docs/team-contracts.md`) with two ports, `findStocks` (ours) and `adjustWeights` (Polymarket teammate, Python FastAPI in `/backend`, `POST /api/weights`).
+- Frontend origins for CORS: `https://becomingwise.github.io`, `http://localhost:8000`, `http://127.0.0.1:8000`, `http://localhost:3000`, `http://127.0.0.1:3000`.
+- Never merge, rebase or delete branches without Lucas's OK. Never push to `main`.
 
 ## Decisions
 
