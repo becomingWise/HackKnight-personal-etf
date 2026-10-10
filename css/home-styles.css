@@ -30,43 +30,6 @@ html, body {
  	text-align: center;
  }
 
-.chat-prompt {
-	background: #007bff;
-	text-align: center;
-}
-
- .chat-messages {
- 	flex: 1;
- 	padding: 16px;
- 	overflow-y: auto;
- 	display: flex;
- 	flex-direction: column;
- 	gap: 12px;
- }
-
- .message {
- 	max-width: 75%;
- 	padding: 10px 14px;
- 	border-radius: 12px;
- 	font-size: 14px;
- 	line-height: 1.4;
- }
-
- .message.user {
- 	background: #007bff;
- 	color: white;
- 	align-self: flex-end;
- 	border-bottom-right-radius: 2px;
- }
-
- .message.bot {
- 	background: #e9ecef;
- 	color: #333;
- 	align-self: flex-start;
- 	border-bottom-left-radius: 2px;
-	width: 100%;
- }
-
  .chat-input-area {
  	display: flex;
  	padding: 12px;
@@ -102,7 +65,6 @@ html, body {
  .chat-input-area button:hover {
  	background: #0056b3;
  }
-
 
 
 .edge-gradient {
