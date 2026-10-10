@@ -1,0 +1,60 @@
+# Runs every area's tests on each PR and on pushes to main.
+# The job names are what branch protection lists as required checks; keep them stable.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  website:
+    name: website (root npm test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm test
+
+  web:
+    name: web (vitest, lint, typecheck, agent copies)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm lint
+      - run: pnpm typecheck
+      # web/src/lib/agent-core/ must match ../agent: after editing agent/, run `pnpm sync:agent` and commit both.
+      - name: agent copies in sync
+        run: |
+          pnpm sync:agent
+          git diff --exit-code -- src/lib/agent-core || (echo "::error::web/src/lib/agent-core is out of date. Run 'pnpm sync:agent' in web/ and commit." && exit 1)
+
+  backend:
+    name: backend (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv run pytest -q

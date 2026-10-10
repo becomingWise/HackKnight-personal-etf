@@ -124,7 +124,8 @@ def statistics(rows: list[dict[str, Any]]) -> dict[str, float]:
     }
 
 
-def summarize(rows: list[dict[str, Any]], placebo: list[list[dict[str, Any]]] | None = None) -> dict[str, Any]:
+def summarize(rows: list[dict[str, Any]], placebo: list[list[dict[str, Any]]] | None = None,
+              calendar: list[date] | None = None) -> dict[str, Any]:
     stats = statistics(rows)
     high = [r["slope"] for r in rows if r.get("volume") == "high"]
     low = [r["slope"] for r in rows if r.get("volume") == "low"]
@@ -147,6 +148,15 @@ def summarize(rows: list[dict[str, Any]], placebo: list[list[dict[str, Any]]] | 
             null = [x for x in null if not math.isnan(x)]
             if null and not math.isnan(stats[name]):
                 row["placebo_p"] = (1 + sum(1 for x in null if abs(x) >= abs(stats[name]))) / (1 + len(null))
+    if calendar and rows:
+        # Amendment 17 on the date-level tests (H2c compares two groups; it only matters if H2c passes).
+        for name, field in (("H2a", "slope"), ("H2b", "spread")):
+            scores = {date.fromisoformat(r["trading_day"]): r[field] for r in rows}
+            rb = research.drop_largest_cluster(scores, calendar, window=1)
+            if name == "H2b":
+                rb["mean"] *= 10_000
+            tests[name]["robust"] = rb
+            tests[name]["robust_verdict"] = research.robust_verdict(tests[name]["t"], rb["t"])[1]
     return {"dates": len(rows), "tests": tests}
 
 
@@ -186,7 +196,7 @@ async def run(period: research.Period = "dev", placebo: int = 500, seed: int = 7
         "spikes": len(spikes),
         "by_series": {s["id"]: sum(1 for sp in spikes if sp["series"] == s["id"]) for s in series_list},
         "volume_median": volume_median,
-        "summary": summarize(rows, runs or None),
+        "summary": summarize(rows, runs or None, xs.calendar),
         "rows": rows,
         "placebo_runs": placebo,
     }
@@ -200,11 +210,15 @@ def _print(report: dict[str, Any]) -> None:
     for name, r in s["tests"].items():
         pp = f"{r['placebo_p']:.3f}" if "placebo_p" in r else ""
         print(f"  {name:<5}{r['label']:<28}{r['value']:>9.3f}{r['t']:>7.2f}{r['dates']:>7}{pp:>11}  {r['verdict']}")
+        if "robust" in r:
+            rb = r["robust"]
+            print(f"  {'':<5}without largest cluster ({', '.join(rb['dropped'])}): {rb['mean']:.3f}, "
+                  f"t {rb['t']:.2f} → {r['robust_verdict']}")
     c = s["tests"]["H2c"]
     print(f"\n  H2c: high-volume slope {c['high_slope']:.3f} (n={c['high']}), low {c['low_slope']:.3f} (n={c['low']}), "
           f"{c['mixed_excluded']} mixed dates excluded")
     print("  Slope 1.0 = βs calibrated; 0 = ranking carries no information.")
-    print("\nTests run: 3 (H2a primary, H2b, H2c), each with a placebo.")
+    print("\nTests run: 3 (H2a primary, H2b, H2c), each with a placebo and the cluster rule.")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/* Palette carried over from the team's MyETF simulator (css/styles.css at the repo root). */
+:root {
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --ink: #202940;
+  --muted: #6b7386;
+  --line: #e7eaf1;
+  --blue: #4057db;
+  --blue-soft: #eff1ff;
+  --up: #24886b;
+  --up-soft: #e7f5ee;
+  --down: #c4453c;
+  --down-soft: #fdecea;
+  --warn: #c59228;
+  --warn-soft: #fff5dc;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-blue: var(--blue);
+  --color-blue-soft: var(--blue-soft);
+  --color-up: var(--up);
+  --color-up-soft: var(--up-soft);
+  --color-down: var(--down);
+  --color-down-soft: var(--down-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --radius-panel: 18px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+}

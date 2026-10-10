@@ -1,61 +1,55 @@
-# MyETF — application framework
+# MyETF — team workspace
 
-Shaun’s contribution is the application logic and team architecture for:
+**User idea → selected companies → equal starting basket → Polymarket adjustment → website.**
 
-**User idea → stock selection → equal starting weights → Polymarket adjustment.**
+Start with [TEAM_HANDOFF.md](TEAM_HANDOFF.md). It names the exact files each
+teammate owns and specifies the function signatures, HTTP endpoints, request
+bodies, response bodies, and website wiring.
 
-This branch adds the controller, mock adapters, fixtures, tests, and handoff documentation. The website teammate owns the chat screen, dashboard, styling, browser navigation, and integration into the website entrypoint. The existing website files are retained as the shared main baseline; they do not run this new framework yet.
+## Current state
 
-## Test the framework without a website
+The teammate implementation files are intentionally empty so their owners can
+put their code in the right places. The previous Gemini prototype, its tests,
+and the previous website were backed up on Shaun's computer outside the Git
+repository before clearing these files.
 
-With Node.js 22 or newer, no dependency installation is needed:
+Shaun's shared controller, mock services, fixtures, portfolio calculations, and
+framework/calculation tests remain available.
+
+Additional backend implementations live under `web/` and `backend/src/`.
+This handoff covers the root application's starter files.
+
+| Owner | Main files to fill |
+| --- | --- |
+| 🔵 Lucas — Google/backend | `agent/gemini.js`, agent helpers, `backend/server.js`, `js/stock-api.js` |
+| 🟢 Hao — Polymarket | `polymarket/weights.js`, `js/weights-api.js` |
+| 🟣 Kieran — website | `index.html`, `css/styles.css`, `js/ui.js`, `js/app.js`, `js/config.js` |
+
+Do not include `reason` or `research` in the stock response. The main website
+shows company names, tickers, percentages, and an allocation chart.
+
+## Try the shared framework
+
+With Node.js 22 or newer:
 
 ```sh
 npm test
 npm run demo:framework -- "I care about clean energy"
 ```
 
-The command-line demo prints state transitions and the resulting sample basket. All companies are fictional. Theme examples use fixed 50% / 30% / 20% simulated adjustments; generic examples retain equal weights. No Google or Polymarket API is called.
+These checks use mocks and require no API keys. They do not verify the empty
+teammate implementations. Demo companies and adjustments are fictional.
 
-## Team handoffs
+`npm start` serves the website files at `http://127.0.0.1:8000/`. The page is empty
+until Kieran fills the files. Live API endpoints need Lucas's implementation
+and hosting. Keep Google credentials on that backend.
 
-Read [Architecture and intended user flow](docs/architecture.md) and [Team ownership and API contracts](docs/team-contracts.md).
+## More detail
 
-| Owner | Work |
-| --- | --- |
-| Shaun | Controller, mock adapters, validation, architecture, framework tests |
-| Website teammate | Chat/dashboard screens, styling, rendering, hash navigation, application wiring |
-| Google API teammate | Backend Gemini calls, verified stock identities, `findStocks` adapter |
-| Polymarket teammate | Market mapping and weighting methodology, `adjustWeights` adapter |
+- [Function and API contracts](docs/team-contracts.md)
+- [Controller and intended user flow](docs/architecture.md)
+- [Website basket display example](docs/website-basket.md)
 
-The website subscribes to controller snapshots and invokes its methods. The integration teammates supply async adapters. No frontend design is included in Shaun’s framework change.
-
-## Start a team task
-
-Accept the private repository invitation and clone once:
-
-```sh
-git clone https://github.com/becomingWise/HackKnight-personal-etf.git
-cd HackKnight-personal-etf
-```
-
-Until the framework PR merges, create a task branch from it:
-
-```sh
-git fetch origin
-git switch -c your-feature-name origin/chat-framework
-```
-
-After it merges, start new tasks from `origin/main`. Commit your intended files, push your branch, and open a PR into main for teammate review. Coordinate any shared edits.
-
-## Existing website and deployment
-
-The previous portfolio demo remains on main and at https://becomingwise.github.io/HackKnight-personal-etf/. `npm start` serves that existing website at http://127.0.0.1:8000/; it does not demonstrate the new framework.
-
-The website teammate will connect the framework and update `scripts/publish_pages.py` to include the runtime modules and fixtures it uses. Publishing remains a separate step after review and merge:
-
-```sh
-python3 scripts/publish_pages.py
-```
-
-A future live Gemini integration needs a separately hosted backend holding the API key. GitHub Pages serves static files only. Keep credentials out of client code and commits. The existing calculation module and its tests remain available.
+Use separate feature branches and coordinate shared imports and backend URLs.
+Review and merge completed work before publishing. Kieran must
+update `scripts/publish_pages.py` to include the browser modules it uses.

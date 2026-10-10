@@ -1,0 +1,431 @@
+{
+  "version": 1,
+  "project": "MyETF (ProphETF) turns a person's idea into a basket of three stocks. This agent only chooses the three stocks. A separate service then sets the weights from Polymarket odds, and the website shows the basket.",
+  "outputRules": [
+    "Return exactly 3 stocks with unique symbols.",
+    "Every symbol must come from the allowed list; the weighting service can only tilt these 40.",
+    "Use the name exactly as written in the allowed list.",
+    "The summary is at most 12 words, plain language, no numbers and no promises about returns.",
+    "Return only the summary and the three symbols: no reasons, no research, no market data.",
+    "Prefer companies. Choose a fund (kind \"fund\") only when the idea is about bonds, interest rates or the bitcoin price itself.",
+    "Respect the preferences saved for this session, and avoid repeating the previous basket for the same idea unless the person asks for it."
+  ],
+  "context": [
+    {
+      "id": "flow",
+      "keywords": [],
+      "text": "Flow: idea → this agent picks 3 stocks → equal starting weights (33.33, 33.33, 33.34) → the weighting service tilts them by how prediction-market odds moved."
+    },
+    {
+      "id": "fit",
+      "keywords": [],
+      "text": "Pick the three stocks whose business is most directly affected by the idea. When an idea spans two sectors, cover both."
+    },
+    {
+      "id": "unsupported",
+      "keywords": [],
+      "text": "If the idea matches no sector (for example sports or cooking), pick the three closest large companies from the allowed list rather than refusing."
+    },
+    {
+      "id": "markets",
+      "keywords": [
+        "taiwan",
+        "fed",
+        "recession",
+        "hormuz",
+        "iran",
+        "ukraine",
+        "bitcoin",
+        "export",
+        "openai",
+        "ai safety"
+      ],
+      "text": "The weighting service tracks these prediction markets: China invades Taiwan; No Fed rate cuts in 2026; US recession by end of 2026; Strait of Hormuz traffic normalizes; Bab el-Mandeb Strait closed; US-Iran final nuclear deal; Russia-Ukraine ceasefire agreement; Bitcoin reaches $100k in 2026; AI-chip export licensing becomes law; OpenAI IPOs above $1T; US enacts AI safety bill. Stocks tied to them get the most meaningful weights."
+    },
+    {
+      "id": "language",
+      "keywords": [],
+      "text": "Ideas may arrive in any language. Write the summary in the language of the idea."
+    }
+  ],
+  "sectors": [
+    {
+      "id": "semis",
+      "name": "Semiconductors",
+      "about": "Chip designers, foundries and equipment makers.",
+      "keywords": [
+        "chip",
+        "chips",
+        "semiconductor",
+        "semiconductors",
+        "gpu",
+        "foundry",
+        "taiwan",
+        "nvidia",
+        "hardware",
+        "芯片",
+        "半导体",
+        "半導體",
+        "晶片",
+        "台湾",
+        "台灣"
+      ],
+      "tickers": [
+        {
+          "symbol": "NVDA",
+          "name": "NVIDIA",
+          "kind": "company"
+        },
+        {
+          "symbol": "TSM",
+          "name": "Taiwan Semiconductor",
+          "kind": "company"
+        },
+        {
+          "symbol": "AVGO",
+          "name": "Broadcom",
+          "kind": "company"
+        },
+        {
+          "symbol": "AMD",
+          "name": "Advanced Micro Devices",
+          "kind": "company"
+        },
+        {
+          "symbol": "ASML",
+          "name": "ASML Holding",
+          "kind": "company"
+        },
+        {
+          "symbol": "MU",
+          "name": "Micron Technology",
+          "kind": "company"
+        },
+        {
+          "symbol": "INTC",
+          "name": "Intel",
+          "kind": "company"
+        }
+      ]
+    },
+    {
+      "id": "bigtech",
+      "name": "Big Tech & AI",
+      "about": "Hyperscalers and platforms building on AI.",
+      "keywords": [
+        "ai",
+        "a.i.",
+        "artificial intelligence",
+        "tech",
+        "technology",
+        "software",
+        "cloud",
+        "big tech",
+        "openai",
+        "internet",
+        "robots",
+        "automation",
+        "data centers",
+        "人工智能",
+        "人工智慧",
+        "科技",
+        "tecnología",
+        "inteligencia artificial"
+      ],
+      "tickers": [
+        {
+          "symbol": "MSFT",
+          "name": "Microsoft",
+          "kind": "company"
+        },
+        {
+          "symbol": "AAPL",
+          "name": "Apple",
+          "kind": "company"
+        },
+        {
+          "symbol": "GOOGL",
+          "name": "Alphabet",
+          "kind": "company"
+        },
+        {
+          "symbol": "AMZN",
+          "name": "Amazon",
+          "kind": "company"
+        },
+        {
+          "symbol": "META",
+          "name": "Meta Platforms",
+          "kind": "company"
+        },
+        {
+          "symbol": "ORCL",
+          "name": "Oracle",
+          "kind": "company"
+        }
+      ]
+    },
+    {
+      "id": "energy",
+      "name": "Energy",
+      "about": "Oil majors, producers and oilfield services.",
+      "keywords": [
+        "energy",
+        "oil",
+        "gas",
+        "crude",
+        "opec",
+        "solar",
+        "clean energy",
+        "renewable",
+        "climate",
+        "hormuz",
+        "iran",
+        "middle east",
+        "能源",
+        "石油",
+        "太阳能",
+        "清洁能源",
+        "energía",
+        "petróleo"
+      ],
+      "tickers": [
+        {
+          "symbol": "XOM",
+          "name": "Exxon Mobil",
+          "kind": "company"
+        },
+        {
+          "symbol": "CVX",
+          "name": "Chevron",
+          "kind": "company"
+        },
+        {
+          "symbol": "COP",
+          "name": "ConocoPhillips",
+          "kind": "company"
+        },
+        {
+          "symbol": "OXY",
+          "name": "Occidental Petroleum",
+          "kind": "company"
+        },
+        {
+          "symbol": "SLB",
+          "name": "SLB",
+          "kind": "company"
+        },
+        {
+          "symbol": "FSLR",
+          "name": "First Solar",
+          "kind": "company"
+        }
+      ]
+    },
+    {
+      "id": "defense",
+      "name": "Defense",
+      "about": "Prime contractors and defense technology.",
+      "keywords": [
+        "defense",
+        "defence",
+        "military",
+        "war",
+        "weapons",
+        "missile",
+        "nato",
+        "ukraine",
+        "russia",
+        "geopolitics",
+        "geopolitical",
+        "conflict",
+        "security",
+        "国防",
+        "國防",
+        "军工",
+        "战争",
+        "戰爭",
+        "defensa",
+        "guerra"
+      ],
+      "tickers": [
+        {
+          "symbol": "LMT",
+          "name": "Lockheed Martin",
+          "kind": "company"
+        },
+        {
+          "symbol": "RTX",
+          "name": "RTX",
+          "kind": "company"
+        },
+        {
+          "symbol": "NOC",
+          "name": "Northrop Grumman",
+          "kind": "company"
+        },
+        {
+          "symbol": "GD",
+          "name": "General Dynamics",
+          "kind": "company"
+        },
+        {
+          "symbol": "LHX",
+          "name": "L3Harris",
+          "kind": "company"
+        },
+        {
+          "symbol": "PLTR",
+          "name": "Palantir",
+          "kind": "company"
+        }
+      ]
+    },
+    {
+      "id": "financials",
+      "name": "Financials",
+      "about": "Money-center banks and brokers.",
+      "keywords": [
+        "bank",
+        "banks",
+        "banking",
+        "finance",
+        "financial",
+        "financials",
+        "wall street",
+        "lending",
+        "housing",
+        "mortgage",
+        "ipo",
+        "银行",
+        "銀行",
+        "金融",
+        "banco",
+        "finanzas"
+      ],
+      "tickers": [
+        {
+          "symbol": "JPM",
+          "name": "JPMorgan Chase",
+          "kind": "company"
+        },
+        {
+          "symbol": "BAC",
+          "name": "Bank of America",
+          "kind": "company"
+        },
+        {
+          "symbol": "GS",
+          "name": "Goldman Sachs",
+          "kind": "company"
+        },
+        {
+          "symbol": "MS",
+          "name": "Morgan Stanley",
+          "kind": "company"
+        },
+        {
+          "symbol": "SCHW",
+          "name": "Charles Schwab",
+          "kind": "company"
+        }
+      ]
+    },
+    {
+      "id": "crypto",
+      "name": "Crypto",
+      "about": "Spot bitcoin, exchanges and treasury companies.",
+      "keywords": [
+        "crypto",
+        "bitcoin",
+        "btc",
+        "ethereum",
+        "blockchain",
+        "web3",
+        "stablecoin",
+        "加密",
+        "比特币",
+        "比特幣",
+        "criptomonedas"
+      ],
+      "tickers": [
+        {
+          "symbol": "IBIT",
+          "name": "iShares Bitcoin Trust",
+          "kind": "fund"
+        },
+        {
+          "symbol": "COIN",
+          "name": "Coinbase",
+          "kind": "company"
+        },
+        {
+          "symbol": "MSTR",
+          "name": "Strategy",
+          "kind": "company"
+        },
+        {
+          "symbol": "HOOD",
+          "name": "Robinhood",
+          "kind": "company"
+        },
+        {
+          "symbol": "MARA",
+          "name": "MARA Holdings",
+          "kind": "company"
+        }
+      ]
+    },
+    {
+      "id": "rates",
+      "name": "Rates & Credit",
+      "about": "Treasuries and corporate bond funds.",
+      "keywords": [
+        "rates",
+        "interest rate",
+        "interest rates",
+        "fed",
+        "federal reserve",
+        "bond",
+        "bonds",
+        "treasury",
+        "treasuries",
+        "recession",
+        "inflation",
+        "soft landing",
+        "credit",
+        "safe",
+        "利率",
+        "债券",
+        "債券"
+      ],
+      "tickers": [
+        {
+          "symbol": "TLT",
+          "name": "20+ Year Treasury",
+          "kind": "fund"
+        },
+        {
+          "symbol": "IEF",
+          "name": "7-10 Year Treasury",
+          "kind": "fund"
+        },
+        {
+          "symbol": "LQD",
+          "name": "Investment Grade Corporates",
+          "kind": "fund"
+        },
+        {
+          "symbol": "HYG",
+          "name": "High Yield Corporates",
+          "kind": "fund"
+        },
+        {
+          "symbol": "SHY",
+          "name": "1-3 Year Treasury",
+          "kind": "fund"
+        }
+      ]
+    }
+  ]
+}

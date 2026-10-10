@@ -186,6 +186,16 @@ def by_date(events: list[dict[str, Any]], key: Callable[[dict[str, Any]], float]
     return [sum(v) / len(v) for v in groups.values()]
 
 
+def dated(events: list[dict[str, Any]], key: Callable[[dict[str, Any]], float]) -> dict[date, float]:
+    """`by_date`, keyed by trading day."""
+    groups: dict[str, list[float]] = {}
+    for e in events:
+        v = key(e)
+        if not math.isnan(v):
+            groups.setdefault(e["trading_day"], []).append(v)
+    return {date.fromisoformat(d): sum(v) / len(v) for d, v in groups.items()}
+
+
 def t_stat(xs: list[float]) -> float:
     n = len(xs)
     if n < 2:
@@ -217,7 +227,8 @@ def placebo_times(series_hourly: list[dict[str, Any]], bar_starts: set[datetime]
     return out
 
 
-def summarize(events: list[dict[str, Any]], placebo: list[list[dict[str, Any]]] | None = None) -> dict[str, Any]:
+def summarize(events: list[dict[str, Any]], placebo: list[list[dict[str, Any]]] | None = None,
+              calendar: list[date] | None = None) -> dict[str, Any]:
     tests = {}
     for name, key in (("H1a post +1..+6", lambda e: e["post"]), ("H1b pre -6..-1", lambda e: e["pre"])):
         xs = by_date(events, key)
@@ -228,6 +239,10 @@ def summarize(events: list[dict[str, Any]], placebo: list[list[dict[str, Any]]] 
         if placebo:
             null = [sum(p) / len(p) for p in (by_date(run, key) for run in placebo) if p]
             row["placebo_p"] = (1 + sum(1 for x in null if abs(x) >= abs(mean))) / (1 + len(null))
+        if calendar and xs:
+            # Amendment 17: the verdict must survive dropping the largest event cluster.
+            row["robust"] = research.drop_largest_cluster(dated(events, key), calendar, window=1)
+            row["robust_verdict"] = research.robust_verdict(row["t"], row["robust"]["t"])[1]
         tests[name] = row
     profile = []
     for k in OFFSETS:
@@ -267,7 +282,7 @@ async def run(period: research.Period = "dev", placebo: int = 500, seed: int = 7
         "period": period,
         "hourly_coverage": [first_bar.isoformat(), max(bar_starts).isoformat()],
         "by_series": {s["id"]: sum(1 for e in events if e["series"] == s["id"]) for s in hourly_series},
-        "summary": summarize(events, runs or None),
+        "summary": summarize(events, runs or None, sorted({t.date() for t in bar_starts})),
         "per_series": {s["id"]: summarize([e for e in events if e["series"] == s["id"]]) for s in hourly_series},
         "events": events,
         "placebo_runs": placebo,
@@ -282,6 +297,10 @@ def _print(report: dict[str, Any]) -> None:
     for name, r in s["tests"].items():
         pp = f"{r['placebo_p']:.3f}" if "placebo_p" in r else ""
         print(f"  {name:<18}{r['dates']:>6}{r['mean_bp']:>7.1f}bp{r['t']:>7.2f}{r['hit_rate']:>7.0%}{pp:>11}  {r['verdict']}")
+        if "robust" in r:
+            rb = r["robust"]
+            print(f"  {'':<18}without largest cluster ({', '.join(rb['dropped'])}): {rb['mean'] * 10_000:.1f}bp, "
+                  f"t {rb['t']:.2f} → {r['robust_verdict']}")
     print("\n  bar  mean     t   (score > 0 = moved the way β predicted)")
     for r in s["profile"]:
         print(f"  {r['bar']:>+3} {r['mean_bp']:>6.1f}bp {r['t']:>5.2f}")
@@ -290,7 +309,8 @@ def _print(report: dict[str, Any]) -> None:
         a, b = ps["tests"]["H1a post +1..+6"], ps["tests"]["H1b pre -6..-1"]
         if a["dates"]:
             print(f"  {sid:<18}{a['dates']:>5}  {a['mean_bp']:>6.1f}bp t {a['t']:>5.2f}  {b['mean_bp']:>6.1f}bp t {b['t']:>5.2f}")
-    print("\nTests run: 2 (H1a primary, H1b), each with a placebo; the bar profile and per-series rows are descriptive.")
+    print("\nTests run: 2 (H1a primary, H1b), each with a placebo and the cluster rule; the bar profile and per-series rows "
+          "are descriptive.")
 
 
 if __name__ == "__main__":
