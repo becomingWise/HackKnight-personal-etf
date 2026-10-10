@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { createMockAnalyst, relevance } from "../analyst/mock";
+import { createSignalsAnalyst, relevance } from "../analyst/signals";
 import { evidencePacketSchema, type EvidencePacket } from "../analyst/packet";
 import { createPlanner } from "../analyst/plan";
 import { createTigerAnalyst } from "../analyst/tiger";
@@ -101,7 +101,7 @@ function deps(generate: GenerateJson, over: Partial<HandlerDeps> = {}): HandlerD
     generate,
     search,
     rateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
-    mode: "mock",
+    mode: "signals",
     // Keyword search unless a test supplies a planner.
     plan: null,
     checkerLlm: false,
@@ -141,7 +141,7 @@ const traceOf = (body: { trace?: { step: string; status: string; summary: string
   Object.fromEntries((body.trace ?? []).map((t) => [t.step, t]));
 
 async function mockPacket(idea = "AI chips and Taiwan risk"): Promise<EvidencePacket> {
-  return createMockAnalyst({ search, now: () => NOW })(idea);
+  return createSignalsAnalyst({ search, now: () => NOW })(idea);
 }
 
 describe("POST /api/stocks", () => {
@@ -164,7 +164,9 @@ describe("POST /api/stocks", () => {
 
     expect(body.trace!.map((t) => t.step)).toEqual(["analyst", "gate", "decider", "checker"]);
     const trace = traceOf(body);
-    expect(trace.analyst.summary).toMatch(/^2 markets, \d+ themes, \d+ ticker signals \(mock\)$/);
+    expect(trace.analyst.summary).toMatch(
+      /^2 markets, \d+ themes, \d+ ticker signals \(signals\)$/,
+    );
     expect(trace.gate).toMatchObject({ status: "ok", summary: "passed: 2 of 2 markets usable" });
     expect(trace.decider.summary).toBe("3 stocks (1 Gemini call)");
     expect(trace.checker).toMatchObject({ status: "ok", summary: "passed, no revision" });
@@ -257,7 +259,7 @@ describe("POST /api/stocks", () => {
   it("answers 502 instead of inventing a basket when Gemini is down and no ticker is linked", async () => {
     const unlinked = { ...(await mockPacket()), themes: [], tickerSignals: [] };
     const { POST } = createStocksHandler(
-      deps(gemini(new Error("down")), { analysts: { mock: async () => unlinked } }),
+      deps(gemini(new Error("down")), { analysts: { signals: async () => unlinked } }),
     );
     const res = await POST(post({ idea: "AI chips and Taiwan risk" }));
     expect(res.status).toBe(502);
@@ -422,9 +424,10 @@ describe("the workflow with the team's real controller", () => {
       expect(state.error).toBeNull();
       expect(state.view).toBe("dashboard");
       expect(state.stocks).toEqual([
-        { symbol: "TSM", name: "Taiwan Semiconductor", reason: expect.stringContaining("7.5%") },
-        { symbol: "NVDA", name: "NVIDIA", reason: expect.stringContaining("22%") },
-        { symbol: "INTC", name: "Intel", reason: expect.any(String) },
+        // The team's controller keeps only the identity of each stock (since 2026-10-10).
+        { symbol: "TSM", name: "Taiwan Semiconductor" },
+        { symbol: "NVDA", name: "NVIDIA" },
+        { symbol: "INTC", name: "Intel" },
       ]);
       expect(state.summary).toContain("Key Polymarket odds");
     },
@@ -433,7 +436,7 @@ describe("the workflow with the team's real controller", () => {
 
 describe("analyst", () => {
   it("builds a packet from search, universe links and Tiger history", async () => {
-    const analyst = createMockAnalyst({
+    const analyst = createSignalsAnalyst({
       search,
       now: () => NOW,
       pastOdds: async () => new Map([["1811266", { d1: null, d7: 0.125 }]]),
@@ -449,10 +452,10 @@ describe("analyst", () => {
       marketIds: expect.arrayContaining(["1811266"]),
     });
     expect(packet.themes.map((t) => t.name)).toContain("Semiconductors");
-    expect(packet.warnings[0]).toMatch(/mock analyst/i);
+    expect(packet.warnings[0]).toMatch(/^Signals analyst/);
   });
 
-  it("uses the module analyst when asked, and the mock when it fails", async () => {
+  it("uses the module analyst when asked, and the signals analyst when it fails", async () => {
     const custom = { ...(await mockPacket()), warnings: ["from the real analyst"] };
     const used = createAnalyzeHandler(
       deps(gemini(GOOD), { mode: "module", analysts: { module: async () => custom } }),
@@ -469,12 +472,12 @@ describe("analyst", () => {
     const body = await (await failing.POST(post({ idea: "chips" }, {}, "analyze"))).json();
     expect(body.trace[0]).toMatchObject({
       status: "warn",
-      summary: expect.stringContaining("(mock); the module analyst failed"),
+      summary: expect.stringContaining("(signals); the module analyst failed"),
     });
     expect(body.packet.warnings[0]).toContain("The module analyst failed");
   });
 
-  it("reads Tiger: a stored packet as is, otherwise the analyst's notes over the mock's search", async () => {
+  it("reads Tiger: a stored packet as is, otherwise the analyst's notes over the built-in search", async () => {
     const stored = { ...(await mockPacket()), warnings: ["stored"] };
     const withPacket = createTigerAnalyst(
       { search, now: () => NOW },
@@ -509,11 +512,13 @@ describe("analyst", () => {
     );
   });
 
-  it("reads ANALYST_MODE, defaulting to mock", () => {
-    expect(analystMode(undefined)).toBe("mock");
+  it("reads ANALYST_MODE, defaulting to signals and keeping mock as its old name", () => {
+    expect(analystMode(undefined)).toBe("signals");
+    expect(analystMode("signals")).toBe("signals");
+    expect(analystMode("mock")).toBe("signals");
     expect(analystMode("Tiger")).toBe("tiger");
     expect(analystMode("module")).toBe("module");
-    expect(analystMode("nonsense")).toBe("mock");
+    expect(analystMode("nonsense")).toBe("signals");
   });
 });
 
@@ -533,7 +538,7 @@ describe("search plan and models", () => {
     const cache = memoryApiCache();
     const searched: string[] = [];
     const planner = createPlanner({ generate, cache });
-    const analyst = createMockAnalyst({
+    const analyst = createSignalsAnalyst({
       plan: planner,
       now: () => NOW,
       search: async (q) => (searched.push(q), search(q)),
@@ -555,7 +560,7 @@ describe("search plan and models", () => {
 
   it("falls back to keywords when the planner fails", async () => {
     const planner = createPlanner({ generate: gemini(new Error("timeout")) });
-    const packet = await createMockAnalyst({ plan: planner, search, now: () => NOW })(
+    const packet = await createSignalsAnalyst({ plan: planner, search, now: () => NOW })(
       "AI chips and Taiwan risk",
     );
     expect(packet.warnings[0]).toMatch(/keyword search/);

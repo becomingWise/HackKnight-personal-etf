@@ -1,7 +1,8 @@
-// The MOCK analyst: an EvidencePacket built by code we already had: Polymarket search, the
-// weighting universe's market → ticker links, and the odds history in Tiger. Its only LLM step
-// is the optional search plan (./plan.ts); without it, keywords pick the sectors and queries.
-// The real analyst replaces it (docs/HANDOFF.md) and only has to return the same packet.
+// The SIGNALS analyst (the default): an EvidencePacket built from the weighting research in
+// /backend: its 11 tracked Polymarket markets ("signals") and their per-ticker sensitivities
+// (betas), plus Polymarket search and the odds history in Tiger. Its only LLM step is the optional
+// search plan (./plan.ts); without it, keywords pick the sectors and queries. A richer analyst can
+// replace it (docs/HANDOFF.md) and only has to return the same packet.
 import type { PastOdds } from "../odds/repo";
 import type { MarketCandidate, SearchMarkets } from "../polymarket/search";
 import { formatOdds } from "../stocks/contract";
@@ -27,13 +28,13 @@ export type MarketAnalysis = {
   tickers: { symbol: string; impact: number; why: string }[];
 };
 
-export type MockAnalystDeps = {
+export type SignalsAnalystDeps = {
   search: SearchMarkets;
   /** Turns the idea into search queries and sectors with one LLM call; keywords are used without it. */
   plan?: Planner;
   /** Odds 24 hours and 7 days ago from Tiger; Polymarket's own change fields fill the gaps. */
   pastOdds?: (ids: string[], now: Date) => Promise<PastOdds>;
-  /** Analysis written by the real analyst for some of the markets; overrides the mock's. */
+  /** Analysis written by the real analyst for some of the markets; overrides the built-in reading. */
   analyses?: (ids: string[]) => Promise<Map<string, MarketAnalysis>>;
   now?: () => Date;
 };
@@ -132,8 +133,8 @@ export function formatPoints(change: number): string {
   return `${pts > 0 ? "+" : ""}${pts.toFixed(1)} pts`;
 }
 
-/** The mock's reading of one market: each linked ticker moves with its sensitivity times the 7-day odds move. */
-function mockAnalysis(
+/** The built-in reading of one market: each linked ticker moves with its sensitivity times the 7-day odds move. */
+function signalAnalysis(
   market: MarketCandidate,
   change7d: number | null,
   focus: Set<string>,
@@ -160,8 +161,8 @@ function mockAnalysis(
   };
 }
 
-export function createMockAnalyst(deps: MockAnalystDeps): Analyst {
-  return async function mockAnalyst(idea, abort) {
+export function createSignalsAnalyst(deps: SignalsAnalystDeps): Analyst {
+  return async function signalsAnalyst(idea, abort) {
     const now = deps.now?.() ?? new Date();
     // One LLM call plans the search; without it (budget used up, timeout, error) keywords do.
     const plan = (await deps.plan?.(idea, abort).catch(() => null)) ?? null;
@@ -169,8 +170,8 @@ export function createMockAnalyst(deps: MockAnalystDeps): Analyst {
     const queries = plan ? plan.queries : [idea.slice(0, 80), ...keywordHits(idea)];
     const warnings = [
       plan
-        ? `Mock analyst: search planned by ${plan.model ?? "Gemini"} (${queries.join("; ")}), fixed market-to-ticker links, no analysis.`
-        : "Mock analyst: keyword search and fixed market-to-ticker links, no analysis.",
+        ? `Signals analyst: search planned by ${plan.model ?? "Gemini"} (${queries.join("; ")}); market-to-ticker sensitivities from the weighting research.`
+        : "Signals analyst: keyword search; market-to-ticker sensitivities from the weighting research.",
     ];
     if (!sectors.length) warnings.push("The idea does not map to any supported sector.");
     const focus = new Set(STOCKS.filter((s) => sectors.includes(s.sectorId)).map((s) => s.symbol));
@@ -219,7 +220,7 @@ export function createMockAnalyst(deps: MockAnalystDeps): Analyst {
           : round(clamp(m.probability - then), 4);
       const change24h = since(before?.d1, m.change24h);
       const change7d = since(before?.d7, m.change7d);
-      const analysis = analyses.get(m.id) ?? mockAnalysis(m, change7d, focus);
+      const analysis = analyses.get(m.id) ?? signalAnalysis(m, change7d, focus);
       for (const t of analysis.tickers) {
         const entry = perTicker.get(t.symbol) ?? { impact: 0, marketIds: [], why: t.why, top: -1 };
         entry.impact += t.impact;

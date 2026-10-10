@@ -23,10 +23,12 @@ idea ──► a. ANALYST ──► b. GATE ──► c. DECIDER ──► d. CH
 The decider has **no other source of facts than your packet**. It cannot search, and the checker rejects any
 number that is not in the packet. What you put in is what the user gets explained.
 
-Today a **mock analyst** (`web/src/lib/analyst/mock.ts`) fills your seat. It has no intelligence: it matches
-keywords to sectors, searches Polymarket, and uses the fixed market → ticker sensitivities from
-`universe.json`. Its `signal`, `analystNote`, `themes` and `tickerSignals` are mechanical. Replacing those
-with real analysis is your part.
+Today the **signals analyst** (`web/src/lib/analyst/signals.ts`, `ANALYST_MODE=signals`, the default; the old
+name `mock` still works) fills this seat. It is built on the weighting method in `/backend`: the 11 tracked
+Polymarket markets ("signals") and their per-ticker sensitivities (betas) from `universe.json` link markets to
+tickers, one small Gemini call plans the Polymarket search, and Tiger supplies the 24-hour and 7-day odds
+changes. Its `signal`, `analystNote`, `themes` and `tickerSignals` are computed by rule (sensitivity times the
+7-day odds move). A richer analysis of the markets is what a new analyst would add.
 
 ## The evidence packet
 
@@ -196,7 +198,7 @@ Then set `ANALYST_MODE=module` (in `web/.env.local` locally; Lucas sets it on Ve
   `src/lib/polymarket/markets.ts`, `tigerPastOdds(ids, now)` and `tigerOddsRepo.series(...)` in
   `src/lib/odds/repo.ts`, and the universe in `src/lib/stocks/universe.ts`.
 - Gemini quota is tight: the Flash models have 20 requests per day each and are reserved for the manager's
-  note. The mock already spends one Flash-Lite call per new idea on a search plan
+  note. The signals analyst already spends one Flash-Lite call per new idea on a search plan
   (`src/lib/analyst/plan.ts`). An analyst that calls an LLM must go through `geminiGenerateJson` with
   `task: "plan"` so its calls are counted against the per-model budgets, or use its own key in a different
   Google project (all keys of one project share one quota). Talk to Lucas first.
@@ -252,7 +254,7 @@ cur.execute(
 ```
 
 For an idea with no packet in table 1, the built-in search finds the markets (with live odds, changes,
-liquidity and relevance) and your rows replace the mock's `signal`, `analystNote` and ticker links for every
+liquidity and relevance) and your rows replace the built-in `signal`, `analystNote` and ticker links for every
 market you have analyzed. So this table covers **any idea a user types**, as far as you have analyzed the
 markets it touches. The markets worth analyzing first are the ones in the `markets` table (everything the
 app has seen so far).
@@ -263,7 +265,7 @@ app has seen so far).
 
 ### If your analyst fails
 
-In both options, when your analyst throws, times out or returns an invalid packet, the mock analyst answers
+In both options, when your analyst throws, times out or returns an invalid packet, the signals analyst answers
 that request. The response's `trace` then shows `"analyst"` with `"status": "warn"`, and the first entry of
 the packet's `warnings` says what went wrong. Nothing breaks for the user.
 
@@ -272,7 +274,7 @@ the packet's `warnings` says what went wrong. Nothing breaks for the user.
 Two endpoints let you work without touching the decider (details in `web/docs/API.md`, sections 1b and 1c):
 
 - **`POST /api/analyze`** `{ "idea": "..." }` → `{ packet, gate, trace }`. Shows the packet the configured
-  analyst produces and whether it would pass the gate. For a new idea the mock makes one small Gemini call (cached for a day), so
+  analyst produces and whether it would pass the gate. For a new idea the signals analyst makes one small Gemini call (cached for a day), so
   repeat ideas rather than inventing new ones in a loop.
 - **`POST /api/decide`** `{ "idea": "...", "packet": { ... } }` → the final `/api/stocks` answer for exactly
   that packet. Send a packet you wrote by hand or produced in Python and see what the decider makes of it. A

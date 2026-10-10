@@ -17,7 +17,7 @@ const schema = z.object({
   APP_BASE_URL: optional,
 
   // Decision workflow (src/lib/pipeline): which analyst writes the evidence packet
-  // (mock | module | tiger, default mock) and whether the checker adds an LLM review.
+  // (signals | module | tiger, default signals; mock = signals) and whether the checker adds an LLM review.
   ANALYST_MODE: optional,
   CHECKER_LLM: flag,
   // A model id from src/lib/gemini/models.ts to try first for decisions; empty = the default chain.

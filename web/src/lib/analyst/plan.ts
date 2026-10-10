@@ -1,4 +1,4 @@
-// The one LLM step of the MOCK analyst: the idea becomes Polymarket search queries and the
+// The one LLM step of the signals analyst: the idea becomes Polymarket search queries and the
 // sectors it touches, so ideas without a sector keyword find markets too. One call on the
 // Flash-Lite chain, cached for a day, 5 seconds at most; on any failure the caller falls back to
 // keyword matching.

@@ -1,6 +1,6 @@
 // Stage c, the DECIDER: one Gemini call that turns the idea and the evidence packet into 3 to 5
 // stocks with reasons. This file is the prompt; run `pnpm eval:decider` before and after changing it.
-import { formatPoints } from "../analyst/mock";
+import { formatPoints } from "../analyst/signals";
 import type { EvidencePacket } from "../analyst/packet";
 import { MAX_STOCKS, MIN_STOCKS, formatOdds } from "../stocks/contract";
 import { SECTORS, STOCK_BY_SYMBOL, SYMBOLS } from "../stocks/universe";

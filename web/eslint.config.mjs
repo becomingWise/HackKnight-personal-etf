@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Copies of /agent and /js/controller.js (pnpm sync:agent); they are edited at the root.
+    "src/lib/agent-core/**",
   ]),
 ]);
 

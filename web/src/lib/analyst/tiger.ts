@@ -1,9 +1,9 @@
 // Option B of docs/HANDOFF.md: the analyst's output is read from Tiger (tables in migration
-// 0007). A fresh packet for the idea is used as is; otherwise the mock's search finds the
-// markets and the analyst's per-market rows replace the mock's analysis where they exist.
+// 0007). A fresh packet for the idea is used as is; otherwise the signals analyst's search finds the
+// markets and the analyst's per-market rows replace its analysis where they exist.
 import { z } from "zod";
 import { db } from "../db/client";
-import { createMockAnalyst, type MarketAnalysis, type MockAnalystDeps } from "./mock";
+import { createSignalsAnalyst, type MarketAnalysis, type SignalsAnalystDeps } from "./signals";
 import { SIGNALS, evidencePacketSchema, type Analyst, type EvidencePacket } from "./packet";
 
 /** A stored packet older than this is ignored; the gate would reject it anyway. */
@@ -44,7 +44,7 @@ export const tigerAnalystStore: AnalystStore = {
     for (const row of rows) {
       const signal = z.enum(SIGNALS).safeParse(row.signal);
       const tickers = tickersSchema.safeParse(row.tickers);
-      // A malformed row is skipped; the mock's analysis stands in for that market.
+      // A malformed row is skipped; the built-in analysis stands in for that market.
       if (!signal.success || !tickers.success) continue;
       out.set(row.market_id, {
         signal: signal.data,
@@ -57,10 +57,10 @@ export const tigerAnalystStore: AnalystStore = {
 };
 
 export function createTigerAnalyst(
-  mock: MockAnalystDeps,
+  base: SignalsAnalystDeps,
   store: AnalystStore = tigerAnalystStore,
 ): Analyst {
-  const overlaid = createMockAnalyst({ ...mock, analyses: (ids) => store.marketAnalyses(ids) });
+  const overlaid = createSignalsAnalyst({ ...base, analyses: (ids) => store.marketAnalyses(ids) });
   return async function tigerAnalyst(idea, signal) {
     const stored = await store.latestPacket(idea);
     if (stored !== null) {

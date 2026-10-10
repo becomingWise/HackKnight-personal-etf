@@ -1,6 +1,8 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
+import { DEMO_IDEAS } from "@/lib/demo/warm";
 import { getHealth } from "@/lib/health";
+import { Console } from "./console";
 
 const SPONSOR_LABELS = {
   tiger: "Tiger Data",
@@ -13,74 +15,83 @@ async function SystemStatus() {
   await connection();
   const health = await getHealth();
   const db = health.database;
+  const lite = health.gemini.models.filter((m) => m.model.includes("flash-lite"));
+  const left = lite.reduce((sum, m) => sum + (m.blockedUntil ? 0 : m.remainingToday), 0);
   return (
-    <div className="grid gap-5">
-      <p className="flex flex-wrap items-center gap-2 text-sm">
-        <span
-          aria-hidden="true"
-          className={`size-2.5 rounded-full ${db.ok ? "bg-up" : "bg-down"}`}
-        />
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+      <span className="flex items-center gap-2">
+        <span aria-hidden="true" className={`size-2 rounded-full ${db.ok ? "bg-up" : "bg-down"}`} />
         {db.ok ? (
-          <>
-            <strong>Database connected.</strong>
+          <span>
+            Database connected
             <span className="text-muted">
-              Postgres {db.postgres} · TimescaleDB {db.timescaledb ?? "not installed"} ·{" "}
-              {db.migrations} migrations · {db.latency_ms} ms
+              {" "}
+              · Postgres {db.postgres} · TimescaleDB {db.timescaledb ?? "not installed"} ·{" "}
+              {db.latency_ms} ms
             </span>
-          </>
+          </span>
         ) : (
-          <>
-            <strong>Database unreachable.</strong>
-            <span className="text-muted">{db.error}</span>
-          </>
+          <span>
+            Database unreachable <span className="text-muted">· {db.error}</span>
+          </span>
         )}
-      </p>
-      <ul className="flex flex-wrap gap-2">
-        {Object.entries(health.sponsors).map(([key, s]) => (
-          <li
-            key={key}
-            className={`rounded-full px-3 py-1 text-xs font-medium ${
-              s.mode === "live" ? "bg-up-soft text-up" : "bg-warn-soft text-warn"
-            }`}
-          >
-            {SPONSOR_LABELS[key as keyof typeof SPONSOR_LABELS]} · {s.mode}
-          </li>
-        ))}
+      </span>
+      <ul className="flex flex-wrap gap-1.5">
+        {Object.entries(health.sponsors)
+          // The live-feed flag was never built; only what the product uses is shown.
+          .filter(([key]) => key !== "ws")
+          .map(([key, s]) => (
+            <li
+              key={key}
+              className={`rounded-full px-2.5 py-0.5 font-medium ${
+                s.mode === "live" ? "bg-up-soft text-up" : "bg-warn-soft text-warn"
+              }`}
+            >
+              {SPONSOR_LABELS[key as keyof typeof SPONSOR_LABELS]} · {s.mode}
+            </li>
+          ))}
       </ul>
+      <span className="text-muted">Gemini Flash-Lite calls left today: {left}</span>
     </div>
   );
 }
 
 export default function Home() {
   return (
-    <div className="grid gap-8">
-      <section className="grid gap-4">
+    <div className="grid gap-5">
+      <section className="grid gap-2">
         <p className="text-xs font-semibold tracking-[0.18em] text-blue">
-          PERSONAL ETFS FROM PREDICTION MARKETS
+          BACKEND TEST CONSOLE — THE PRODUCT UI IS BUILT BY OUR FRONTEND TEAMMATE
         </p>
-        <h1 className="max-w-3xl text-4xl font-bold tracking-tight sm:text-5xl">
-          Turn what you believe about the future into a fund.
+        <h1 className="max-w-3xl text-3xl font-bold tracking-tight">
+          An idea in, three stocks and their weights out.
         </h1>
-        <p className="max-w-2xl text-lg text-muted">
-          Pick YES or NO on real Polymarket questions, give each a weight, and ProphETF values your
-          basket live from market prices. Paper money only.
+        <p className="max-w-3xl text-muted">
+          This page calls the live API in order: <code>/api/stocks</code> (a Gemini agent picks
+          three stocks for the idea), then <code>/api/weights</code> (the weights are tilted by how
+          Polymarket odds moved).
         </p>
       </section>
 
-      <section className="rounded-panel border border-line bg-surface p-6">
-        <p className="text-xs font-semibold tracking-[0.18em] text-muted">SYSTEM STATUS</p>
-        <h2 className="mt-1 mb-4 text-xl font-semibold">The scaffold is up.</h2>
-        <Suspense fallback={<p className="text-sm text-muted">Checking the database…</p>}>
-          <SystemStatus />
-        </Suspense>
-        <p className="mt-5 text-sm text-muted">
-          Raw JSON at{" "}
-          <a className="text-blue underline" href="/api/health">
-            /api/health
-          </a>
-          . Markets, the builder and factsheets arrive in the next phases.
-        </p>
+      <section className="rounded-panel border border-line bg-surface px-5 py-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <p className="text-xs font-semibold tracking-[0.18em] text-muted">SYSTEM STATUS</p>
+          <Suspense fallback={<p className="text-xs text-muted">Checking the database…</p>}>
+            <SystemStatus />
+          </Suspense>
+          <span className="ml-auto text-xs text-muted">
+            <a className="text-blue underline" href="/api/health">
+              /api/health
+            </a>{" "}
+            ·{" "}
+            <a className="text-blue underline" href="/api/built-with">
+              /api/built-with
+            </a>
+          </span>
+        </div>
       </section>
+
+      <Console demoIdeas={DEMO_IDEAS} />
     </div>
   );
 }

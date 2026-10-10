@@ -3,7 +3,7 @@
 // request by the decider (the decision and one revision), once more with CHECKER_LLM on. Which
 // model answers is decided by the chain in src/lib/gemini/models.ts.
 import { analyze } from "../analyst";
-import { createMockAnalyst, type MockAnalystDeps } from "../analyst/mock";
+import { createSignalsAnalyst, type SignalsAnalystDeps } from "../analyst/signals";
 import { evidencePacketSchema, type Analyst, type EvidencePacket } from "../analyst/packet";
 import { createTigerAnalyst } from "../analyst/tiger";
 import { env } from "../env";
@@ -25,15 +25,20 @@ export const MAX_DECIDER_CALLS = 2;
 /** Total time Gemini may use before the evidence-only fallback takes over. */
 const GEMINI_BUDGET_MS = 20_000;
 
-export type AnalystMode = "mock" | "module" | "tiger";
+/** "signals" is the built-in default. ANALYST_MODE=mock is its old name and still selects it. */
+export type AnalystMode = "signals" | "module" | "tiger";
 
 export function analystMode(value: string | undefined = env().ANALYST_MODE): AnalystMode {
-  const mode = (value ?? "mock").toLowerCase();
-  return mode === "module" || mode === "tiger" ? mode : "mock";
+  const mode = (value ?? "signals").toLowerCase();
+  return mode === "module" || mode === "tiger" ? mode : "signals";
 }
 
-export function defaultAnalysts(mock: MockAnalystDeps): Record<AnalystMode, Analyst> {
-  return { mock: createMockAnalyst(mock), module: analyze, tiger: createTigerAnalyst(mock) };
+export function defaultAnalysts(base: SignalsAnalystDeps): Record<AnalystMode, Analyst> {
+  return {
+    signals: createSignalsAnalyst(base),
+    module: analyze,
+    tiger: createTigerAnalyst(base),
+  };
 }
 
 export type PipelineDeps = {
@@ -64,7 +69,7 @@ export type PipelineResult =
 
 // ---------- Stage a: analyst ----------
 
-/** Runs the configured analyst; if it fails, the mock answers and the packet says so. */
+/** Runs the configured analyst; if it fails, the signals analyst answers and the packet says so. */
 export async function runAnalyst(
   idea: string,
   deps: Pick<PipelineDeps, "analysts" | "mode" | "log">,
@@ -76,12 +81,14 @@ export async function runAnalyst(
   try {
     packet = evidencePacketSchema.parse(await deps.analysts[deps.mode](idea, signal));
   } catch (err) {
-    if (deps.mode === "mock" || signal?.aborted) throw err;
+    if (deps.mode === "signals" || signal?.aborted) throw err;
     const why = err instanceof Error ? err.message.slice(0, 120) : "unknown error";
     deps.log?.("analyst_failed", { mode: deps.mode, why });
-    packet = evidencePacketSchema.parse(await deps.analysts.mock(idea, signal));
-    packet.warnings.unshift(`The ${deps.mode} analyst failed (${why}); the mock analyst answered.`);
-    used = "mock";
+    packet = evidencePacketSchema.parse(await deps.analysts.signals(idea, signal));
+    packet.warnings.unshift(
+      `The ${deps.mode} analyst failed (${why}); the signals analyst answered.`,
+    );
+    used = "signals";
   }
   return {
     packet,
