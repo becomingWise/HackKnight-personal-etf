@@ -14,12 +14,15 @@ import {
   weightsCacheKey,
 } from "./apiCache";
 
+/** The live odds of the market the cached answers cite; a test moves them to force a new decision. */
+let taiwanOdds = 0.105;
+
 /** What the analyst stage hands over: two usable markets and three linked tickers. */
 const packet = (idea: string): EvidencePacket => ({
   idea,
   generatedAt: new Date().toISOString(),
   markets: [
-    ["1633611", "Will China invade Taiwan by December 31, 2027?", 0.105],
+    ["1633611", "Will China invade Taiwan by December 31, 2027?", taiwanOdds],
     ["1426260", "Will AI-chip export licensing become law this year?", 0.21],
   ].map(([id, question, probability]) => ({
     id: String(id),
@@ -157,7 +160,7 @@ describe("POST /api/stocks caching", () => {
     });
     await api.post("chips");
     await api.post("chips");
-    expect(buckets.filter((b) => b === "findstocks:uncached")).toHaveLength(1);
+    expect(buckets.filter((b) => b === "ai:day")).toHaveLength(1);
     expect(buckets.filter((b) => b === "findstocks:ip")).toHaveLength(2);
   });
 });
@@ -298,12 +301,24 @@ describe("demo warm-up", () => {
     expect(w.headers.get("X-Cache")).toBe("HIT");
   });
 
+  it("extends the answer without a Gemini call while the odds it cites stand still", async () => {
+    const s = warmSetup();
+    await warmIdea(DEMO_IDEAS[0], s.deps);
+    s.advance(CACHE_TTL_SECONDS - 60);
+    const report = await warmIdea(DEMO_IDEAS[0], s.deps);
+    expect(report).toMatchObject({ result: "unchanged", symbols: ["TSM", "NVDA", "AMD"] });
+    expect(s.deps.stocks.generate).toHaveBeenCalledTimes(1);
+    s.advance(120); // past the original expiry
+    expect(await s.cache.get("stocks", stocksCacheKey(DEMO_IDEAS[0]))).not.toBeNull();
+  });
+
   it("keeps the previous AI answer alive when Gemini is down, instead of a fallback", async () => {
     const s = warmSetup();
     await warmIdea(DEMO_IDEAS[0], s.deps);
     s.advance(CACHE_TTL_SECONDS - 60);
     s.state.down = true;
-    const report = await warmIdea(DEMO_IDEAS[0], s.deps);
+    taiwanOdds = 0.2; // the odds moved, so the answer must be decided again
+    const report = await warmIdea(DEMO_IDEAS[0], s.deps).finally(() => (taiwanOdds = 0.105));
     expect(report).toMatchObject({ result: "kept", symbols: ["TSM", "NVDA", "AMD"] });
     s.advance(120); // past the original expiry
     const entry = await s.cache.get<{ source: string }>("stocks", stocksCacheKey(DEMO_IDEAS[0]));

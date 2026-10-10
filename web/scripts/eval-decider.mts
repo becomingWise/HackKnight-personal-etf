@@ -1,8 +1,8 @@
 // Eval of the DECIDER prompt against real Gemini with fixed mock packets (no Polymarket, no DB):
-//   pnpm eval:decider                 all 10 cases, paced for the free quota (about 2 to 4 minutes)
+//   pnpm eval:decider                 all 10 cases on gemini-3.5-flash-lite, the decider's default model (about 1 minute)
 //   pnpm eval:decider --only fed      cases whose name contains "fed"
 //   pnpm eval:decider --pace 0        no pause between calls (paid quota only)
-//   pnpm eval:decider --lite          the backup model, which answers when the main one is busy (pace 5)
+//   pnpm eval:decider --main          on gemini-3.5-flash instead. ASK LUCAS FIRST: its daily quota is small
 // Run it before and after every prompt change in src/lib/pipeline/decider.ts and compare the totals.
 //
 // Per case it reports:
@@ -22,7 +22,7 @@ const option = (name: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 // 13 seconds per Gemini call keeps the run under the free 5 requests per minute.
-const lite = args.includes("--lite");
+const lite = !args.includes("--main");
 const paceSeconds = Number(option("pace") ?? (lite ? 5 : 13));
 const only = option("only");
 const cases = EVAL_CASES.filter((c) => !only || c.name.includes(only));
@@ -50,7 +50,8 @@ for (const c of cases) {
   const packet = c.packet(now);
   const started = Date.now();
   const result = await decideFromPacket(c.idea, packet, {
-    generate: (call) => geminiGenerateJson({ ...call, prefer: lite ? "lite" : call.prefer }),
+    generate: geminiGenerateJson,
+    deciderModel: lite ? "lite" : "main",
     checkerLlm: false,
   });
   const ms = Date.now() - started;

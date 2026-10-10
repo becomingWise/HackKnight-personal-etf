@@ -20,6 +20,14 @@ const schema = z.object({
   // (mock | module | tiger, default mock) and whether the checker adds an LLM review.
   ANALYST_MODE: optional,
   CHECKER_LLM: flag,
+  // The decider's model: gemini-3.5-flash-lite unless this says gemini-3.5-flash.
+  DECIDER_MODEL: optional,
+  // The account's Gemini limits from AI Studio; every request cap is derived from them
+  // (src/lib/pipeline/budget.ts).
+  GEMINI_LITE_RPM: optional,
+  GEMINI_LITE_RPD: optional,
+  GEMINI_FLASH_RPM: optional,
+  GEMINI_FLASH_RPD: optional,
 
   // Snowflake was dropped (2026-10-09); the variable stays false and nothing reads it.
   FEATURE_SNOWFLAKE: flag,

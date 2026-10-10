@@ -189,6 +189,7 @@ export async function llmReview(
     timeoutMs: 6000,
     thinking: ThinkingLevel.MINIMAL,
     prefer: "lite",
+    fallback: false,
     signal,
   });
   return reviewSchema.parse(raw).issues.map((i) => `${i.symbol}: ${i.problem}`);

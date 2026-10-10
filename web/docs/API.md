@@ -138,19 +138,21 @@ A cached answer carries the trace of the run that produced it.
 
 ### Error responses
 
-| Status | `error.code`          | When                                                                                                                    |
-| ------ | --------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 400    | `invalid_request`     | Body is not JSON, or `idea` is missing, not a string, empty, or longer than 500 characters                              |
-| 422    | `not_enough_evidence` | **New.** The gate found fewer than 2 usable markets. The body also has `trace`. `error.message` is written for the user |
-| 429    | `rate_limited`        | Rate limit hit. `Retry-After` header gives the seconds to wait                                                          |
-| 502    | `no_match`            | Gemini is unavailable and the packet links fewer than 3 supported tickers to its markets                                |
-| 502    | `upstream_error`      | Unexpected failure                                                                                                      |
+| Status | `error.code`          | When                                                                                                                                                                                                                          |
+| ------ | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `invalid_request`     | Body is not JSON, or `idea` is missing, not a string, empty, or longer than 500 characters                                                                                                                                    |
+| 422    | `not_enough_evidence` | The gate found fewer than 2 usable markets. `error.message` says why in plain words and names 3 ideas that work; the same is in `error.reason` (the why alone) and `error.examples` (string array). The body also has `trace` |
+| 429    | `rate_limited`        | Per-IP limit hit (30 per minute, 600 per day). `Retry-After` gives the seconds to wait. The Gemini budget never causes a 429                                                                                                  |
+| 502    | `no_match`            | Gemini is unavailable and the packet links fewer than 3 supported tickers to its markets                                                                                                                                      |
+| 502    | `upstream_error`      | Unexpected failure                                                                                                                                                                                                            |
 
 ```json
 {
   "error": {
     "code": "not_enough_evidence",
-    "message": "Not enough live Polymarket evidence for this idea yet. Try naming a sector, event or theme (for example chips, oil, the Fed, crypto, defense)."
+    "message": "Polymarket has open markets near this idea, but they do not connect it to the stocks we cover (chips, AI and big tech, energy, defense, banks, crypto, interest rates). Ideas that work: \"AI chips and Taiwan risk\", \"Fed rate cuts and housing\", \"Crypto regulation\".",
+    "reason": "Polymarket has open markets near this idea, but they do not connect it to the stocks we cover (chips, AI and big tech, energy, defense, banks, crypto, interest rates).",
+    "examples": ["AI chips and Taiwan risk", "Fed rate cuts and housing", "Crypto regulation"]
   },
   "trace": [
     {
@@ -188,17 +190,15 @@ The adapter must reject on any non-2xx status; the controller then shows its own
   errors back once. If the second answer still fails, the stocks that pass on their own are kept when there
   are at least 3; otherwise the evidence-only fallback answers (`"source": "fallback"`): the analyst's first
   ticker signals, each with its market and odds.
-- **Timing.** Typically 4 to 9 seconds: the analyst under 1 second, one Gemini call for the rest. Gemini has
-  20 seconds in total; after that the fallback answers in the same shape.
+- **Timing.** Typically 3 to 5 seconds for a new idea: the analyst 1 to 2 seconds (search plan and Polymarket
+  searches), one Gemini call of about 2 seconds for the decision. Gemini has 20 seconds in total; after that
+  the fallback answers in the same shape.
 - **Caching.** Answers are cached in Tiger for 15 minutes, shared by all servers. Ideas that differ only in case, spacing or surrounding punctuation share an entry. The body says so: `"cached": true` with `"cachedAt"` (ISO time the answer was computed), or `"cached": false, "cachedAt": null`. The same is in the headers `X-Cache: HIT|MISS` and `X-Cache-Age` (seconds). Fallback answers and 422s are never cached. Cached answers return in about 0.1 s.
-- **Model backup.** If `gemini-3.5-flash` is rate limited or overloaded, `gemini-3.5-flash-lite` answers instead (still `"source": "gemini"`); a call that fails or times out is retried once on the lite model.
-- **Rate limits.** 30 requests per minute and 600 per day per IP. Requests that are not answered from the cache are also capped at 600 per day in total.
-- **Gemini quota (free tier, measured 2026-10-09: `gemini-3.5-flash` 5 requests per minute, `gemini-3.5-flash-lite` 15).**
-  An uncached request makes **1 Gemini call** normally and **2 at most** (the decision plus one revision, or
-  one failed call plus one retry). The analyst, the gate and the code checker make none. At most 8 uncached
-  requests per minute, across all servers, may reach Gemini; later ones in that minute get the evidence-only
-  answer. **Worst case: 16 Gemini calls per minute** against a combined quota of 20, and 1,200 per day. With
-  `CHECKER_LLM=true` each request can make 3 calls (worst case 24 per minute), which is why it is off.
+- **Models.** The decider runs on `gemini-3.5-flash-lite`. `DECIDER_MODEL=gemini-3.5-flash` switches it to the main model (then the lite model is its backup on 429/503). The lite model never spills over to the main one. The manager's note (section 4b) still uses `gemini-3.5-flash`.
+- **Gemini calls per uncached request.** Normally **2** (search plan + decision), **3 at most** (plus one revision or one retry), all on the lite model; **1** when the search plan is cached (same idea within 24 hours); **0** for a cached answer and for an idea that stops at the gate with a cached plan. With `CHECKER_LLM=true` one more.
+- **Gemini budget.** Every cap is derived from the account's limits in `web/src/lib/pipeline/budget.ts`, set with `GEMINI_LITE_RPM`, `GEMINI_LITE_RPD`, `GEMINI_FLASH_RPM`, `GEMINI_FLASH_RPD`. Visitors' requests may use 80% of a model's per-minute quota and 75% of its daily quota (the rest is for the warm job, manager's notes and evals), and one 30-minute window at most 40% of the day's requests. With the assumed limits of 15 per minute and 200 per day for the lite model: **4 uncached requests per minute, 20 per 30 minutes, 50 per day, and 10 per 30 minutes per IP** may use Gemini, which is at most 12 calls per minute, 60 per 30 minutes and 150 per day.
+- **Over budget is not an error.** A request beyond a cap is answered without Gemini: the analyst searches by keyword and the stocks come from the evidence alone (`"source": "fallback"`, the `decider` trace entry says `skipped`). Such answers are not cached, so the idea gets an AI answer once the budget frees up. Cached answers are never affected.
+- **Rate limits.** 30 requests per minute and 600 per day per IP, cached or not (`429`).
 - **CORS.** Allowed origins: `https://becomingwise.github.io`, `http://localhost:8000`,
   `http://127.0.0.1:8000`, `http://localhost:3000`, `http://127.0.0.1:3000`. `OPTIONS` preflight is
   answered. More origins can be added with the `CORS_ORIGINS` env var (comma-separated).
@@ -265,7 +265,9 @@ Every id in `themes[].marketIds` and `tickerSignals[].marketIds` must be the `id
 
 ### `POST /api/analyze`
 
-Runs only the analyst (and reports what the gate would say). No Gemini call. Use it to see what the decider
+Runs only the analyst (and reports what the gate would say). The mock analyst makes one Gemini call on the
+lighter model for a new idea (its search plan, cached for a day); nothing else calls Gemini. When the gate
+would fail, `gate.reason` has the plain-words explanation. Use it to see what the decider
 is given for an idea, or to check a new analyst.
 
 Request: `{ "idea": string }`, as for `/api/stocks`.
@@ -330,11 +332,11 @@ Response — `200`:
 **Which analyst answers** is set by the `ANALYST_MODE` env var (shown in `GET /api/health` under
 `pipeline.analystMode`):
 
-| `ANALYST_MODE`   | Analyst                                                                                                                                                                                                                         |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mock` (default) | Built in, no LLM: keyword → sector, Polymarket search, the weighting universe's market → ticker links, 24-hour and 7-day changes from the odds history in Tiger (Polymarket's own change fields where Tiger has no history yet) |
-| `module`         | `analyze(idea)` exported by `web/src/lib/analyst/index.ts` (HANDOFF option A)                                                                                                                                                   |
-| `tiger`          | Reads the tables `analyst_packets` and `market_analysis` (HANDOFF option B)                                                                                                                                                     |
+| `ANALYST_MODE`   | Analyst                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mock` (default) | Built in: one `gemini-3.5-flash-lite` call turns the idea into 3 to 6 search queries and the sectors it touches (cached 24 hours, 5 s limit, keywords instead when it fails or the budget is used up), then Polymarket search, the weighting universe's market → ticker links, 24-hour and 7-day changes from the odds history in Tiger (Polymarket's own change fields where Tiger has no history yet) |
+| `module`         | `analyze(idea)` exported by `web/src/lib/analyst/index.ts` (HANDOFF option A)                                                                                                                                                                                                                                                                                                                           |
+| `tiger`          | Reads the tables `analyst_packets` and `market_analysis` (HANDOFF option B)                                                                                                                                                                                                                                                                                                                             |
 
 If the `module` or `tiger` analyst throws or returns an invalid packet, the mock answers instead; the
 `analyst` trace entry then has `"status": "warn"` and the packet's first warning says why.
@@ -365,7 +367,7 @@ A packet that breaks the schema gets `400 invalid_request` with the field in the
 whose `generatedAt` is more than 60 minutes old gets `422 not_enough_evidence`.
 
 Answers are cached for 15 minutes per idea and exact packet. Uncached requests count against the same
-Gemini limits as `/api/stocks`.
+Gemini budget as `/api/stocks` (section 1, Behaviour).
 
 PowerShell (analyze, then decide on that packet):
 
@@ -378,8 +380,9 @@ Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/decide" -Co
 **Eval.** `pnpm eval:decider` in `/web` runs the decider on 10 fixed ideas with fixed mock packets
 (`web/src/lib/pipeline/evalCases.ts`) and prints, per case and in total: whether the first answer passed
 every checker rule, whether the final answer did, whether every number in it is grounded in the cited
-markets, the Gemini calls, the latency, and how many reasons paste a market question word for word. It is paced for
-the free quota (about 3 minutes) and costs 9 calls of the daily quota; `--lite` runs it on the backup model. Run it before
+markets, the Gemini calls, the latency, and how many reasons paste a market question word for word. It runs on
+`gemini-3.5-flash-lite`, the decider's default model (about 1 minute, 9 calls); `--main` runs it on
+`gemini-3.5-flash`, whose daily quota is small, so ask Lucas first. Run it before
 and after every change to the prompt in `web/src/lib/pipeline/decider.ts`.
 
 ---

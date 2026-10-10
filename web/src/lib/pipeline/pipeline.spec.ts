@@ -4,13 +4,16 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { createMockAnalyst } from "../analyst/mock";
+import { createMockAnalyst, relevance } from "../analyst/mock";
 import { evidencePacketSchema, type EvidencePacket } from "../analyst/packet";
+import { createPlanner } from "../analyst/plan";
 import { createTigerAnalyst } from "../analyst/tiger";
+import { memoryApiCache } from "../cache/apiCache";
 import type { MarketCandidate } from "../polymarket/search";
 import type { GenerateJson } from "../sponsors/gemini";
 import { formatOdds, oddsAreAccurate, responseSchema } from "../stocks/contract";
 import { SYMBOLS } from "../stocks/universe";
+import { aiBuckets, aiCaps, deciderModel } from "./budget";
 import { check, quotedPoints, ungroundedNumbers } from "./checker";
 import { EVAL_CASES } from "./evalCases";
 import { GATE, gate } from "./gate";
@@ -99,6 +102,9 @@ function deps(generate: GenerateJson, over: Partial<HandlerDeps> = {}): HandlerD
     search,
     rateLimit: async () => ({ allowed: true, retryAfterSeconds: 0 }),
     mode: "mock",
+    // Keyword search unless a test supplies a planner.
+    plan: null,
+    deciderModel: "lite",
     checkerLlm: false,
     now: () => NOW,
     ...over,
@@ -233,7 +239,14 @@ describe("POST /api/stocks", () => {
     const res = await POST(post({ idea: "zzzz qqqq" }));
     expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.error).toEqual({ code: "not_enough_evidence", message: expect.any(String) });
+    const reason =
+      "Polymarket has open markets near this idea, but they do not connect it to the stocks we cover (chips, AI and big tech, energy, defense, banks, crypto, interest rates).";
+    expect(body.error).toEqual({
+      code: "not_enough_evidence",
+      message: `${reason} Ideas that work: "AI chips and Taiwan risk", "Fed rate cuts and housing", "Crypto regulation".`,
+      reason,
+      examples: ["AI chips and Taiwan risk", "Fed rate cuts and housing", "Crypto regulation"],
+    });
     expect(traceOf(body).gate).toMatchObject({
       status: "failed",
       summary:
@@ -244,32 +257,34 @@ describe("POST /api/stocks", () => {
   });
 
   it("answers 502 instead of inventing a basket when Gemini is down and no ticker is linked", async () => {
-    const unlinked = async () => [
-      market({ id: "1", question: "Will the zebra migration start early?" }),
-      market({ id: "2", question: "Will the zebra migration cross the river?" }),
-    ];
-    const { POST } = createStocksHandler(deps(gemini(new Error("down")), { search: unlinked }));
-    const res = await POST(post({ idea: "zebra migration" }));
+    const unlinked = { ...(await mockPacket()), themes: [], tickerSignals: [] };
+    const { POST } = createStocksHandler(
+      deps(gemini(new Error("down")), { analysts: { mock: async () => unlinked } }),
+    );
+    const res = await POST(post({ idea: "AI chips and Taiwan risk" }));
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: { code: "no_match", message: expect.any(String) } });
   });
 
-  it("skips the decider when the per-minute Gemini budget is used up", async () => {
+  it("answers without Gemini, not with an error, when the Gemini budget is used up", async () => {
     const generate = gemini(GOOD);
+    const plan = vi.fn(async () => null);
     const { POST } = createStocksHandler(
       deps(generate, {
+        plan,
         rateLimit: async (limits) => ({
-          allowed: !limits.some((l) => l.bucket === "decider:minute"),
+          allowed: !limits.some((l) => l.bucket === "ai:day"),
           retryAfterSeconds: 30,
         }),
       }),
     );
     const body = expectContractShape(await (await POST(post({ idea: "chips" }))).json());
     expect(generate).not.toHaveBeenCalled();
+    expect(plan).not.toHaveBeenCalled();
     expect(body.source).toBe("fallback");
     expect(traceOf(body).decider).toMatchObject({
       status: "skipped",
-      summary: "skipped: the per-minute Gemini budget is used up",
+      summary: "skipped: the Gemini budget for this minute or day is used up",
     });
   });
 
@@ -501,6 +516,112 @@ describe("analyst", () => {
     expect(analystMode("Tiger")).toBe("tiger");
     expect(analystMode("module")).toBe("module");
     expect(analystMode("nonsense")).toBe("mock");
+  });
+});
+
+describe("search plan and models", () => {
+  const PLAN = { queries: ["Olympics 2028 host", "sports league expansion"], sectors: [] };
+  const olympics = market({
+    id: "77",
+    question: "Will the 2028 Olympics add a new sport?",
+    eventTitle: "Olympics 2028",
+  });
+
+  it("plans the search with one cached lite call and searches the planned queries", async () => {
+    const generate = gemini({
+      queries: ["China Taiwan invasion", "AI chip export"],
+      sectors: ["semis"],
+    });
+    const cache = memoryApiCache();
+    const searched: string[] = [];
+    const planner = createPlanner({ generate, cache });
+    const analyst = createMockAnalyst({
+      plan: planner,
+      now: () => NOW,
+      search: async (q) => (searched.push(q), search(q)),
+    });
+    const packet = evidencePacketSchema.parse(await analyst("Silicon shield"));
+    expect(generate.mock.calls[0][0]).toMatchObject({
+      prefer: "lite",
+      fallback: false,
+      timeoutMs: 5000,
+    });
+    expect(searched).toEqual(expect.arrayContaining(["China Taiwan invasion", "AI chip export"]));
+    expect(packet.warnings[0]).toContain(
+      "search planned by Gemini (China Taiwan invasion; AI chip export)",
+    );
+    expect(gate(packet, NOW).ok).toBe(true);
+
+    await analyst("  silicon shield ");
+    expect(generate).toHaveBeenCalledTimes(1); // the plan is cached per idea
+  });
+
+  it("falls back to keywords when the planner fails", async () => {
+    const planner = createPlanner({ generate: gemini(new Error("timeout")) });
+    const packet = await createMockAnalyst({ plan: planner, search, now: () => NOW })(
+      "AI chips and Taiwan risk",
+    );
+    expect(packet.warnings[0]).toMatch(/keyword search/);
+    expect(gate(packet, NOW).ok).toBe(true);
+  });
+
+  it("rates a market by the planned query that found it", () => {
+    expect(relevance("Underwater basket weaving", olympics)).toBe(0.3);
+    expect(relevance("Underwater basket weaving", olympics, "Olympics 2028 host")).toBeGreaterThan(
+      0.4,
+    );
+  });
+
+  it("says in plain words why an idea outside every sector cannot be answered", async () => {
+    const generate = gemini(GOOD);
+    const { POST } = createStocksHandler(
+      deps(generate, { plan: async () => PLAN, search: async () => [olympics] }),
+    );
+    const res = await POST(post({ idea: "Underwater basket weaving championships" }));
+    expect(res.status).toBe(422);
+    const { error } = await res.json();
+    expect(error.reason).toMatch(/do not connect it to the stocks we cover/);
+    expect(error.examples).toHaveLength(3);
+    expect(error.message).toContain('Ideas that work: "AI chips and Taiwan risk"');
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("decides on the lighter model and never spills over to the main one", async () => {
+    const generate = gemini(GOOD);
+    await createStocksHandler(deps(generate)).POST(post({ idea: "chips" }));
+    expect(generate.mock.calls[0][0]).toMatchObject({ prefer: "lite", fallback: false });
+
+    const upgraded = gemini(GOOD);
+    await createStocksHandler(deps(upgraded, { deciderModel: "main" })).POST(
+      post({ idea: "chips" }),
+    );
+    expect(upgraded.mock.calls[0][0]).toMatchObject({ prefer: "main", fallback: true });
+    expect(deciderModel(undefined)).toBe("lite");
+    expect(deciderModel("gemini-3.5-flash-lite")).toBe("lite");
+    expect(deciderModel("gemini-3.5-flash")).toBe("main");
+  });
+
+  it("derives every cap from the account's limits", () => {
+    const limits = { lite: { rpm: 15, rpd: 200 }, flash: { rpm: 5, rpd: 40 } };
+    // Lite decider: 1 plan + 2 decisions = 3 lite calls per request at most.
+    expect(aiCaps(limits, "lite", false)).toEqual({
+      callsPerRequest: { lite: 3, flash: 0 },
+      perMinute: 4,
+      per30Minutes: 20,
+      perDay: 50,
+      perIp30Minutes: 10,
+    });
+    // Main decider: its 2 calls are bounded by the main model's much smaller quota.
+    expect(aiCaps(limits, "main", false)).toMatchObject({ perMinute: 2, perDay: 15 });
+    const caps = aiCaps(limits, "lite", false);
+    expect(caps.perMinute * caps.callsPerRequest.lite).toBeLessThanOrEqual(limits.lite.rpm);
+    expect(caps.perDay * caps.callsPerRequest.lite).toBeLessThanOrEqual(limits.lite.rpd);
+    expect(aiBuckets("ip", caps).map((b) => b.bucket)).toEqual([
+      "ai:minute",
+      "ai:30min",
+      "ai:day",
+      "ai:ip30min:ip",
+    ]);
   });
 });
 

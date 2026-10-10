@@ -16,6 +16,7 @@ import {
   type TraceStep,
 } from "../stocks/contract";
 import { STOCK_BY_SYMBOL } from "../stocks/universe";
+import type { DeciderModel } from "./budget";
 import { check, llmReview, type CheckResult, type DecidedStock } from "./checker";
 import { DECIDER_SYSTEM, DECISION_JSON_SCHEMA, deciderPrompt, revisionPrompt } from "./decider";
 import { gate } from "./gate";
@@ -39,9 +40,11 @@ export type PipelineDeps = {
   generate: GenerateJson;
   analysts: Record<AnalystMode, Analyst>;
   mode: AnalystMode;
+  /** Which model decides: the lighter one by default (DECIDER_MODEL). */
+  deciderModel?: DeciderModel;
   /** Adds the LLM review to the checker (one more Gemini call). */
   checkerLlm: boolean;
-  /** False when the per-minute Gemini budget is used up: the decider is skipped. */
+  /** False when the Gemini budget is used up: the decider is skipped. */
   deciderBudget?: () => Promise<boolean>;
   /** Receives the packet as soon as the analyst is done, e.g. to record its odds. */
   onPacket?: (packet: EvidencePacket) => void;
@@ -159,7 +162,10 @@ export function fallbackFromPacket(packet: EvidencePacket): {
 export async function decideFromPacket(
   idea: string,
   input: EvidencePacket,
-  deps: Pick<PipelineDeps, "generate" | "checkerLlm" | "deciderBudget" | "now" | "log">,
+  deps: Pick<
+    PipelineDeps,
+    "generate" | "deciderModel" | "checkerLlm" | "deciderBudget" | "now" | "log"
+  >,
   signal?: AbortSignal,
   trace: TraceStep[] = [],
 ): Promise<PipelineResult> {
@@ -184,6 +190,7 @@ export async function decideFromPacket(
   started = Date.now();
   const remaining = () => GEMINI_BUDGET_MS - (Date.now() - started);
   const base = deciderPrompt(idea, packet);
+  const model = deps.deciderModel ?? "lite";
   let calls = 0;
   let geminiCalls = 0;
   let revisions = 0;
@@ -206,7 +213,9 @@ export async function decideFromPacket(
         schema: DECISION_JSON_SCHEMA,
         timeoutMs: Math.min(10_000, remaining()),
         // After a failed or timed-out call, the next one goes to the lighter, faster model.
-        prefer: failedCall ? "lite" : "main",
+        prefer: failedCall ? "lite" : model,
+        // The main model is an opt-in upgrade: the lighter one never spills over to it.
+        fallback: model === "main",
         signal,
       });
     } catch (err) {
@@ -280,7 +289,7 @@ export async function decideFromPacket(
     answer = fallbackFromPacket(packet);
     source = "fallback";
     const why = !budgetOk
-      ? "skipped: the per-minute Gemini budget is used up"
+      ? "skipped: the Gemini budget for this minute or day is used up"
       : last
         ? `answer rejected after ${calls} Gemini ${calls === 1 ? "call" : "calls"}`
         : `Gemini unavailable (${calls} ${calls === 1 ? "call" : "calls"} failed)`;

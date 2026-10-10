@@ -1,6 +1,7 @@
 // The MOCK analyst: an EvidencePacket built by code we already had: Polymarket search, the
-// weighting universe's market → ticker links, and the odds history in Tiger. No LLM. The real
-// analyst replaces it (docs/HANDOFF.md) and only has to return the same packet.
+// weighting universe's market → ticker links, and the odds history in Tiger. Its only LLM step
+// is the optional search plan (./plan.ts); without it, keywords pick the sectors and queries.
+// The real analyst replaces it (docs/HANDOFF.md) and only has to return the same packet.
 import type { PastOdds } from "../odds/repo";
 import type { MarketCandidate, SearchMarkets } from "../polymarket/search";
 import { formatOdds } from "../stocks/contract";
@@ -14,6 +15,7 @@ import {
   type UniverseSignal,
 } from "../stocks/universe";
 import type { Analyst, EvidencePacket, Signal } from "./packet";
+import type { Planner } from "./plan";
 
 const MAX_SEARCHES = 10;
 const MAX_MARKETS = 15;
@@ -27,6 +29,8 @@ export type MarketAnalysis = {
 
 export type MockAnalystDeps = {
   search: SearchMarkets;
+  /** Turns the idea into search queries and sectors with one LLM call; keywords are used without it. */
+  plan?: Planner;
   /** Odds 24 hours and 7 days ago from Tiger; Polymarket's own change fields fill the gaps. */
   pastOdds?: (ids: string[], now: Date) => Promise<PastOdds>;
   /** Analysis written by the real analyst for some of the markets; overrides the mock's. */
@@ -52,12 +56,18 @@ function tokens(text: string): Set<string> {
   return new Set(words.filter((w) => !STOP_WORDS.has(w)).map((w) => w.replace(/s$/, "")));
 }
 
-/** 0 to 1: a market the universe links to the idea's sectors starts at 0.5, a text hit at 0.3; shared words add up to 0.5. */
-export function relevance(idea: string, market: MarketCandidate): number {
-  const wanted = tokens(idea);
+/**
+ * 0 to 1: a market the universe links to the idea's sectors starts at 0.5, a text hit at 0.3;
+ * words shared with the idea, or with the planned query that found the market, add up to 0.5.
+ */
+export function relevance(idea: string, market: MarketCandidate, query?: string): number {
   const found = tokens(`${market.question} ${market.eventTitle}`);
-  const shared = [...wanted].filter((w) => found.has(w)).length;
-  const overlap = wanted.size ? shared / wanted.size : 0;
+  const share = (text: string) => {
+    const wanted = tokens(text);
+    return wanted.size ? [...wanted].filter((w) => found.has(w)).length / wanted.size : 0;
+  };
+  // A planned query is one step away from the idea, so its words count a little less.
+  const overlap = Math.max(share(idea), query ? 0.8 * share(query) : 0);
   return round(clamp((market.linkedSymbols.length ? 0.5 : 0.3) + 0.5 * overlap, 0, 1), 2);
 }
 
@@ -72,7 +82,7 @@ async function gatherCandidates(
   signals: UniverseSignal[],
   search: SearchMarkets,
   abort?: AbortSignal,
-): Promise<MarketCandidate[]> {
+): Promise<{ candidates: MarketCandidate[]; foundBy: Map<string, string> }> {
   const freeText = [...new Set(queries.map((q) => q.trim()).filter(Boolean))];
   const signalJobs = signals.slice(0, Math.max(0, MAX_SEARCHES - Math.min(freeText.length, 5)));
   const textJobs = freeText.slice(0, MAX_SEARCHES - signalJobs.length);
@@ -104,10 +114,16 @@ async function gatherCandidates(
   });
   // Then round-robin over the free-text queries so each one is represented.
   const longest = Math.max(0, ...textResults.map((r) => r.length));
+  const foundBy = new Map<string, string>();
   for (let rank = 0; rank < longest; rank++) {
-    for (const results of textResults) if (results[rank]) add(results[rank]);
+    textResults.forEach((results, i) => {
+      const market = results[rank];
+      if (!market) return;
+      add(market);
+      if (!foundBy.has(market.id)) foundBy.set(market.id, textJobs[i]);
+    });
   }
-  return [...byId.values()];
+  return { candidates: [...byId.values()], foundBy };
 }
 
 /** "+1.2 pts": the way odds moves are written for the decider. */
@@ -147,22 +163,30 @@ function mockAnalysis(
 export function createMockAnalyst(deps: MockAnalystDeps): Analyst {
   return async function mockAnalyst(idea, abort) {
     const now = deps.now?.() ?? new Date();
+    // One LLM call plans the search; without it (budget used up, timeout, error) keywords do.
+    const plan = (await deps.plan?.(idea, abort).catch(() => null)) ?? null;
+    const sectors = plan ? plan.sectors : matchSectors(idea);
+    const queries = plan ? plan.queries : [idea.slice(0, 80), ...keywordHits(idea)];
     const warnings = [
-      "Mock analyst: keyword search and fixed market-to-ticker links, no analysis.",
+      plan
+        ? `Mock analyst: search planned by Gemini (${queries.join("; ")}), fixed market-to-ticker links, no analysis.`
+        : "Mock analyst: keyword search and fixed market-to-ticker links, no analysis.",
     ];
-
-    const sectors = matchSectors(idea);
-    if (!sectors.length) warnings.push("The idea matched no sector keywords; text search only.");
+    if (!sectors.length) warnings.push("The idea does not map to any supported sector.");
     const focus = new Set(STOCKS.filter((s) => sectors.includes(s.sectorId)).map((s) => s.symbol));
 
-    const candidates = await gatherCandidates(
-      [idea.slice(0, 80), ...keywordHits(idea)],
+    const { candidates, foundBy } = await gatherCandidates(
+      queries,
       signalsForSectors(sectors),
       deps.search,
       abort,
     );
     const ranked = candidates
-      .map((m) => ({ m, relevance: relevance(idea, m) }))
+      // Without a supported sector no market can matter for the stocks we cover: none passes the gate.
+      .map((m) => {
+        const score = relevance(idea, m, plan ? foundBy.get(m.id) : undefined);
+        return { m, relevance: sectors.length ? score : Math.min(score, 0.3) };
+      })
       .sort((a, b) => b.relevance - a.relevance)
       .slice(0, MAX_MARKETS);
     const ids = ranked.map((r) => r.m.id);

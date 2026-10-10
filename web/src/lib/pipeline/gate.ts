@@ -24,6 +24,27 @@ export type GateResult = {
   message: string;
 };
 
+/** Why there is not enough evidence, for the user: the most common reason markets were rejected. */
+function why(
+  usable: number,
+  found: number,
+  rejected: { irrelevant: number; illiquid: number; ended: number },
+): string {
+  if (!found) return "Polymarket has no open markets that match this idea.";
+  const lead =
+    usable === 1
+      ? "Only one Polymarket market could be used for this idea, and an answer needs at least two. "
+      : "";
+  const top = Math.max(rejected.irrelevant, rejected.illiquid, rejected.ended);
+  if (top === rejected.irrelevant) {
+    return `${lead}Polymarket has open markets near this idea, but they do not connect it to the stocks we cover (chips, AI and big tech, energy, defense, banks, crypto, interest rates).`;
+  }
+  if (top === rejected.illiquid) {
+    return `${lead}The Polymarket markets on this idea have too little money in them for their odds to be trusted.`;
+  }
+  return `${lead}The Polymarket markets on this idea have already closed.`;
+}
+
 export function gate(packet: EvidencePacket, now: Date = new Date()): GateResult {
   const ageMinutes = (now.getTime() - Date.parse(packet.generatedAt)) / 60_000;
   const stale = ageMinutes > GATE.maxPacketAgeMinutes;
@@ -63,7 +84,8 @@ export function gate(packet: EvidencePacket, now: Date = new Date()): GateResult
       ok: false,
       packet: narrowed,
       summary: `not enough evidence: the packet is ${Math.round(ageMinutes)} minutes old (limit ${GATE.maxPacketAgeMinutes})`,
-      message: "The market evidence for this idea is out of date. Please try again.",
+      message:
+        "The market data collected for this idea is more than an hour old, so it was not used.",
     };
   }
   if (usable.length < GATE.minMarkets) {
@@ -71,8 +93,7 @@ export function gate(packet: EvidencePacket, now: Date = new Date()): GateResult
       ok: false,
       packet: narrowed,
       summary: `not enough evidence: ${counts}, need ${GATE.minMarkets}`,
-      message:
-        "Not enough live Polymarket evidence for this idea yet. Try naming a sector, event or theme (for example chips, oil, the Fed, crypto, defense).",
+      message: why(usable.length, packet.markets.length, rejected),
     };
   }
   return { ok: true, packet: narrowed, summary: `passed: ${counts}`, message: "" };

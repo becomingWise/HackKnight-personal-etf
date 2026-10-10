@@ -5,7 +5,7 @@ import { db } from "../db/client";
 
 export const CACHE_TTL_SECONDS = 15 * 60;
 
-export type CacheKind = "stocks" | "decide" | "weights" | "letter";
+export type CacheKind = "stocks" | "decide" | "plan" | "weights" | "letter";
 export type CacheEntry<T> = { value: T; createdAt: Date; expiresAt: Date };
 
 export type ApiCache = {
@@ -33,6 +33,9 @@ export function normalizeIdea(idea: string): string {
 
 // The version is part of the key: bump it when the response shape changes.
 export const stocksCacheKey = (idea: string) => hash(`stocks:v2:${normalizeIdea(idea)}`);
+
+/** The mock analyst's search plan for an idea. */
+export const planCacheKey = (idea: string) => hash(`plan:v1:${normalizeIdea(idea)}`);
 
 /** A decision depends on the idea and on every field of the packet it was made from. */
 export const decideCacheKey = (idea: string, packet: unknown) =>

@@ -17,6 +17,8 @@ export type GenerateJsonArgs = {
   thinking?: ThinkingLevel;
   /** Which model to try first; the other one is the backup on quota (429) or overload (503). */
   prefer?: "main" | "lite";
+  /** false: only the preferred model is tried. Default true. */
+  fallback?: boolean;
   signal?: AbortSignal;
 };
 
@@ -32,14 +34,16 @@ export const geminiGenerateJson: GenerateJson = async ({
   timeoutMs,
   thinking = ThinkingLevel.LOW,
   prefer = "main",
+  fallback = true,
   signal,
 }) => {
   const apiKey = env().GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
   client ??= new GoogleGenAI({ apiKey });
   const timeout = AbortSignal.timeout(timeoutMs);
-  const models =
+  const order =
     prefer === "lite" ? [GEMINI_LITE_MODEL, GEMINI_MODEL] : [GEMINI_MODEL, GEMINI_LITE_MODEL];
+  const models = fallback ? order : order.slice(0, 1);
   let response: Awaited<ReturnType<typeof client.models.generateContent>> | undefined;
   for (const [i, model] of models.entries()) {
     try {

@@ -6,6 +6,13 @@ export const MIN_STOCKS = 3;
 export const MAX_STOCKS = 5;
 export const MAX_IDEA_LENGTH = 500;
 
+/** Ideas that are known to work, offered when an idea cannot be answered. */
+export const EXAMPLE_IDEAS = [
+  "AI chips and Taiwan risk",
+  "Fed rate cuts and housing",
+  "Crypto regulation",
+] as const;
+
 export const requestSchema = z.object({
   idea: z
     .string({ error: "idea must be a string" })

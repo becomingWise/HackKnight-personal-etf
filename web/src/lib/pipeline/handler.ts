@@ -4,6 +4,7 @@
 //   POST /api/decide                         idea + packet → gate → decider → checker
 import type { MockAnalystDeps } from "../analyst/mock";
 import { evidencePacketSchema, type Analyst, type EvidencePacket } from "../analyst/packet";
+import { createPlanner, type Planner } from "../analyst/plan";
 import {
   cacheHeaders,
   decideCacheKey,
@@ -20,12 +21,14 @@ import { recordObservations } from "../odds/service";
 import { searchMarkets, type SearchMarkets } from "../polymarket/search";
 import { geminiGenerateJson, type GenerateJson } from "../sponsors/gemini";
 import {
+  EXAMPLE_IDEAS,
   NoMatchError,
   requestSchema,
   type FindStocksResponse,
   type TraceStep,
 } from "../stocks/contract";
-import { gate } from "./gate";
+import { aiBuckets, deciderModel, type DeciderModel } from "./budget";
+import { gate, type GateResult } from "./gate";
 import {
   analystMode,
   decideFromPacket,
@@ -37,18 +40,10 @@ import {
   type PipelineResult,
 } from "./run";
 
-// Judges may share one venue IP, so the per-IP limit is generous. The global daily cap
-// protects the free Gemini quota and only counts requests that actually reach Gemini;
-// cached answers are free.
+// Requests per visitor IP, cached or not. Judges may share one venue IP, so this is generous;
+// what protects the Gemini quota is the budget in ./budget.ts, which only uncached requests use.
 export const PER_IP_PER_MINUTE = 30;
 export const PER_IP_PER_DAY = 600;
-export const GLOBAL_UNCACHED_PER_DAY = 600;
-/**
- * Uncached requests per minute that may call Gemini, across all servers. Each makes at most 2
- * calls, so the worst case is 16 a minute against a measured free quota of 5 (main) + 15 (lite).
- * Requests beyond this get the evidence-only answer.
- */
-export const DECIDER_PER_MINUTE = 8;
 const MAX_BODY_BYTES = 64 * 1024;
 
 export type HandlerDeps = {
@@ -61,9 +56,12 @@ export type HandlerDeps = {
   record?: (packet: EvidencePacket) => Promise<unknown>;
   /** Odds 24 hours and 7 days ago, for the mock analyst. */
   pastOdds?: MockAnalystDeps["pastOdds"];
-  /** These three default to ANALYST_MODE, the built-in analysts and CHECKER_LLM. */
+  /** The mock analyst's search planner. Default: one Gemini call, cached. null: keywords only. */
+  plan?: Planner | null;
+  /** These default to ANALYST_MODE, the built-in analysts, DECIDER_MODEL and CHECKER_LLM. */
   mode?: AnalystMode;
   analysts?: Partial<Record<AnalystMode, Analyst>>;
+  deciderModel?: DeciderModel;
   checkerLlm?: boolean;
   now?: () => Date;
   log?: (event: string, detail?: Record<string, unknown>) => void;
@@ -89,22 +87,33 @@ export const defaultStocksDeps: HandlerDeps = {
   log: (event, detail) => console.log(JSON.stringify({ at: "pipeline", event, ...detail })),
 };
 
-function pipelineDeps(deps: HandlerDeps): PipelineDeps {
-  const mock = { search: deps.search, pastOdds: deps.pastOdds, now: deps.now };
+/** `ai: false` runs the whole workflow without Gemini: keyword search, evidence-only selection. */
+function pipelineDeps(deps: HandlerDeps, ai: boolean): PipelineDeps {
+  const plan =
+    deps.plan === null || !ai
+      ? undefined
+      : (deps.plan ?? createPlanner({ generate: deps.generate, cache: deps.cache }));
+  const mock = { search: deps.search, pastOdds: deps.pastOdds, now: deps.now, plan };
   return {
     generate: deps.generate,
     analysts: { ...defaultAnalysts(mock), ...deps.analysts },
     mode: deps.mode ?? analystMode(),
+    deciderModel: deps.deciderModel ?? deciderModel(),
     checkerLlm: deps.checkerLlm ?? env().CHECKER_LLM,
-    deciderBudget: async () =>
-      (
-        await deps.rateLimit([
-          { bucket: "decider:minute", windowSeconds: 60, max: DECIDER_PER_MINUTE },
-        ])
-      ).allowed,
+    deciderBudget: async () => ai,
     now: deps.now,
     log: deps.log,
   };
+}
+
+/**
+ * Counts one uncached request against the Gemini budget. The per-minute and per-visitor counters
+ * go first, so a burst that is turned away does not eat into the day's budget.
+ */
+async function aiAllowed(request: Request, deps: HandlerDeps): Promise<boolean> {
+  const [minute, session, day, perIp] = aiBuckets(ipKey(clientIp(request)));
+  if (!(await deps.rateLimit([minute, perIp])).allowed) return false;
+  return (await deps.rateLimit([session, day])).allowed;
 }
 
 export class NotEnoughEvidenceError extends Error {
@@ -136,13 +145,14 @@ export async function computeStocks(
   idea: string,
   deps: HandlerDeps,
   signal?: AbortSignal,
+  ai = true,
 ): Promise<FindStocksResponse> {
   // Odds are recorded while Gemini works, so the answer is not delayed.
   let recording: Promise<unknown> | undefined;
   const result = await runPipeline(
     idea,
     {
-      ...pipelineDeps(deps),
+      ...pipelineDeps(deps, ai),
       onPacket: (packet) => {
         recording = deps.record?.(packet).catch(() => {});
       },
@@ -151,6 +161,25 @@ export async function computeStocks(
   );
   await recording;
   return unwrap(result, deps);
+}
+
+/** The analyst's packet for an idea and what the gate makes of it. No decision, so at most the cached search plan's one Gemini call. */
+export async function currentEvidence(
+  idea: string,
+  deps: HandlerDeps,
+  signal?: AbortSignal,
+  ai = true,
+): Promise<{ packet: EvidencePacket; gated: GateResult; trace: TraceStep[] }> {
+  const { packet, step } = await runAnalyst(idea, pipelineDeps(deps, ai), signal);
+  const started = Date.now();
+  const gated = gate(packet, deps.now?.() ?? new Date());
+  const gateStep: TraceStep = {
+    step: "gate",
+    status: gated.ok ? "ok" : "failed",
+    ms: Date.now() - started,
+    summary: gated.summary,
+  };
+  return { packet, gated, trace: [step, gateStep] };
 }
 
 // ---------- Shared HTTP pieces ----------
@@ -178,12 +207,12 @@ function perIpLimit(request: Request, deps: HandlerDeps, name: string) {
   ]);
 }
 
-/** Cache lookup, global Gemini cap, the computation, and the error mapping shared by /stocks and /decide. */
+/** Cache lookup, the Gemini budget, the computation, and the error mapping shared by /stocks and /decide. */
 async function answer(
   request: Request,
   deps: HandlerDeps,
   cache: { kind: "stocks" | "decide"; key: string },
-  compute: () => Promise<FindStocksResponse>,
+  compute: (ai: boolean) => Promise<FindStocksResponse>,
 ): Promise<Response> {
   const hitEntry = await deps.cache?.get<FindStocksResponse>(cache.kind, cache.key);
   if (hitEntry) {
@@ -195,20 +224,26 @@ async function answer(
     );
   }
 
-  const global = await deps.rateLimit([
-    { bucket: "findstocks:uncached", windowSeconds: 86_400, max: GLOBAL_UNCACHED_PER_DAY },
-  ]);
-  if (!global.allowed) return tooMany(request, global);
+  // Over budget is not an error: the request is answered without Gemini.
+  const ai = await aiAllowed(request, deps);
+  if (!ai) deps.log?.("ai_budget_used_up");
 
   try {
-    const result = await compute();
+    const result = await compute(ai);
     // Only AI answers are cached, so a fallback never sticks once Gemini is back.
     if (result.source === "gemini") await deps.cache?.set(cache.kind, cache.key, result);
     return json(request, 200, { ...result, cached: false, cachedAt: null }, cacheHeaders(null));
   } catch (err) {
     if (err instanceof NotEnoughEvidenceError) {
+      const examples = [...EXAMPLE_IDEAS];
       return json(request, 422, {
-        error: { code: "not_enough_evidence", message: err.message },
+        error: {
+          code: "not_enough_evidence",
+          message: `${err.message} Ideas that work: ${examples.map((e) => `"${e}"`).join(", ")}.`,
+          // The reason alone, and the examples as a list, for a frontend that renders its own text.
+          reason: err.message,
+          examples,
+        },
         trace: err.trace,
       });
     }
@@ -227,26 +262,28 @@ async function answer(
 
 const OPTIONS = (request: Request): Response => preflight(request);
 
+function invalidIdea(request: Request, read: { failed: string } | undefined, issue?: string) {
+  const message = read
+    ? `${read.failed} Expected { "idea": string }.`
+    : (issue ?? "Invalid request.");
+  return error(request, 400, "invalid_request", message);
+}
+
 // ---------- POST /api/stocks ----------
 
 export function createStocksHandler(deps: HandlerDeps = defaultStocksDeps) {
   async function POST(request: Request): Promise<Response> {
     const read = await readBody(request);
     const parsed = requestSchema.safeParse("body" in read ? read.body : undefined);
-    if ("failed" in read || !parsed.success) {
-      const message =
-        "failed" in read
-          ? `${read.failed} Expected { "idea": string }.`
-          : (parsed.error?.issues[0]?.message ?? "Invalid request.");
-      return error(request, 400, "invalid_request", message);
-    }
+    if ("failed" in read) return invalidIdea(request, read);
+    if (!parsed.success) return invalidIdea(request, undefined, parsed.error.issues[0]?.message);
     const { idea } = parsed.data;
 
     const perIp = await perIpLimit(request, deps, "findstocks");
     if (!perIp.allowed) return tooMany(request, perIp);
 
-    return answer(request, deps, { kind: "stocks", key: stocksCacheKey(idea) }, () =>
-      computeStocks(idea, deps, request.signal),
+    return answer(request, deps, { kind: "stocks", key: stocksCacheKey(idea) }, (ai) =>
+      computeStocks(idea, deps, request.signal, ai),
     );
   }
   return { POST, OPTIONS };
@@ -258,38 +295,29 @@ export function createAnalyzeHandler(deps: HandlerDeps = defaultStocksDeps) {
   async function POST(request: Request): Promise<Response> {
     const read = await readBody(request);
     const parsed = requestSchema.safeParse("body" in read ? read.body : undefined);
-    if ("failed" in read || !parsed.success) {
-      const message =
-        "failed" in read
-          ? `${read.failed} Expected { "idea": string }.`
-          : (parsed.error?.issues[0]?.message ?? "Invalid request.");
-      return error(request, 400, "invalid_request", message);
-    }
+    if ("failed" in read) return invalidIdea(request, read);
+    if (!parsed.success) return invalidIdea(request, undefined, parsed.error.issues[0]?.message);
     const perIp = await perIpLimit(request, deps, "analyze");
     if (!perIp.allowed) return tooMany(request, perIp);
 
     try {
-      const { packet, step } = await runAnalyst(
+      // The mock analyst's search plan is a Gemini call (unless cached), so it counts.
+      const ai = await aiAllowed(request, deps);
+      const { packet, gated, trace } = await currentEvidence(
         parsed.data.idea,
-        pipelineDeps(deps),
+        deps,
         request.signal,
+        ai,
       );
       await deps.record?.(packet).catch(() => {});
-      const started = Date.now();
-      const gated = gate(packet, deps.now?.() ?? new Date());
-      const trace: TraceStep[] = [
-        step,
-        {
-          step: "gate",
-          status: gated.ok ? "ok" : "failed",
-          ms: Date.now() - started,
-          summary: gated.summary,
-        },
-      ];
       // The full packet is returned, including markets the gate would not use.
       return json(request, 200, {
         packet,
-        gate: { passed: gated.ok, summary: gated.summary },
+        gate: {
+          passed: gated.ok,
+          summary: gated.summary,
+          ...(gated.ok ? {} : { reason: gated.message }),
+        },
         trace,
       });
     } catch (err) {
@@ -325,8 +353,12 @@ export function createDecideHandler(deps: HandlerDeps = defaultStocksDeps) {
     const perIp = await perIpLimit(request, deps, "decide");
     if (!perIp.allowed) return tooMany(request, perIp);
 
-    return answer(request, deps, { kind: "decide", key: decideCacheKey(idea, packet) }, async () =>
-      unwrap(await decideFromPacket(idea, packet, pipelineDeps(deps), request.signal), deps),
+    return answer(
+      request,
+      deps,
+      { kind: "decide", key: decideCacheKey(idea, packet) },
+      async (ai) =>
+        unwrap(await decideFromPacket(idea, packet, pipelineDeps(deps, ai), request.signal), deps),
     );
   }
   return { POST, OPTIONS };
