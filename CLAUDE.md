@@ -47,6 +47,7 @@ _Updated: 2026-10-09 (session 1)_
 | 9 | 2026-10-09 | findStocks returns stocks `{summary, stocks:[{symbol,name,reason}]}` (the team contract), restricted to the 40 tickers in the weighting backend's universe, 3 to 5 per answer, with Polymarket markets as evidence in each reason. | Lucas's decision; keeps the controller and `POST /api/weights` working unchanged. |
 | 10 | 2026-10-09 | Candidates come from Gamma `/public-search` (Phase 1 tables are not there yet): Gemini plans queries and sectors, plus the universe's own signal queries. The server, not Gemini, guarantees evidence: unknown market ids drop the stock, quoted odds are checked within 1 point, and the summary's odds line is appended from live prices. | "Never fabricate markets" in the team contract. |
 | 11 | 2026-10-09 | Rate limit counters live in Tiger (`api_rate_limits`), with an in-memory fallback. 20/min and 300/day per IP, 1,500/day global. | Vercel instances do not share memory; judges may share one venue IP. |
+| 13 | 2026-10-09 | Vitest files in `web` are named `*.spec.ts`, never `*.test.ts`. | The team's root `npm test` runs `node --test`, which would pick up `*.test.ts` under `web/` and fail. |
 | 12 | 2026-10-09 | `pnpm-workspace.yaml` lists every dependency build script under `allowBuilds` (true or false). | pnpm 12 fails `pnpm install` on Vercel with ERR_PNPM_IGNORED_BUILDS for any unlisted one. |
 
 ## Docs-vs-brief discrepancies
