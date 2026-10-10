@@ -50,6 +50,25 @@ Walk-forward means a β used on date d is fit only on data before the first of d
 
 Newest first. "Tests run" counts distinct statistical tests behind each claim, for multiple-testing context.
 
+**2026-10-10: Holdout (2026-04-10 → 2026-10-09), run once, configurations frozen: nothing confirmed.** H1–H3 ran together on the same caches as the development runs (pinned, not refetched; no scored event after 2026-10-09), each with its 500-run placebo and the cluster rule.
+
+| Test | Holdout result | t | Placebo p | After cluster rule | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| H1a (primary): bars +1..+6 | −83 bp (2 dates) | −2.11 | 0.45 | nothing left | not supported |
+| H1b: bars −6..−1 | +84 bp (2 dates) | 13.5 | 0.41 | nothing left | not supported |
+| H2a (primary): mean slope | 0.21 (4 dates) | 0.09 | 0.87 | −1.48, t −0.76 | not supported |
+| H2b: top − bottom quintile | +51 bp | 0.52 | 0.51 | −33 bp, t −0.47 | not supported |
+| H2c: volume split | no high-volume dates | – | – | – | not testable |
+| H3 A (primary): drawdown, tilted − static | +0.1 bp (10 dates) | 1.25 | 0.78 | 0.0 bp, t 1.44 | not supported |
+| H3 B | +0.1 bp (7 dates) | 1.13 | 0.62 | 0.1 bp, t 0.77 | not supported |
+| H3 C | −0.2 bp (2 dates) | −1.00 | 0.92 | – | not supported |
+
+- **H1 had almost no data.** 2 hourly spikes (Fed 2026-06-16, recession 06-17), as expected. Both go the wrong way after the spike. H1b's t of 13.5 comes from two dates in one cluster: the cluster rule removes both and the placebo puts p at 0.41, so it isn't evidence of anything. The development-period drift (+49 bp, t 2.41, surviving the cluster rule at t 2.31) is unconfirmed; the holdout can neither confirm nor reject it.
+- **H2:** 4 daily spikes, all recession, all in low-volume contracts. Null, consistent with development.
+- **H3:** null for all three configs, as the development run predicted. The tilts barely change the basket: total return within 1.3 pts and max drawdown within 0.1 pt on every basket. At the pre-registered sensitivity, the live mechanism neither helps nor hurts.
+- **Bottom line across the pre-registered tests:** no primary test reached t > 3 in development or holdout. What remains is the same-day reaction (event study) and a suggestive, unconfirmed intraday drift.
+- Tests run on the holdout: 8 (H1a, H1b, H2a–c, H3 A–C), each with a placebo; the holdout is now used.
+
 **2026-10-10: H3 (development period, pipeline check): the live tilts don't change drawdowns, because they barely move weights.** The plan reserves H3 for the holdout; this run checks the pipeline, and the configurations stay frozen (amendment 18). 818 trading days; episodes on 16–41 dates per config.
 
 | Config | Episodes (dates) | Drawdown, tilted − static | t | Placebo p | Without largest cluster | Verdict |
