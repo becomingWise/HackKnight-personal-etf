@@ -1,0 +1,60 @@
+/* Evidence and event-risk cards (js/evidence-cards.js). Minimal on purpose: override freely.
+   Colours fall back to the team palette; set --ec-* on a parent to restyle. */
+
+.ec-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.ec-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--ec-line, #e7eaf1);
+  border-radius: var(--ec-radius, 18px);
+  background: var(--ec-bg, #fff);
+  color: var(--ec-ink, #202940);
+}
+
+.ec-title {
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.ec-title:hover {
+  color: var(--ec-accent, #4057db);
+  text-decoration: underline;
+}
+
+.ec-odds {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.ec-risk {
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.ec-move,
+.ec-tickers,
+.ec-asof,
+.ec-uncovered,
+.ec-note {
+  font-size: 0.875rem;
+  color: var(--ec-muted, #6b7386);
+}
+
+.ec-notes {
+  margin-top: 12px;
+}
+
+.ec-note {
+  margin: 2px 0;
+}

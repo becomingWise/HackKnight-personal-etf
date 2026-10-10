@@ -8,7 +8,7 @@ Read this before any change. It decides who owns what. Details per area live in 
 | --- | --- | --- |
 | 🟠 Shaun — framework | Shared controller and contracts | `js/controller.js`, `js/services.js`, `data/chat-demo.json`, `docs/team-contracts.md` |
 | 🟣 Kieran — website | UI | `index.html`, `css/`, `js/ui.js`, `js/app.js`, `js/config.js` |
-| 🟢 Hao — Polymarket | `adjustWeights`, `/api/weights`, `/api/risk`, research | `backend/` (Python reference engine), `polymarket/`, `js/weights-api.js`, `js/weights-adapter.js` |
+| 🟢 Hao — Polymarket | `adjustWeights`, `/api/weights`, `/api/risk`, research | `backend/` (Python reference engine), `polymarket/`, `js/weights-api.js`, `js/weights-adapter.js`, `js/risk-adapter.js`, `js/evidence-cards.js`, `css/evidence-cards.css` |
 | 🔵 Lucas — Google/backend | `findStocks`, `/api/stocks`, the Next.js API on Vercel | `agent/`, `backend/server.js`, `js/stock-api.js`, `js/stocks-adapter.js`, `js/baskets-adapter.js`, `web/` |
 
 - Edit only files you own. To change someone else's file or a shared contract, ask the owner first.
