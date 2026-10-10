@@ -68,14 +68,14 @@ browser tab. Without the header nothing is remembered.
 
 ### Error responses
 
-| Status | `error.code`                                                         | When                                                      |
-| ------ | -------------------------------------------------------------------- | --------------------------------------------------------- |
-| 400    | `invalid_request`, `invalid_idea`                                    | Body is not JSON; `idea` missing, empty or over 500 chars |
-| 429    | `rate_limited`                                                       | More than 30 requests a minute or 600 a day from one IP   |
+| Status | `error.code`                                                         | When                                                        |
+| ------ | -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 400    | `invalid_request`, `invalid_idea`                                    | Body is not JSON; `idea` missing, empty or over 500 chars   |
+| 429    | `rate_limited`                                                       | More than 30 requests a minute or 600 a day from one IP     |
 | 422    | `needs_clarification`                                                | The idea needs clarifying; `error.options` has 2 or 3 ideas |
-| 502    | `invalid_selection`, `call_limit`, `gemini_failed`, `upstream_error` | Gemini did not produce a valid basket                     |
-| 503    | `gemini_unavailable`                                                 | Every model is rate limited or over its daily budget      |
-| 504    | `timeout`                                                            | No answer within 25 seconds                               |
+| 502    | `invalid_selection`, `call_limit`, `gemini_failed`, `upstream_error` | Gemini did not produce a valid basket                       |
+| 503    | `gemini_unavailable`                                                 | Every model is rate limited or over its daily budget        |
+| 504    | `timeout`                                                            | No answer within 25 seconds                                 |
 
 A failure is always an error: the service never substitutes demo or fallback companies.
 
@@ -348,9 +348,23 @@ a "no" is correct if it was not.
       "days": 8
     }
   ],
-  "majority": { "n": 76, "correct": 40, "pct": 52.6, "range90": [43, 62], "brier": 0.255, "days": 8 },
+  "majority": {
+    "n": 76,
+    "correct": 40,
+    "pct": 52.6,
+    "range90": [43, 62],
+    "brier": 0.255,
+    "days": 8
+  },
   "baselines": {
-    "alwaysYes": { "n": 80, "correct": 38, "pct": 47.5, "range90": [35, 60], "brier": 0.525, "days": 8 },
+    "alwaysYes": {
+      "n": 80,
+      "correct": 38,
+      "pct": 47.5,
+      "range90": [35, 60],
+      "brier": 0.525,
+      "days": 8
+    },
     "coinFlip": { "n": 80, "pct": 50, "brier": 0.25 }
   },
   "recent": [
