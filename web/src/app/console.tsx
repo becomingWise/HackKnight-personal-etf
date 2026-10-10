@@ -1,6 +1,7 @@
 "use client";
 
-// Backend test console: idea → POST /api/stocks (the Gemini stock agent) → POST /api/weights.
+// Backend test console: idea → POST /api/stocks (the Gemini stock agent) → POST /api/weights
+// → POST /api/risk.
 // Not the product UI (that is the frontend teammate's); it only shows what the API returns.
 import { useState, type ReactNode } from "react";
 
@@ -17,6 +18,18 @@ type Weights = {
   holdings: { symbol: string; weightPct: number }[];
   explanation: string;
   evidence: Evidence[];
+};
+type Risk = {
+  markets: {
+    title: string;
+    url: string;
+    probability: number;
+    ifYesPct: number;
+    ifNoPct: number;
+  }[];
+  uncovered: string[];
+  basis: string;
+  note: string;
 };
 type Step<T> =
   | { state: "idle" | "running" | "skipped" }
@@ -71,6 +84,9 @@ const points = (change: number | null | undefined) => {
   const pts = change * 100;
   return `${pts > 0 ? "+" : ""}${pts.toFixed(1)} pts`;
 };
+const move = (pct: number) => `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`;
+const moveColor = (pct: number) =>
+  pct > 0.004 ? "text-up" : pct < -0.004 ? "text-down" : "text-muted";
 const seconds = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
 
 function Card(props: {
@@ -113,6 +129,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
   const [busy, setBusy] = useState(false);
   const [stocks, setStocks] = useState<Step<Stocks>>(IDLE);
   const [weights, setWeights] = useState<Step<Weights>>(IDLE);
+  const [risk, setRisk] = useState<Step<Risk>>(IDLE);
   const [start, setStart] = useState<{ symbol: string; weightPct: number }[]>([]);
 
   async function run(text: string) {
@@ -121,6 +138,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
     setBusy(true);
     setStocks(RUNNING);
     setWeights(IDLE);
+    setRisk(IDLE);
     setStart([]);
     try {
       let picked: { data: Stocks; ms: number };
@@ -130,18 +148,26 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
       } catch (err) {
         setStocks(failure(err));
         setWeights(SKIPPED);
+        setRisk(SKIPPED);
         return;
       }
       const holdings = startingWeights(picked.data.stocks.map((s) => s.symbol));
       setStart(holdings);
       setWeights(RUNNING);
+      // Event risk is measured on the tilted basket, or the starting one if tilting failed.
+      let basket = holdings;
       try {
-        setWeights({
-          state: "done",
-          ...(await call<Weights>("/api/weights", { idea: wanted, holdings })),
-        });
+        const tilted = await call<Weights>("/api/weights", { idea: wanted, holdings });
+        setWeights({ state: "done", ...tilted });
+        basket = tilted.data.holdings;
       } catch (err) {
         setWeights(failure(err));
+      }
+      setRisk(RUNNING);
+      try {
+        setRisk({ state: "done", ...(await call<Risk>("/api/risk", { holdings: basket })) });
+      } catch (err) {
+        setRisk(failure(err));
       }
     } finally {
       setBusy(false);
@@ -298,6 +324,67 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
             ) : (
               <p className="text-muted">No live Polymarket market is linked to these stocks.</p>
             )}
+          </div>
+        )}
+      </Card>
+      <Card
+        n="3 · EVENT RISK"
+        title="What's at stake if each event happens"
+        time={risk.state === "done" ? seconds(risk.ms) : undefined}
+        badge={risk.state === "done" && <Pill kind="plain">POST /api/risk</Pill>}
+      >
+        {risk.state !== "done" ? (
+          <Waiting
+            step={risk}
+            idle="The basket's move if each linked Polymarket event happens, or doesn't."
+          />
+        ) : (
+          <div className="grid gap-3 text-sm">
+            {risk.data.markets.length > 0 ? (
+              <table className="w-full text-left">
+                <thead className="text-xs tracking-wide text-muted">
+                  <tr>
+                    <th className="py-1 font-medium">MARKET</th>
+                    <th className="py-1 text-right font-medium">ODDS</th>
+                    <th className="py-1 text-right font-medium">IF YES</th>
+                    <th className="py-1 text-right font-medium">IF NO</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {risk.data.markets.map((market) => (
+                    <tr key={market.url + market.title} className="border-t border-line">
+                      <td className="py-1 pr-3">
+                        <a
+                          className="text-blue hover:underline"
+                          href={market.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {market.title}
+                        </a>
+                      </td>
+                      <td className="py-1 text-right font-mono">{percent(market.probability)}</td>
+                      <td className={`py-1 text-right font-mono ${moveColor(market.ifYesPct)}`}>
+                        {move(market.ifYesPct)}
+                      </td>
+                      <td className={`py-1 text-right font-mono ${moveColor(market.ifNoPct)}`}>
+                        {move(market.ifNoPct)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-muted">No live Polymarket market is linked to these stocks.</p>
+            )}
+            {risk.data.uncovered.length > 0 && (
+              <p className="text-muted">
+                No measurable event exposure: {risk.data.uncovered.join(", ")}
+              </p>
+            )}
+            <p className="text-xs text-muted">
+              {risk.data.note} {risk.data.basis}
+            </p>
           </div>
         )}
       </Card>
