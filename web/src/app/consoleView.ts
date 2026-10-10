@@ -166,3 +166,13 @@ export function driverOf(symbol: string, evidence: Evidence[]): Evidence | null 
     Math.abs(item.change7d ?? 0) > Math.abs(best.change7d ?? 0) ? item : best,
   );
 }
+
+/**
+ * The link that hands a basket to the paper-trading Lab: the Lab loads these symbols directly,
+ * with no Gemini call, and names the ones it cannot price (public/lab-own/bridge.js).
+ */
+export function labBasketUrl(symbols: string[], idea: string): string {
+  // The commas stay readable; everything else is encoded.
+  const list = symbols.map((symbol) => encodeURIComponent(symbol)).join(",");
+  return `/lab/basket?symbols=${list}&idea=${encodeURIComponent(idea.trim())}`;
+}

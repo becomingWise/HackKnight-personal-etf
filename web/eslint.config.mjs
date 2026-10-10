@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Copies of /agent and /js/controller.js (pnpm sync:agent); they are edited at the root.
     "src/lib/agent-core/**",
+    // Copies of the Lab's frontend (pnpm sync:lab); edited in /experiment by its owner.
+    "public/lab-static/**",
   ]),
 ]);
 

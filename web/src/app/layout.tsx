@@ -46,7 +46,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <footer className="border-t border-line bg-surface">
           <p className="mx-auto w-full max-w-6xl px-5 py-5 text-xs text-muted">
             Paper portfolios for research and fun. Not investment advice. Not affiliated with
-            Polymarket.
+            Polymarket or Kalshi.
           </p>
         </footer>
       </body>
