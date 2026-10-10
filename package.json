@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
+    "demo:framework": "node scripts/demo_framework.js",
     "start": "python3 -m http.server 8000 --bind 127.0.0.1"
   }
 }
