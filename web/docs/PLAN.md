@@ -16,14 +16,17 @@ file, and a short note Lucas can forward to the frontend teammate.
 - [x] Tiger Cloud service `prophetf` (`v5idwzv5iv`), deployed at https://prophetf.vercel.app
 - [x] findStocks: `POST /api/stocks` (+ alias `/api/findstock`), Gemini picks backed by live Polymarket odds, fallback, CORS, rate limits, contract tests, `/js/stocks-adapter.js`
 
-## Step 1 — End-to-end flow: idea → stocks → weights on live URLs
+## Step 1 — End-to-end flow: idea → stocks → weights on live URLs (done)
 
-- [x] Find where `POST /api/weights` runs: **nowhere public**. It is a local FastAPI app (`/backend`, port 8001); no deploy config and no public URL on any branch, and no frontend weights adapter exists.
-- [x] Found: the GitHub Pages site (`https://becomingwise.github.io/HackKnight-personal-etf/`) currently answers 404
-- [ ] **Waiting for Lucas:** choose how to make weights public (options in the step 1 message)
-- [ ] Build the chosen option; contract test with the team's `validateAdjustment`
-- [ ] `/js/weights-adapter.js` for the frontend (not wired in), documented in `docs/API.md`
-- [ ] Live check: idea → `/api/stocks` → `/api/weights` from an allowed origin
+- [x] Found: `POST /api/weights` ran nowhere public (local FastAPI in `/backend`); no frontend weights adapter existed
+- [x] Lucas chose: port to a TypeScript route in `/web`; the Python engine stays the reference; `/backend` untouched
+- [x] `POST /api/weights` (`src/lib/weights/`): same request/response as Python, CORS, rate limit
+- [x] Tests: the cases of `backend/tests/test_engine.py` and `test_weights_api.py`, 88 golden requests replayed through the real Python app (`pnpm parity:weights`), and the team's `validateAdjustment`
+- [x] `/js/weights-adapter.js` (not wired in) + "switching from mocks" section in `docs/API.md`
+- [x] Deployed; full flow verified through the team's real controller against https://prophetf.vercel.app
+- [ ] Open: the method owner may object to the port → fallback is deploying the Python app (option 2)
+- [ ] Open: GitHub Pages is down (404); offer to serve the static frontend from this Vercel project (not built)
+- [ ] Do not merge `main` yet (Lucas, 2026-10-09)
 
 ## Step 2 — Saved baskets (Tiger)
 
@@ -63,6 +66,5 @@ file, and a short note Lucas can forward to the frontend teammate.
 
 ## Needs from Lucas
 
-- [ ] Step 1: the weights decision
 - [ ] The GitHub Pages site is down (404): someone with access must republish it (frontend owner)
 - [ ] Step 4: ElevenLabs key + voice id, Snowflake account URL + PAT, fund the Solana devnet attester, Presage key

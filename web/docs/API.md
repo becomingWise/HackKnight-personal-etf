@@ -117,28 +117,6 @@ The adapter must reject on any non-2xx status; the controller then shows its own
   `http://127.0.0.1:8000`, `http://localhost:3000`, `http://127.0.0.1:3000`. `OPTIONS` preflight is
   answered. More origins can be added with the `CORS_ORIGINS` env var (comma-separated).
 
-### Using it from the frontend
-
-`/js/stocks-adapter.js` implements the port. It is not wired into the app; import it where the controller
-is created:
-
-```js
-import { createController } from "./controller.js";
-import { createMockServices } from "./services.js";
-import { findStocks } from "./stocks-adapter.js";
-
-const controller = createController({ ...createMockServices(), findStocks });
-```
-
-For another backend URL (local development):
-
-```js
-import { createFindStocks } from "./stocks-adapter.js";
-const findStocks = createFindStocks({ baseUrl: "http://localhost:3000" });
-```
-
-If the site is published with `scripts/publish_pages.py`, add `js/stocks-adapter.js` to its manifest.
-
 ### Try it
 
 PowerShell:
@@ -157,7 +135,126 @@ Locally without HTTP: `pnpm try:findstocks "your idea"` in `/web`.
 
 ---
 
-## 2. `GET /api/health` — LIVE
+## 2. `adjustWeights` — LIVE
+
+`POST /api/weights`
+
+Implements the "Percentage adjustment port" in `/docs/team-contracts.md`: tilts a basket's weights by how
+much the linked Polymarket odds moved over the past week. Same request and response as the Python service
+in `/backend`.
+
+> **The Python engine is the reference.** This endpoint is a TypeScript port of
+> `/backend/src/polyslice_api/{engine,main,polymarket}.py`, made so the method has a public URL. Any change
+> to the Python method must be mirrored in `/web/src/lib/weights/`, then `pnpm parity:weights` and
+> `pnpm test` rerun. The parity tests replay 88 requests through the real Python app and require identical
+> statuses, weights, explanations and evidence.
+
+### Request
+
+```json
+{
+  "idea": "AI chips and Taiwan risk",
+  "holdings": [
+    { "symbol": "NVDA", "weightPct": 33.33 },
+    { "symbol": "TSM", "weightPct": 33.33 },
+    { "symbol": "INTC", "weightPct": 33.34 }
+  ]
+}
+```
+
+| Field                  | Type   | Rule                                                               |
+| ---------------------- | ------ | ------------------------------------------------------------------ |
+| `idea`                 | string | At least 1 character                                               |
+| `holdings`             | array  | At least 1 item, unique symbols, weights totalling 100 within 0.01 |
+| `holdings[].symbol`    | string | Matched case-insensitively, echoed back exactly as sent            |
+| `holdings[].weightPct` | number | 0 to 100                                                           |
+
+### Success response — `200`
+
+```json
+{
+  "status": "adjusted",
+  "holdings": [
+    { "symbol": "NVDA", "weightPct": 37.06 },
+    { "symbol": "TSM", "weightPct": 32.75 },
+    { "symbol": "INTC", "weightPct": 30.19 }
+  ],
+  "explanation": "Tilted by Polymarket odds moves over the past week: NVDA 33.3% → 37.1% (“Will AI-chip export licensing become law this year?” down 12 pts to 22%); … Event probabilities indicate risk, not expected returns.",
+  "evidence": [
+    {
+      "title": "Will AI-chip export licensing become law this year?",
+      "url": "https://polymarket.com/event/which-bills-will-become-law-in-2026",
+      "outcome": "Yes",
+      "probability": 0.225,
+      "observedAt": "2026-10-10T01:16:16.000Z",
+      "change7d": -0.125,
+      "symbols": ["INTC", "NVDA"]
+    }
+  ]
+}
+```
+
+| Field         | Type                          | Guarantee                                                                                                                                    |
+| ------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`      | `"adjusted"` \| `"unchanged"` | `unchanged` when no tracked live market is linked to any holding, or the tilt rounds away                                                    |
+| `holdings`    | array                         | Exactly the input symbols in the input order; weights rounded to 0.01 and totalling exactly 100. For `unchanged`, the input weights verbatim |
+| `explanation` | string                        | Non-empty                                                                                                                                    |
+| `evidence`    | array                         | Only real, live markets; `[]` when none is linked. `change7d` (number or null) and `symbols` are extra fields                                |
+
+Passes the controller's `validateAdjustment`. Only the 40 tickers in `universe.json` can be tilted, which
+is why `/api/stocks` returns only those.
+
+### Error responses
+
+| Status | When                                                       | Body                                                                                                          |
+| ------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 422    | Invalid body, duplicate symbols, weights not totalling 100 | `{ "detail": "Duplicate symbols.", "error": { "code": "invalid_request", "message": "Duplicate symbols." } }` |
+| 429    | More than 60 requests per minute from one IP               | `Retry-After` header                                                                                          |
+| 502    | Polymarket lookup failed                                   |                                                                                                               |
+
+`detail` is the field the Python service returns; `error` is this API's common shape. Same CORS origins as
+`/api/stocks`. Live odds are cached for 60 seconds.
+
+### Try it
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/weights" -ContentType "application/json" -Body '{"idea":"AI chips and Taiwan risk","holdings":[{"symbol":"NVDA","weightPct":33.33},{"symbol":"TSM","weightPct":33.33},{"symbol":"INTC","weightPct":33.34}]}' | ConvertTo-Json -Depth 5
+```
+
+---
+
+## Frontend adapters: switching from mocks to the live backend
+
+Two ready-made modules implement the controller's ports. Neither is wired into the app.
+
+| Port            | Module                   | Calls               |
+| --------------- | ------------------------ | ------------------- |
+| `findStocks`    | `/js/stocks-adapter.js`  | `POST /api/stocks`  |
+| `adjustWeights` | `/js/weights-adapter.js` | `POST /api/weights` |
+
+**How to switch (5 lines):**
+
+```js
+import { createController } from "./controller.js";
+import { findStocks } from "./stocks-adapter.js";
+import { adjustWeights } from "./weights-adapter.js";
+
+const controller = createController({ findStocks, adjustWeights });
+```
+
+1. Replace `createController(createMockServices())` with the lines above where the controller is created.
+2. To switch only one port, keep the mock for the other: `createController({ ...createMockServices(), findStocks })`.
+3. For a different backend URL (local development): `createFindStocks({ baseUrl: "http://localhost:3000" })` and `createAdjustWeights({ baseUrl: "http://localhost:3000" })`.
+4. If the site is published with `scripts/publish_pages.py`, add `js/stocks-adapter.js` and `js/weights-adapter.js` to its manifest.
+5. The site must be served from an allowed origin: `https://becomingwise.github.io`, `http://localhost:8000`, `http://127.0.0.1:8000`, `http://localhost:3000` or `http://127.0.0.1:3000` (ask Lucas to add others).
+
+Both adapters forward the controller's `signal` to `fetch` and reject on any non-2xx status, so the
+controller's own error and retry handling keeps working. Expect about 4 to 10 seconds for stocks and under
+2 seconds for weights.
+
+---
+
+## 3. `GET /api/health` — LIVE
 
 No parameters. `200` when the database is reachable, `503` otherwise.
 
@@ -184,9 +281,12 @@ No parameters. `200` when the database is reachable, `503` otherwise.
 
 ---
 
-## 3. Existing endpoint owned by the Polymarket teammate (Python, not this app)
+## 4. The Python service in `/backend` (reference, not deployed)
 
-`POST /api/weights` on the FastAPI service in `/backend` (local port 8001). See `/backend/README.md`.
-Listed here because `findStocks` output feeds it: it tilts only the 40 tickers in
+The weighting method is owned by the Polymarket teammate and lives in `/backend` (FastAPI, local port 8001;
+see `/backend/README.md`). It is not deployed publicly; `POST /api/weights` above is its TypeScript port.
+Its other endpoints (`/api/signals`, `/api/basket`, `/api/backtest`, …) exist only in the Python service.
+
+Both services read the same 40 tickers and 11 signals from
 `/backend/src/polyslice_api/data/universe.json`. After that file changes, run `pnpm sync:universe` in `/web`
-and redeploy so both services agree.
+and redeploy.
