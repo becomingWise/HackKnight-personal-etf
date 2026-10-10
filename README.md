@@ -1,103 +1,55 @@
-# MyETF — Personal portfolio lab
+# MyETF — team workspace
 
-A HackKnight demo for building a personal investment basket with fictional companies and mock prices. Choose interests, select three to five companies, adjust weights and a pretend budget, then explore hypothetical price changes.
+**User idea → selected companies → equal starting basket → Polymarket adjustment → website.**
 
-Website: [MyETF](https://becomingwise.github.io/HackKnight-personal-etf/)
+Start with [TEAM_HANDOFF.md](TEAM_HANDOFF.md). It names the exact files each
+teammate owns and specifies the function signatures, HTTP endpoints, request
+bodies, response bodies, and website wiring.
 
-The app is an educational simulator. It does not create or trade an ETF, connect to a brokerage, or use live market data.
+## Current state
 
-## Run it
+The teammate implementation files are intentionally empty so their owners can
+put their code in the right places. The previous Gemini prototype, its tests,
+and the previous website were backed up on Shaun's computer outside the Git
+repository before clearing these files.
 
-From this repository folder, with Python 3 installed:
+Shaun's shared controller, mock services, fixtures, portfolio calculations, and
+framework/calculation tests remain available.
 
-```sh
-python3 -m http.server 8000 --bind 127.0.0.1
-```
+Additional backend implementations live under `web/` and `backend/src/`.
+This handoff covers the root application's starter files.
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Use a local server rather than opening `index.html` directly: the app uses JavaScript modules and fetches its local JSON dataset.
+| Owner | Main files to fill |
+| --- | --- |
+| 🔵 Lucas — Google/backend | `agent/gemini.js`, agent helpers, `backend/server.js`, `js/stock-api.js` |
+| 🟢 Hao — Polymarket | `polymarket/weights.js`, `js/weights-api.js` |
+| 🟣 Kieran — website | `index.html`, `css/styles.css`, `js/ui.js`, `js/app.js`, `js/config.js` |
 
-With Node.js available, `npm start` runs the same server. No dependency installation is needed.
+Do not include `reason` or `research` in the stock response. The main website
+shows company names, tickers, percentages, and an allocation chart.
 
-## Try the demo
-
-1. Start with the preselected Sunbeam Solar / Nimbus Cloud / Pulse Health basket.
-2. The $1,000 pretend budget at 50% / 30% / 20% allocates $500 / $300 / $200, or 5 / 6 / 10 simulated units.
-3. Set Sunbeam Solar's scenario slider to +10% and Pulse Health's to -10%, leaving Nimbus Cloud at 0%. The resulting value is $1,030 (+3%).
-4. Change a weight to make the total invalid, then use **Equal weights** to repair it.
-5. Try an interest filter and select another company. Selection changes distribute weights equally.
-6. Use **Export basket** to download the calculation and scenario as JSON; **Reset demo** restores the initial example.
-
-Prices and companies are made up. Units are fractional; the simulation ignores trading costs, taxes, and dividends. Scenarios keep the original units fixed and do not rebalance. Weights within 0.01% of 100% are normalized internally to allocate the full budget.
-
-## Team file ownership
-
-| Area | Files | What to change |
-| --- | --- | --- |
-| Screens and styling | `index.html`, `css/styles.css`, `js/ui.js` | Inputs, company cards, responsive layout, charts and accessibility |
-| Portfolio calculations | `js/portfolio.js`, `tests/portfolio.test.js` | Validation, allocation, equal weights and scenario calculations |
-| Integration and sample data | `js/app.js`, `data/assets.json` | App state, events, loading and export |
-
-The shared source lives on `main`. Agree on individual owners before editing overlapping files. Use a pull request to combine reviewed work into `main`.
-
-## Start collaborating
-
-Each teammate accepts the private repository invitation, then clones it once:
-
-```sh
-git clone https://github.com/becomingWise/HackKnight-personal-etf.git
-cd HackKnight-personal-etf
-git fetch origin
-git switch -c your-feature-name origin/main
-```
-
-Replace `your-feature-name` with a task name such as `improve-company-cards`. Edit your assigned files, run the app locally, and check the flow. Save and upload the files you changed, for example:
-
-```sh
-git add css/styles.css js/ui.js
-git commit -m "Improve company cards"
-git push -u origin HEAD
-```
-
-Open a pull request with `main` as the base, describe what changed, and include a screenshot. Have a teammate review it before merging. After a shared change merges, update your own branch with:
-
-```sh
-git fetch origin
-git merge origin/main
-```
-
-The public website is for trying the app. Editing and collaboration happen in this repository; the localhost preview runs separately on each person's computer.
-
-## Calculation checks
+## Try the shared framework
 
 With Node.js 22 or newer:
 
 ```sh
 npm test
+npm run demo:framework -- "I care about clean energy"
 ```
 
-The checks cover allocation and units, price scenarios and full loss, invalid input, and allocation conservation when percentages are rounded.
+These checks use mocks and require no API keys. They do not verify the empty
+teammate implementations. Demo companies and adjustments are fictional.
 
-`js/portfolio.js` is a pure module and exports:
+`npm start` serves the website files at `http://127.0.0.1:8000/`. The page is empty
+until Kieran fills the files. Live API endpoints need Lucas's implementation
+and hosting. Keep Google credentials on that backend.
 
-- `validateBasket(input, assets)` → an array of readable errors.
-- `equalWeightHoldings(assetIds)` → weights totaling 100%.
-- `calculateBasket(input, assets)` → budget, holdings, interest totals and largest weight.
-- `applyScenario(result, changesPctByAssetId)` → new values and percentage change.
+## More detail
 
-Basket inputs use `{ budget, holdings: [{ assetId, weightPct }] }`. Catalog assets use `{ id, symbol, name, interest, price, description }`. Calculated holdings retain `id` and add `weightPct`, `dollars`, and `units`. Scenario changes use a company ID as a key and a percentage as a value, such as `{ SOLAR_DEMO: 10 }`.
+- [Function and API contracts](docs/team-contracts.md)
+- [Controller and intended user flow](docs/architecture.md)
+- [Website basket display example](docs/website-basket.md)
 
-## Hosting
-
-The app is static HTML, CSS and JavaScript. It can run on GitHub Pages without a build step. All asset URLs are relative so it also works under `/HackKnight-personal-etf/`.
-
-The repository publishes from `gh-pages`. After merging a reviewed update into `main`, a teammate with push access can publish it from their local repository:
-
-```sh
-python3 scripts/publish_pages.py
-```
-
-The script fetches the latest `main`, copies only the website files to a temporary deployment checkout, and pushes a normal commit to `gh-pages`. It leaves your working branch and uncommitted changes alone. Publishing is a separate step after merging; updates to `main` do not automatically update the website.
-
-GitHub Pages then builds the site. Wait for the Pages deployment to finish, open the public website, and repeat the demo flow. `version.json` records the source commit used by the deployed version. The existing deployment history and previous unrelated assets are preserved.
-
-Keep API keys out of client code and commits. An optional AI explainer would need a separate server endpoint to hold its key.
+Use separate feature branches and coordinate shared imports and backend URLs.
+Review and merge completed work before publishing. Kieran must
+update `scripts/publish_pages.py` to include the browser modules it uses.

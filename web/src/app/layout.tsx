@@ -14,17 +14,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: { default: "ProphETF — personal ETFs from prediction markets", template: "%s · ProphETF" },
+  title: {
+    default: "ProphETF — stock baskets backed by prediction-market odds",
+    template: "%s · ProphETF",
+  },
   description:
-    "Build a paper ETF from Polymarket outcomes and watch its NAV move live. Research and fun only.",
+    "Type an investing idea and get a stock basket picked by Gemini from live Polymarket evidence, weighted by how the odds moved. Research and fun only.",
 };
-
-const NAV = [
-  { href: "/markets", label: "Markets" },
-  { href: "/build", label: "Build" },
-  { href: "/leaderboard", label: "Leaderboard" },
-  { href: "/built-with", label: "Built with" },
-] as const;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
@@ -35,21 +31,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Link href="/" className="flex items-center gap-2 text-xl font-bold tracking-tight">
               <span
                 aria-hidden="true"
-                className="grid size-8 place-items-center rounded-[10px] bg-blue text-white"
+                className="grid size-8 place-items-center rounded-[10px] bg-blue text-surface"
               >
                 p.
               </span>
               ProphETF
             </Link>
-            <nav aria-label="Main" className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
-              {NAV.map((item) => (
-                <Link key={item.href} href={item.href} className="hover:text-ink">
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
             <span className="ml-auto rounded-full bg-blue-soft px-3 py-1 text-xs font-medium text-blue">
-              Paper portfolios · Live Polymarket prices
+              Backend test console
             </span>
           </div>
         </header>

@@ -1,0 +1,39 @@
+{
+  "themes": [
+    {
+      "keywords": ["technology", "tech", "ai", "software", "cloud", "人工智能", "科技", "tecnología"],
+      "summary": "Technology demo: these three fictional companies illustrate an idea-to-stock response. No Google API was called.",
+      "stocks": [
+        { "symbol": "CLOUD_DEMO", "name": "Nimbus Cloud" },
+        { "symbol": "CHIP_DEMO", "name": "Byteworks" },
+        { "symbol": "AI_DEMO", "name": "Aurora Systems" }
+      ]
+    },
+    {
+      "keywords": ["clean energy", "solar", "renewable", "climate", "sustainability", "wind", "清洁能源", "太阳能", "环保", "energía limpia"],
+      "summary": "Clean energy demo: these three fictional companies illustrate an idea-to-stock response. No Google API was called.",
+      "stocks": [
+        { "symbol": "SOLAR_DEMO", "name": "Sunbeam Solar" },
+        { "symbol": "TIDAL_DEMO", "name": "Tidal Power" },
+        { "symbol": "GRID_DEMO", "name": "Evergreen Grid" }
+      ]
+    },
+    {
+      "keywords": ["healthcare", "health", "medical", "medicine", "biotech", "健康", "医疗", "salud"],
+      "summary": "Healthcare demo: these three fictional companies illustrate an idea-to-stock response. No Google API was called.",
+      "stocks": [
+        { "symbol": "HEALTH_DEMO", "name": "Pulse Health" },
+        { "symbol": "LAB_DEMO", "name": "Vital Labs" },
+        { "symbol": "CARE_DEMO", "name": "Harbor Care" }
+      ]
+    }
+  ],
+  "generic": {
+    "summary": "Generic example: the mock service does not understand this idea yet. These fictional companies demonstrate the flow; they are not matches generated from your text.",
+    "stocks": [
+      { "symbol": "SOLAR_DEMO", "name": "Sunbeam Solar" },
+      { "symbol": "CLOUD_DEMO", "name": "Nimbus Cloud" },
+      { "symbol": "HEALTH_DEMO", "name": "Pulse Health" }
+    ]
+  }
+}

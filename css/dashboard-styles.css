@@ -1,0 +1,21 @@
+body {
+	background: radial-gradient(circle, lightskyblue 70%, white 100%);
+}
+
+.sidebar {
+	background: none;
+}
+
+#how-it-works {
+	background-color: white;
+	border-radius: 18px;
+	width: 100%;
+	padding:15px 5px;
+	margin-top:50px;
+	/*position: relative;
+	bottom: 0px;*/
+}
+
+.builder-column {
+	
+}
