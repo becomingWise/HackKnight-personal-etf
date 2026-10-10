@@ -74,7 +74,31 @@ test("a risk market with the same url but a different question does not match", 
 
 test("the caveat is always present; the risk note and basis are added when risk data is there", () => {
   assert.deepEqual(buildEvidenceCards(adjustment([recession]), null).notes, [CAVEAT]);
-  assert.deepEqual(buildEvidenceCards(adjustment([recession]), risk).notes, [CAVEAT, risk.note, risk.basis]);
+  const otherNote = { ...risk, note: "Odds are not forecasts." };
+  assert.deepEqual(buildEvidenceCards(adjustment([recession]), otherNote).notes, [CAVEAT, otherNote.note, risk.basis]);
+});
+
+// Live texts (2026-10-10): the weights explanation ends with the caveat and the risk note starts with it.
+const CAVEAT_STEM = "Event probabilities indicate risk, not expected returns";
+const count = (text, part) => text.split(part).length - 1;
+const caveatCount = (view) => count([view.explanation, ...view.notes].join("\n"), CAVEAT_STEM);
+
+test("the caveat shows exactly once when the explanation and the risk note already carry it", () => {
+  const liveAdjustment = {
+    ...adjustment([recession]),
+    explanation: "Tilted by Polymarket odds moves over the past week: TLT 33.3% → 32.9%. Event probabilities indicate risk, not expected returns."
+  };
+  const liveRisk = { ...risk, note: "Event probabilities indicate risk, not expected returns: weighted by the market's own odds, the expected move is zero." };
+  const view = buildEvidenceCards(liveAdjustment, liveRisk);
+  assert.equal(caveatCount(view), 1);
+  assert.equal(view.explanation, "Tilted by Polymarket odds moves over the past week: TLT 33.3% → 32.9%.");
+  assert.deepEqual(view.notes, [liveRisk.note, risk.basis]);
+});
+
+test("the caveat still shows once when only the explanation carried it and risk data is missing", () => {
+  const view = buildEvidenceCards({ ...adjustment([recession]), explanation: `Tilted. ${CAVEAT}` }, null);
+  assert.equal(caveatCount(view), 1);
+  assert.deepEqual(view.notes, [CAVEAT]);
 });
 
 test("uncovered tickers get one 'no measurable event exposure' line", () => {
@@ -123,7 +147,7 @@ test("renderEvidenceCards puts market text in textContent and opens links safely
   assert.equal(link.attributes.href, hostile.url);
   assert.equal(link.attributes.target, "_blank");
   assert.equal(link.attributes.rel, "noopener noreferrer");
-  assert.ok(nodes.some((node) => node.textContent === CAVEAT));
+  assert.equal(nodes.filter((node) => node.textContent.includes(CAVEAT_STEM)).length, 1);
 });
 
 test("renderEvidenceCards replaces earlier content, so it can be called again on every refresh", () => {
