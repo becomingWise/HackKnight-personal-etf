@@ -1,4 +1,5 @@
 // Started with a gemini prompt
+
 const chatMessages = document.getElementById('chatMessages');
 const userInput = document.getElementById('userInput');
 const sendButton = document.getElementById('sendButton');
@@ -53,8 +54,8 @@ async function handleSendMessage() {
 		document.getElementById(loadingId).remove();
 
 		// 3. Display the AI's response (adjust data.reply based on your API schema)
-		const botReply = data.reply || "Sorry, I didn't get a valid response.";
-		appendMessage(botReply, 'bot');
+		//const botReply = data.reply || "Sorry, I didn't get a valid response.";
+		//appendMessage(botReply, 'bot');
 
 	} catch (error) {
 		console.error('Error:', error);
@@ -64,9 +65,13 @@ async function handleSendMessage() {
 }
 
 // Event listeners
-sendButton.addEventListener('click', handleSendMessage);
-userInput.addEventListener('keypress', (e) => {
+sendButton.addEventListener('click', async () => {
+	await handleSendMessage();
+    window.location.href = "./index.html";
+});
+userInput.addEventListener('keydown', async (e) => {
 	if (e.key === 'Enter') {
-		handleSendMessage();
+		await handleSendMessage();
+    	window.location.href = "./index.html";
 	}
 });
