@@ -49,6 +49,27 @@ export type OddsRepo = {
   series(ids: string[], range: Range, now: Date): Promise<{ points: SeriesPoint[]; ms: number }>;
 };
 
+export type PastOdds = Map<string, { d1: number | null; d7: number | null }>;
+
+/**
+ * What each market's Yes odds were about 24 hours and 7 days ago, from the ticks we stored.
+ * null when there is no tick near that time (within 12 hours before it, or 24 for the week).
+ */
+export async function tigerPastOdds(ids: string[], now: Date): Promise<PastOdds> {
+  if (!ids.length) return new Map();
+  const at = (hours: number) => new Date(now.getTime() - hours * 3_600_000);
+  const rows = await db()<{ id: string; d1: number | null; d7: number | null }[]>`
+    select m.id,
+      (select probability from odds_ticks t
+        where t.market_id = m.id and t.outcome = 'Yes' and t.time <= ${at(24)} and t.time > ${at(36)}
+        order by t.time desc limit 1) as d1,
+      (select probability from odds_ticks t
+        where t.market_id = m.id and t.outcome = 'Yes' and t.time <= ${at(168)} and t.time > ${at(192)}
+        order by t.time desc limit 1) as d7
+    from unnest(${ids}::text[]) as m(id)`;
+  return new Map(rows.map((r) => [r.id, { d1: r.d1, d7: r.d7 }]));
+}
+
 function toIso(value: Date | null): string | null {
   return value ? value.toISOString() : null;
 }

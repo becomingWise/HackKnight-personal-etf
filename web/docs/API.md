@@ -20,8 +20,17 @@ Errors on every endpoint use a non-2xx status and this body:
 
 `POST /api/stocks` (alias: `POST /api/findstock`, identical behaviour)
 
-Implements the "Stock selection port" in `/docs/team-contracts.md`: an idea in, 3 to 5 stocks out. Gemini
-(`gemini-3.5-flash`) picks the stocks and writes each reason from live Polymarket odds.
+Implements the "Stock selection port" in `/docs/team-contracts.md`: an idea in, 3 to 5 stocks out. Since
+2026-10-10 the answer comes from a fixed four-stage workflow (code in `web/src/lib/pipeline/`):
+
+| Stage      | Owner            | What it does                                                                                                                                            |
+| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a. analyst | backend teammate | Collects Polymarket markets for the idea and analyzes them into an **evidence packet** (section 1b). Today a mock analyst answers.                      |
+| b. gate    | code             | Enough relevant, fresh, liquid markets? If not, the request ends here with `422 not_enough_evidence` and Gemini is not called.                          |
+| c. decider | Lucas            | Gemini (`gemini-3.5-flash`, structured JSON) picks 3 to 5 of the 40 allowed tickers and writes each reason, citing market ids from the packet.          |
+| d. checker | code             | Verifies the answer against the packet. On errors the decider gets them back for **one** revision. An optional LLM review is off (`CHECKER_LLM=false`). |
+
+The request and the response are unchanged; the response has one new optional field, `trace`.
 
 ### Request
 
@@ -38,7 +47,7 @@ Implements the "Stock selection port" in `/docs/team-contracts.md`: an idea in, 
 
 ```json
 {
-  "summary": "This portfolio targets leading semiconductor companies exposed to the AI chip supply chain and geopolitical risk around Taiwan. Key Polymarket odds: \"Will China invade Taiwan by December 31, 2027?\" 11%; \"Will AI-chip export licensing become law this year?\" 21%.",
+  "summary": "This portfolio targets leading semiconductor companies exposed to the AI chip supply chain and geopolitical risk around Taiwan. Key Polymarket odds: \"Will AI-chip export licensing become law this year?\" 22%; \"Will China invade Taiwan by December 31, 2027?\" 11%.",
   "stocks": [
     {
       "symbol": "TSM",
@@ -49,72 +58,148 @@ Implements the "Stock selection port" in `/docs/team-contracts.md`: an idea in, 
     {
       "symbol": "NVDA",
       "name": "NVIDIA",
-      "reason": "Polymarket gives 21% that AI-chip export licensing will become law this year, which matters for NVDA because it is the leading designer of AI processors subject to trade restrictions.",
+      "reason": "Polymarket gives 22% that AI-chip export licensing will become law this year, which matters for NVDA because it is the leading designer of AI processors subject to trade restrictions.",
       "marketId": "1426260"
     },
     {
-      "symbol": "INTC",
-      "name": "Intel",
-      "reason": "Intel is building domestic foundry capacity that benefits from reshoring.",
-      "marketId": null
+      "symbol": "ASML",
+      "name": "ASML Holding",
+      "reason": "Polymarket sits at 22% for AI-chip export licensing becoming law this year and 11% for China invading Taiwan by December 31, 2027, both of which affect ASML's equipment shipments to Asian foundries.",
+      "marketId": "1426260"
     }
   ],
   "source": "gemini",
   "markets": [
+    {
+      "id": "1426260",
+      "title": "Will AI-chip export licensing become law this year?",
+      "url": "https://polymarket.com/event/which-bills-will-become-law-in-2026",
+      "outcome": "Yes",
+      "probability": 0.22,
+      "observedAt": "2026-10-10T13:53:58.999Z"
+    },
     {
       "id": "1633611",
       "title": "Will China invade Taiwan by December 31, 2027?",
       "url": "https://polymarket.com/event/will-china-invade-taiwan-by-december-31-2027",
       "outcome": "Yes",
       "probability": 0.105,
-      "observedAt": "2026-10-10T00:34:53.768Z"
+      "observedAt": "2026-10-10T13:53:58.999Z"
     }
-  ]
+  ],
+  "trace": [
+    {
+      "step": "analyst",
+      "status": "ok",
+      "ms": 387,
+      "summary": "15 markets, 2 themes, 39 ticker signals (mock)"
+    },
+    { "step": "gate", "status": "ok", "ms": 0, "summary": "passed: 15 of 15 markets usable" },
+    { "step": "decider", "status": "ok", "ms": 6618, "summary": "4 stocks (1 Gemini call)" },
+    { "step": "checker", "status": "ok", "ms": 0, "summary": "passed, no revision" }
+  ],
+  "cached": false,
+  "cachedAt": null
 }
 ```
 
 **Contract fields** (what `validateStocks` in `/js/controller.js` reads):
 
-| Field             | Type   | Guarantee                                                                                                                              |
-| ----------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `summary`         | string | Non-empty. How the idea maps to the companies, ending with the key Polymarket odds when markets were cited. Same language as the idea. |
-| `stocks`          | array  | 3 to 5 items, unique symbols                                                                                                           |
-| `stocks[].symbol` | string | One of the 40 tickers in the weighting backend's `universe.json`, so `POST /api/weights` can tilt every pick                           |
-| `stocks[].name`   | string | Company name from `universe.json`                                                                                                      |
-| `stocks[].reason` | string | Non-empty. Cites a Polymarket market and its current odds when one is relevant                                                         |
+| Field             | Type   | Guarantee                                                                                                                           |
+| ----------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `summary`         | string | Non-empty. How the idea maps to the companies, ending with the key Polymarket odds of the cited markets. Same language as the idea. |
+| `stocks`          | array  | 3 to 5 items, unique symbols                                                                                                        |
+| `stocks[].symbol` | string | One of the 40 tickers in the weighting backend's `universe.json`, so `POST /api/weights` can tilt every pick                        |
+| `stocks[].name`   | string | Company name from `universe.json`                                                                                                   |
+| `stocks[].reason` | string | Non-empty. Cites at least one Polymarket market from the evidence packet and quotes its current odds                                |
 
 No allocation percentages, weights or stock prices are ever returned, per the contract.
 
 **Extra fields** (optional to use; the controller ignores them):
 
-| Field               | Type                       | Meaning                                                                                                                                                                            |
-| ------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stocks[].marketId` | string \| null             | The Polymarket market the reason cites; matches a `markets[].id`. `null` when no live market was relevant                                                                          |
-| `source`            | `"gemini"` \| `"fallback"` | `"fallback"` = Gemini failed or timed out and stocks were chosen by keyword. The summary says so too                                                                               |
-| `markets`           | array                      | The cited markets, in the same shape as the `evidence` items of `adjustWeights`: `id`, `title`, `url`, `outcome` (always `"Yes"`), `probability` (0 to 1), `observedAt` (ISO time) |
+| Field                | Type                       | Meaning                                                                                                                                                                            |
+| -------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stocks[].marketId`  | string                     | The first Polymarket market the reason cites; matches a `markets[].id`. Always set now (the type still allows `null` for old cached clients)                                       |
+| `source`             | `"gemini"` \| `"fallback"` | `"fallback"` = Gemini was unavailable or its answer was rejected twice, and the stocks come from the analyst's ticker signals. The summary says so too                             |
+| `markets`            | array                      | The cited markets, in the same shape as the `evidence` items of `adjustWeights`: `id`, `title`, `url`, `outcome` (always `"Yes"`), `probability` (0 to 1), `observedAt` (ISO time) |
+| `trace`              | array                      | **New.** One entry per workflow stage, in order. Safe to ignore; meant for a "how this was decided" view                                                                           |
+| `cached`, `cachedAt` | boolean, string \| null    | Whether the answer came from the cache and when it was computed                                                                                                                    |
+
+**`trace` entries:** `{ "step", "status", "ms", "summary" }`.
+
+| Field     | Values                                                                                                                                                                                                             |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `step`    | `"analyst"`, `"gate"`, `"decider"`, `"checker"` (from `/api/decide` the trace starts at `"gate"`)                                                                                                                  |
+| `status`  | `"ok"`; `"warn"` = worked with a caveat (a revision was needed, stocks were dropped, the backup analyst answered); `"failed"`; `"skipped"`                                                                         |
+| `ms`      | Time the stage took                                                                                                                                                                                                |
+| `summary` | One line for people, for example `"7 markets, 3 themes, 12 ticker signals (mock)"`, `"passed: 7 of 9 markets usable (2 not relevant, 0 illiquid, 0 ended)"`, `"4 stocks (2 Gemini calls)"`, `"passed, 1 revision"` |
+
+A cached answer carries the trace of the run that produced it.
 
 ### Error responses
 
-| Status | `error.code`      | When                                                                                       |
-| ------ | ----------------- | ------------------------------------------------------------------------------------------ |
-| 400    | `invalid_request` | Body is not JSON, or `idea` is missing, not a string, empty, or longer than 500 characters |
-| 429    | `rate_limited`    | Rate limit hit. `Retry-After` header gives the seconds to wait                             |
-| 502    | `no_match`        | Gemini is unavailable and no supported stock matched the idea by keyword                   |
-| 502    | `upstream_error`  | Unexpected failure                                                                         |
+| Status | `error.code`          | When                                                                                                                                                                                                                          |
+| ------ | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `invalid_request`     | Body is not JSON, or `idea` is missing, not a string, empty, or longer than 500 characters                                                                                                                                    |
+| 422    | `not_enough_evidence` | The gate found fewer than 2 usable markets. `error.message` says why in plain words and names 3 ideas that work; the same is in `error.reason` (the why alone) and `error.examples` (string array). The body also has `trace` |
+| 429    | `rate_limited`        | Per-IP limit hit (30 per minute, 600 per day). `Retry-After` gives the seconds to wait. The Gemini budget never causes a 429                                                                                                  |
+| 502    | `no_match`            | Gemini is unavailable and the packet links fewer than 3 supported tickers to its markets                                                                                                                                      |
+| 502    | `upstream_error`      | Unexpected failure                                                                                                                                                                                                            |
+
+```json
+{
+  "error": {
+    "code": "not_enough_evidence",
+    "message": "Polymarket has open markets near this idea, but they do not connect it to the stocks we cover (chips, AI and big tech, energy, defense, banks, crypto, interest rates). Ideas that work: \"AI chips and Taiwan risk\", \"Fed rate cuts and housing\", \"Crypto regulation\".",
+    "reason": "Polymarket has open markets near this idea, but they do not connect it to the stocks we cover (chips, AI and big tech, energy, defense, banks, crypto, interest rates).",
+    "examples": ["AI chips and Taiwan risk", "Fed rate cuts and housing", "Crypto regulation"]
+  },
+  "trace": [
+    {
+      "step": "analyst",
+      "status": "ok",
+      "ms": 412,
+      "summary": "1 markets, 0 themes, 0 ticker signals (mock)"
+    },
+    {
+      "step": "gate",
+      "status": "failed",
+      "ms": 0,
+      "summary": "not enough evidence: 0 of 1 markets usable (1 not relevant, 0 illiquid, 0 ended), need 2"
+    },
+    { "step": "decider", "status": "skipped", "ms": 0, "summary": "not called: the gate failed" }
+  ]
+}
+```
 
 The adapter must reject on any non-2xx status; the controller then shows its own retry message.
+`/js/stocks-adapter.js` already throws `error.message`, so the 422 text reaches the user unchanged.
 
 ### Behaviour
 
-- **Evidence is real.** Candidate markets come from Polymarket's public search (live, unresolved, Yes/No,
-  with a real price). A stock whose reason cites a market that was not among the candidates is dropped.
-  Odds quoted in a reason are checked against the live price (within 1 point) and rewritten if wrong.
-- **Timing.** Typically 4 to 10 seconds. Gemini has 20 seconds in total, including one retry on invalid
-  output; after that the keyword fallback answers in the same shape.
-- **Caching.** Answers are cached in Tiger for 15 minutes, shared by all servers. Ideas that differ only in case, spacing or surrounding punctuation share an entry. The body says so: `"cached": true` with `"cachedAt"` (ISO time the answer was computed), or `"cached": false, "cachedAt": null`. The same is in the headers `X-Cache: HIT|MISS` and `X-Cache-Age` (seconds). Keyword fallbacks are never cached. Cached answers return in about 0.1 s.
-- **Model backup.** If `gemini-3.5-flash` is rate limited or overloaded, `gemini-3.5-flash-lite` answers instead (still `"source": "gemini"`); only if both fail does the keyword fallback run.
-- **Rate limits.** 30 requests per minute and 600 per day per IP. Requests that are not answered from the cache are also capped at 600 per day in total, to protect the Gemini quota.
-- **Gemini quota (free tier, measured 2026-10-09).** `gemini-3.5-flash` allows 5 requests per minute and `gemini-3.5-flash-lite` 15. An uncached idea uses one of each. Up to about 4 new ideas per minute get the main model, up to about 10 are still answered by AI through the backup model, and beyond that the keyword fallback answers. Cached ideas are not limited by this.
+- **Gate rules** (`web/src/lib/pipeline/gate.ts`). A market is usable when the analyst rates its
+  `relevance` at 0.4 or more, its `liquidity` is known and at least $1,000, its end date is in the future and
+  its odds are strictly between 0 and 1. The packet must be at most 60 minutes old. At least 2 usable markets
+  are needed. The decider only ever sees the usable markets.
+- **Checker rules** (`web/src/lib/pipeline/checker.ts`). Every ticker is one of the 40 and appears once;
+  there are 3 to 5 stocks; every stock cites at least one market id and every cited id is in the packet; each
+  reason quotes the odds of a market it cites; every percentage is within 1 point of the Yes or No odds of a
+  cited market (or is part of that market's question); every odds move ("up 1.2 pts") is within 0.5 points of
+  the cited market's 24-hour or 7-day change; the summary contains no percentages.
+- **One revision, never two.** If the checker finds errors, the decider gets its own answer and the list of
+  errors back once. If the second answer still fails, the stocks that pass on their own are kept when there
+  are at least 3; otherwise the evidence-only fallback answers (`"source": "fallback"`): the analyst's first
+  ticker signals, each with its market and odds.
+- **Timing.** Typically 3 to 5 seconds for a new idea: the analyst 1 to 2 seconds (search plan and Polymarket
+  searches), one Gemini call of about 2 seconds for the decision. Gemini has 20 seconds in total; after that
+  the fallback answers in the same shape.
+- **Caching.** Answers are cached in Tiger for 15 minutes, shared by all servers. Ideas that differ only in case, spacing or surrounding punctuation share an entry. The body says so: `"cached": true` with `"cachedAt"` (ISO time the answer was computed), or `"cached": false, "cachedAt": null`. The same is in the headers `X-Cache: HIT|MISS` and `X-Cache-Age` (seconds). Fallback answers and 422s are never cached. Cached answers return in about 0.1 s.
+- **Models (one place: `web/src/lib/gemini/models.ts`).** Each Gemini call names its task and walks that task's chain until a model answers. Search plan and decision: `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite` → `gemini-2.5-flash-lite` (last resort, retires 2026-10-16) → no Gemini (evidence-only answer). Manager's note (section 4b): `gemini-3.8-flash` → `gemini-3-flash-preview` → `gemini-3.6-flash` → `gemini-3.5-flash` → `gemini-3.5-flash-lite` → `gemini-2.5-flash` → `gemini-2.5-flash-lite` → template letter. The `decider` trace entry names the model that answered, for example `"3 stocks (1 Gemini call, gemini-3.5-flash-lite)"`.
+- **Per-model budgets, counted in Tiger.** Every model may use 80% of its free limits: the Flash-Lite models 12 calls per minute and 400 per day each (limits 15 and 500), the Flash models 4 per minute and 16 per day each (limits 5 and 20), `gemini-2.5-flash-lite` 8 and 16. The day runs from midnight Pacific time, like Google's. A model over its budget is skipped without calling Google. A model that answers 429 is blocked until that minute ends, or until the day ends when the message says the daily quota is gone, so it is never retried in the same minute; a 404 (retired model) blocks it for a day. `GET /api/health` shows what is left.
+- **Gemini calls per uncached request.** Normally **2** (search plan + decision), **3 at most** (plus one revision or one retry), all on the Flash-Lite chain; **1** when the search plan is cached (same idea within 24 hours); **0** for a cached answer and for an idea that stops at the gate with a cached plan. With `CHECKER_LLM=true` one more.
+- **Request caps.** In front of the model budgets, so one burst or one judging session cannot spend the day: **8 uncached requests per minute, 96 per 30 minutes, 240 per day, and 48 per 30 minutes per IP** may use Gemini (`web/src/lib/pipeline/budget.ts`, derived from the two main Flash-Lite budgets: 24 calls per minute and 800 per day, 3 calls per request, 10% of the day kept for the warm job and evals).
+- **Over budget is not an error.** A request beyond a cap, or one that finds every model of the chain spent, is answered without Gemini: the analyst searches by keyword and the stocks come from the evidence alone (`"source": "fallback"`; the `decider` trace entry says `skipped` or `every Gemini model is rate limited or over its budget`). Such answers are not cached, so the idea gets an AI answer once budget frees up. Cached answers are never affected.
+- **Rate limits.** 30 requests per minute and 600 per day per IP, cached or not (`429`).
 - **CORS.** Allowed origins: `https://becomingwise.github.io`, `http://localhost:8000`,
   `http://127.0.0.1:8000`, `http://localhost:3000`, `http://127.0.0.1:3000`. `OPTIONS` preflight is
   answered. More origins can be added with the `CORS_ORIGINS` env var (comma-separated).
@@ -133,7 +218,173 @@ curl:
 curl -X POST https://prophetf.vercel.app/api/stocks -H "Content-Type: application/json" -d '{"idea":"AI chips and Taiwan risk"}'
 ```
 
-Locally without HTTP: `pnpm try:findstocks "your idea"` in `/web`.
+Locally without HTTP: `pnpm try:findstocks "your idea"` in `/web` (add `--packet` to stop after the gate,
+which uses no Gemini call).
+
+---
+
+## 1b. The evidence packet and `POST /api/analyze` — LIVE
+
+The **EvidencePacket** is the handoff from the analyst to the decider. The schema is
+`web/src/lib/analyst/packet.ts` (zod, exported type `EvidencePacket`); `web/docs/HANDOFF.md` explains it for
+the analyst's author with a full example and the two ways to plug a real analyst in.
+
+```ts
+type Signal = "bullish" | "bearish" | "neutral";
+
+type EvidencePacket = {
+  idea: string; // 1 to 500 characters
+  generatedAt: string; // ISO date-time; the gate rejects packets older than 60 minutes
+  markets: {
+    // at most 40, most relevant first, unique ids
+    id: string; // Polymarket's numeric market id
+    question: string;
+    url: string;
+    probability: number; // current odds of "Yes", 0 to 1
+    change24h: number | null; // change of probability, in probability units: 0.03 = +3 points
+    change7d: number | null;
+    volume24h: number | null; // US dollars
+    liquidity: number | null; // US dollars; null does not pass the gate
+    endDate: string | null; // ISO date-time
+    relevance: number; // 0 to 1, how much the market matters for the idea; the gate needs 0.4
+    signal: Signal; // what the market's level and move mean for the idea's stocks
+    analystNote: string; // 0 to 400 characters, read by the decider
+  }[];
+  themes: { name: string; direction: Signal; confidence: number; marketIds: string[] }[]; // at most 12
+  tickerSignals: {
+    // at most 60, most important first
+    symbol: string; // tickers outside the 40-stock universe are ignored
+    impact: number; // -1 (strongly negative) to +1 (strongly positive)
+    marketIds: string[]; // at least one; the market `why` is about goes first
+    why: string; // 1 to 300 characters
+  }[];
+  warnings: string[]; // at most 20
+};
+```
+
+Every id in `themes[].marketIds` and `tickerSignals[].marketIds` must be the `id` of a market in `markets`.
+
+### `POST /api/analyze`
+
+Runs only the analyst (and reports what the gate would say). The mock analyst makes one Gemini call on the
+lighter model for a new idea (its search plan, cached for a day); nothing else calls Gemini. When the gate
+would fail, `gate.reason` has the plain-words explanation. Use it to see what the decider
+is given for an idea, or to check a new analyst.
+
+Request: `{ "idea": string }`, as for `/api/stocks`.
+
+Response — `200`:
+
+```json
+{
+  "packet": {
+    "idea": "AI chips and Taiwan risk",
+    "generatedAt": "2026-10-10T13:54:16.488Z",
+    "markets": [
+      {
+        "id": "1426260",
+        "question": "Will AI-chip export licensing become law this year?",
+        "url": "https://polymarket.com/event/which-bills-will-become-law-in-2026",
+        "probability": 0.22,
+        "change24h": 0.035,
+        "change7d": -0.095,
+        "volume24h": 662.76,
+        "liquidity": 12658.728,
+        "endDate": "2027-01-01T04:59:00Z",
+        "relevance": 0.75,
+        "signal": "bullish",
+        "analystNote": "Yes is at 22%, -9.5 pts over 7 days. The weighting universe links it to 5 tickers."
+      }
+    ],
+    "themes": [
+      {
+        "name": "Semiconductors",
+        "direction": "bullish",
+        "confidence": 0.9,
+        "marketIds": ["1426260"]
+      }
+    ],
+    "tickerSignals": [
+      {
+        "symbol": "NVDA",
+        "impact": 0.61,
+        "marketIds": ["1426260"],
+        "why": "NVIDIA loses if \"AI-chip export licensing becomes law\" gets more likely."
+      }
+    ],
+    "warnings": ["Mock analyst: keyword search and fixed market-to-ticker links, no analysis."]
+  },
+  "gate": { "passed": true, "summary": "passed: 15 of 15 markets usable" },
+  "trace": [
+    {
+      "step": "analyst",
+      "status": "ok",
+      "ms": 720,
+      "summary": "15 markets, 2 themes, 39 ticker signals (mock)"
+    },
+    { "step": "gate", "status": "ok", "ms": 0, "summary": "passed: 15 of 15 markets usable" }
+  ]
+}
+```
+
+`packet` is the full packet, including markets the gate would not use. Errors: `400 invalid_request`,
+`429 rate_limited` (30 per minute and 600 per day per IP), `502 upstream_error`.
+
+**Which analyst answers** is set by the `ANALYST_MODE` env var (shown in `GET /api/health` under
+`pipeline.analystMode`):
+
+| `ANALYST_MODE`   | Analyst                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mock` (default) | Built in: one Flash-Lite call turns the idea into 3 to 6 search queries and the sectors it touches (cached 24 hours, 5 s limit, keywords instead when it fails or the budget is used up), then Polymarket search, the weighting universe's market → ticker links, 24-hour and 7-day changes from the odds history in Tiger (Polymarket's own change fields where Tiger has no history yet) |
+| `module`         | `analyze(idea)` exported by `web/src/lib/analyst/index.ts` (HANDOFF option A)                                                                                                                                                                                                                                                                                                              |
+| `tiger`          | Reads the tables `analyst_packets` and `market_analysis` (HANDOFF option B)                                                                                                                                                                                                                                                                                                                |
+
+If the `module` or `tiger` analyst throws or returns an invalid packet, the mock answers instead; the
+`analyst` trace entry then has `"status": "warn"` and the packet's first warning says why.
+
+PowerShell:
+
+```powershell
+$a = Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/analyze" -ContentType "application/json" -Body '{"idea":"AI chips and Taiwan risk"}'
+$a.trace | Format-Table step, status, ms, summary
+```
+
+---
+
+## 1c. `POST /api/decide` — LIVE
+
+Runs the gate, the decider and the checker on a packet you send. Use it to test the decider against a
+hand-written or saved packet, or to check that a new analyst's packets lead to good answers.
+
+Request (at most 64 KB):
+
+```json
+{ "idea": "AI chips and Taiwan risk", "packet": { "...": "an EvidencePacket, see section 1b" } }
+```
+
+Response: exactly the `/api/stocks` response (`200` with `trace` starting at `"gate"`), and the same errors.
+A packet that breaks the schema gets `400 invalid_request` with the field in the message, for example
+`"packet.themes.0.direction: Invalid option: expected one of \"bullish\"|\"bearish\"|\"neutral\""`. A packet
+whose `generatedAt` is more than 60 minutes old gets `422 not_enough_evidence`.
+
+Answers are cached for 15 minutes per idea and exact packet. Uncached requests count against the same
+Gemini budget as `/api/stocks` (section 1, Behaviour).
+
+PowerShell (analyze, then decide on that packet):
+
+```powershell
+$a = Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/analyze" -ContentType "application/json" -Body '{"idea":"AI chips and Taiwan risk"}'
+$body = @{ idea = "AI chips and Taiwan risk"; packet = $a.packet } | ConvertTo-Json -Depth 8
+Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/decide" -ContentType "application/json; charset=utf-8" -Body $body | ConvertTo-Json -Depth 5
+```
+
+**Eval.** `pnpm eval:decider` in `/web` runs the decider on 10 fixed ideas with fixed mock packets
+(`web/src/lib/pipeline/evalCases.ts`) and prints, per case and in total: whether the first answer passed
+every checker rule, whether the final answer did, whether every number in it is grounded in the cited
+markets, the Gemini calls, the latency, and how many reasons paste a market question word for word. It runs on
+the decider's Flash-Lite chain (about 1 minute, 9 calls); `--model <id>` tries another model first, and any
+model that is not Flash-Lite has 20 requests per day, so ask Lucas first. Run it before
+and after every change to the prompt in `web/src/lib/pipeline/decider.ts`.
 
 ---
 
@@ -823,7 +1074,12 @@ No parameters. `200` when the database is reachable, `503` otherwise.
 }
 ```
 
-`sponsors` has one entry each for `tiger`, `gemini`, `elevenlabs`, `solana`, `presage`, `ws`.
+`sponsors` has one entry each for `tiger`, `gemini`, `elevenlabs`, `solana`, `presage`, `ws`. The response
+also carries `"gemini"`: the model chains and, per model, `usedToday`, `dailyBudget` (80% of the limit),
+`remainingToday`, `limitPerDay`, `blockedUntil` and `blockedBecause`, for example
+`{ "model": "gemini-3.5-flash-lite", "usedToday": 75, "dailyBudget": 400, "remainingToday": 325, "limitPerDay": 500, "blockedUntil": null, "blockedBecause": null }`.
+It also carries `"pipeline": { "analystMode": "mock", "checkerLlm": false }`: which analyst writes the evidence
+packet for `/api/stocks` (section 1b) and whether the checker's LLM review is on.
 
 ---
 

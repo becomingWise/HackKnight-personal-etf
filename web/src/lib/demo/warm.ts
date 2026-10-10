@@ -1,6 +1,7 @@
 // Keeps the demo ideas answered from the cache: pre-computes /api/stocks and the /api/weights
 // request the frontend sends next (equal starting weights), and refreshes them before they
-// expire. A failed refresh never replaces a good answer.
+// expire. A failed refresh never replaces a good answer, and while the odds an answer cites have
+// not moved by more than a point, the answer is kept without asking Gemini again.
 import {
   CACHE_TTL_SECONDS,
   stocksCacheKey,
@@ -9,7 +10,13 @@ import {
   type ApiCache,
 } from "../cache/apiCache";
 import { equalWeights } from "../baskets/schema";
-import { computeStocks, defaultStocksDeps, type HandlerDeps } from "../stocks/handler";
+import {
+  computeStocks,
+  currentEvidence,
+  defaultStocksDeps,
+  type HandlerDeps,
+} from "../pipeline/handler";
+import type { FindStocksResponse } from "../stocks/contract";
 import { adjustWeights } from "../weights/adjustWeights";
 import type { Signal } from "../weights/engine";
 import { liveSignals } from "../weights/signals";
@@ -20,6 +27,9 @@ export const DEMO_IDEAS = [
   "Clean energy after the election",
   "Crypto regulation",
 ] as const;
+
+/** An answer is re-decided at least this often, even when its odds stand still. */
+const MAX_UNCHANGED_AGE_MS = 6 * 3600 * 1000;
 
 export type WarmDeps = {
   stocks: HandlerDeps;
@@ -35,8 +45,12 @@ export const defaultWarmDeps: WarmDeps = {
 
 export type WarmReport = {
   idea: string;
-  /** refreshed: new AI answer cached. kept: refresh failed, previous answer extended. failed: nothing cached. */
-  result: "refreshed" | "kept" | "failed";
+  /**
+   * refreshed: new AI answer cached. unchanged: the cited odds have not moved, the answer was
+   * extended without a Gemini call. kept: the refresh failed, the previous answer was extended.
+   * failed: nothing is cached.
+   */
+  result: "refreshed" | "unchanged" | "kept" | "failed";
   source: "gemini" | "fallback" | null;
   symbols: string[];
   weights: "adjusted" | "unchanged" | null;
@@ -60,6 +74,29 @@ export async function warmIdea(
     ms: Date.now() - started,
     ...partial,
   });
+
+  // The cheap path: the answer in the cache still quotes today's odds (within the checker's 1 point).
+  const cached = await deps.cache.get<FindStocksResponse>("stocks", key);
+  if (cached && Date.now() - cached.createdAt.getTime() < MAX_UNCHANGED_AGE_MS) {
+    const packet = await currentEvidence(idea, deps.stocks)
+      .then((e) => e.gated.packet)
+      .catch(() => null);
+    const still = (m: { id: string; probability: number }) => {
+      const now = packet?.markets.find((x) => x.id === m.id);
+      return now !== undefined && Math.abs(now.probability - m.probability) <= 0.01;
+    };
+    if (cached.value.markets.length && cached.value.markets.every(still)) {
+      const symbols = cached.value.stocks.map((s) => s.symbol);
+      await deps.cache.extend("stocks", key);
+      await deps.cache.extend("weights", weightsCacheKey(equalWeights(symbols)));
+      return report({
+        result: "unchanged",
+        source: "gemini",
+        symbols,
+        expiresAt: new Date(Date.now() + CACHE_TTL_SECONDS * 1000).toISOString(),
+      });
+    }
+  }
 
   let stocks;
   try {

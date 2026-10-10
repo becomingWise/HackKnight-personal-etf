@@ -5,8 +5,9 @@
 //   pnpm demo:warm --status   only show what is cached
 //   pnpm demo:warm --loop http://localhost:3000     against a local server
 //
-// Reads CRON_SECRET from .env.local. Each refresh costs two Gemini requests, so the loop
-// uses well under one request per minute of the free quota.
+// Reads CRON_SECRET from .env.local. A refresh costs no Gemini request while the odds an answer
+// cites have not moved by more than a point; otherwise one or two on the lighter model. The loop
+// stays far below one request per minute.
 const args = process.argv.slice(2);
 const base = (args.find((a) => a.startsWith("http")) ?? "https://prophetf.vercel.app").replace(
   /\/+$/,
@@ -60,9 +61,11 @@ async function warm(query: string) {
     const what =
       r.result === "refreshed"
         ? `refreshed → ${r.symbols.join(", ")} (weights ${r.weights ?? "not cached"})`
-        : r.result === "kept"
-          ? `Gemini unavailable, kept the previous answer → ${r.symbols.join(", ")}`
-          : `FAILED (${r.source ?? "no answer"}), nothing cached for this idea`;
+        : r.result === "unchanged"
+          ? `odds unchanged, kept without a Gemini call → ${r.symbols.join(", ")}`
+          : r.result === "kept"
+            ? `Gemini unavailable, kept the previous answer → ${r.symbols.join(", ")}`
+            : `FAILED (${r.source ?? "no answer"}), nothing cached for this idea`;
     console.log(`${stamp()}  "${r.idea}"  ${what}  [${(r.ms / 1000).toFixed(1)} s]`);
     return r;
   } catch (err) {

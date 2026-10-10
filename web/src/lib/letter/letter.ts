@@ -3,7 +3,7 @@
 import { z } from "zod";
 import type { Basket } from "../baskets/schema";
 import { ThinkingLevel, type GenerateJson } from "../sponsors/gemini";
-import { formatOdds } from "../stocks/findStocks";
+import { formatOdds } from "../stocks/contract";
 
 export const MAX_WORDS = 120;
 const MAX_CHARS = 1200;
@@ -101,8 +101,6 @@ export async function writeLetter(
   const remaining = () => GEMINI_BUDGET_MS - (Date.now() - started);
   const prompt = facts(basket);
   let problem = "";
-  // After a failed or timed-out call, the retry goes to the other model.
-  let failed = false;
   for (let attempt = 1; attempt <= 2 && remaining() > 3000; attempt++) {
     try {
       const raw = await deps.generate({
@@ -114,9 +112,9 @@ export async function writeLetter(
         timeoutMs: Math.min(7000, remaining()),
         // Minimal thinking: with more, the main model often takes over 8 s for this prompt.
         thinking: ThinkingLevel.MINIMAL,
-        // The main model writes noticeably better prose here (the lighter one pastes market
-        // questions verbatim); the lighter model is still the backup when the quota is hit.
-        prefer: failed ? "lite" : "main",
+        // The Flash models write noticeably better prose here (the lighter ones paste market
+        // questions verbatim), so the note has its own chain; see src/lib/gemini/models.ts.
+        task: "note",
         signal: abort,
       });
       const parsed = letterSchema.safeParse(raw);
@@ -132,7 +130,6 @@ export async function writeLetter(
     } catch (err) {
       if (abort?.aborted) throw err;
       problem = "";
-      failed = true;
       deps.log?.("gemini_error", {
         attempt,
         message: err instanceof Error ? err.message.slice(0, 200) : "unknown",

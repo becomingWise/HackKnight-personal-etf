@@ -111,11 +111,11 @@ describe("POST /api/baskets/{id}/letter", () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
-  it("gives Gemini the basket's facts and asks the main model first", async () => {
+  it("gives Gemini the basket's facts and uses the note's model chain", async () => {
     const generate = vi.fn(async () => ({ letter: GOOD }));
     await api(generate).post("abcdefgh");
     const args = (generate.mock.calls as unknown as Parameters<GenerateJson>[])[0][0];
-    expect(args.prefer).toBe("main");
+    expect(args.task).toBe("note");
     expect(args.prompt).toContain("AI chips and Taiwan risk");
     expect(args.prompt).toContain("NVDA (NVIDIA): 37.06%");
     expect(args.prompt).toContain('"Will China invade Taiwan by December 31, 2027?": Yes 11%');
@@ -149,7 +149,7 @@ describe("POST /api/baskets/{id}/letter", () => {
     expect((await a.post("abcdefgh")).headers.get("X-Cache")).toBe("MISS");
   });
 
-  it("retries with the lighter model after a timeout or error", async () => {
+  it("retries once after a timeout or error", async () => {
     const generate = vi
       .fn<GenerateJson>()
       .mockRejectedValueOnce(new Error("This operation was aborted"))
@@ -157,7 +157,7 @@ describe("POST /api/baskets/{id}/letter", () => {
     const body = await (await api(generate).post("abcdefgh")).json();
     expect(body).toMatchObject({ letter: GOOD, source: "gemini" });
     const calls = generate.mock.calls as unknown as Parameters<GenerateJson>[];
-    expect(calls.map((c) => c[0].prefer)).toEqual(["main", "lite"]);
+    expect(calls.map((c) => c[0].task)).toEqual(["note", "note"]);
   });
 
   it("falls back when Gemini keeps breaking the rules", async () => {

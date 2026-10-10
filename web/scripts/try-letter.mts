@@ -1,24 +1,21 @@
 // Manual check of the manager's note against real Gemini:
-//   pnpm try:letter <basketId> [main|lite]
+//   pnpm try:letter <basketId>
+// It uses the note's model chain, which starts with the small-quota Flash models: ask Lucas first.
 import { tigerBasketStore } from "../src/lib/baskets/store";
 import { db } from "../src/lib/db/client";
 import { writeLetter } from "../src/lib/letter/letter";
 import { geminiGenerateJson } from "../src/lib/sponsors/gemini";
 
-const [id, prefer] = process.argv.slice(2);
+const [id] = process.argv.slice(2);
 const stored = id ? await tigerBasketStore.get(id) : null;
 if (!stored) {
-  console.error("Usage: pnpm try:letter <basketId> [main|lite]  (basket not found)");
+  console.error("Usage: pnpm try:letter <basketId>  (basket not found)");
 } else {
   const started = Date.now();
   const result = await writeLetter(
     { ...stored, url: "" },
     {
-      generate: (args) =>
-        geminiGenerateJson({
-          ...args,
-          prefer: prefer === "main" || prefer === "lite" ? prefer : args.prefer,
-        }),
+      generate: geminiGenerateJson,
       log: (event, detail) => console.log(event, JSON.stringify(detail)),
     },
   );

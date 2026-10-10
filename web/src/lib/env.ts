@@ -16,6 +16,13 @@ const schema = z.object({
   CRON_SECRET: optional,
   APP_BASE_URL: optional,
 
+  // Decision workflow (src/lib/pipeline): which analyst writes the evidence packet
+  // (mock | module | tiger, default mock) and whether the checker adds an LLM review.
+  ANALYST_MODE: optional,
+  CHECKER_LLM: flag,
+  // A model id from src/lib/gemini/models.ts to try first for decisions; empty = the default chain.
+  DECIDER_MODEL: optional,
+
   // Snowflake was dropped (2026-10-09); the variable stays false and nothing reads it.
   FEATURE_SNOWFLAKE: flag,
   FEATURE_ELEVENLABS: flag,
