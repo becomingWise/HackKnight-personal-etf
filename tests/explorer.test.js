@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { allocate, basketHistory, nextSessions, scenarioPath, closeTimestamp, alignHistory } from "../experiment/math.js";
-import { createBasket, restoreBasket, deleteHolding, undoDeletion } from "../experiment/session.js";
+import { createBasket, restoreBasket, deleteHolding, undoDeletion, parseAmountCents,
+  changePaperAmount, paperHoldings, exportBasket, formatUsdCents } from "../experiment/session.js";
 import { normalizeKalshiCandles, kalshiEvent } from "../experiment/kalshi.js";
 import { normalizeSnapshot, analyzeBasket, refreshSnapshot } from "../experiment/data.js";
 import { createExperimentServer } from "../experiment/server.mjs";
@@ -27,9 +28,73 @@ test("the journey automatically populates, edits, undoes and restores a basket w
   assert.equal(restoreBasket(JSON.stringify({ ...saved, symbols: ["BAD"] }), symbols), null);
 });
 test("failed replacement suggestions leave the original basket intact", () => {
-  const old = createBasket("Chips", suggestions, symbols), before = structuredClone(old);
+  const old = changePaperAmount(createBasket("Chips", suggestions, symbols), "buy", 10001), before = structuredClone(old);
   assert.throws(() => createBasket("Energy", { ...suggestions, stocks: [{ symbol: "XOM" }] }, symbols));
   assert.deepEqual(old, before);
+});
+test("paper amounts reject fractional cents, invalid values and unsafe integers without rounding", () => {
+  for (const [text, cents] of [["100.50",10050],[" 12 ",1200],[".01",1],["0.10",10],["0002.5",250],["90071992547409.91",Number.MAX_SAFE_INTEGER]])
+    assert.equal(parseAmountCents(text), cents);
+  for (const text of ["", "0", "0.00", "-1", "+2", "1.001", "1e3", "NaN", "Infinity", "$10", "1,000", "1.", "90071992547409.92"])
+    assert.throws(() => parseAmountCents(text));
+});
+test("paper buys add funds, partial and full sales preserve companies, and failures preserve the balance", () => {
+  const empty = createBasket("Chips", suggestions, symbols);
+  const first = changePaperAmount(empty, "buy", 10001);
+  const second = changePaperAmount(first, "buy", 99);
+  assert.equal(empty.paperAmountCents, 0);
+  assert.equal(first.paperAmountCents, 10001);
+  assert.equal(second.paperAmountCents, 10100);
+  const sold = changePaperAmount(second, "sell", 137);
+  assert.equal(sold.paperAmountCents, 9963);
+  assert.deepEqual(sold.symbols, symbols);
+  assert.equal(changePaperAmount(sold, "sell", 9963).paperAmountCents, 0);
+  for (const [mode, amount] of [["sell", 9964],["buy",0],["buy",1.5],["buy",Infinity],["bad",1]])
+    assert.throws(() => changePaperAmount(sold, mode, amount));
+  assert.equal(sold.paperAmountCents, 9963);
+  assert.throws(() => changePaperAmount({ ...sold, paperAmountCents:Number.MAX_SAFE_INTEGER }, "buy",1));
+});
+test("paper display preserves cents at the safe-integer boundary", () => {
+  assert.equal(formatUsdCents(0),"$0.00");
+  assert.equal(formatUsdCents(10001),"$100.01");
+  assert.equal(formatUsdCents(Number.MAX_SAFE_INTEGER),"$90,071,992,547,409.91");
+  assert.throws(()=>formatUsdCents(1.5));assert.throws(()=>formatUsdCents(-1));
+});
+test("paper allocation sums to the exact cent after deletions, undo and an empty basket", () => {
+  const catalog = suggestions.stocks;
+  let saved = changePaperAmount(createBasket("Chips", suggestions, symbols), "buy", 10001);
+  const full = paperHoldings(saved, catalog);
+  assert.equal(full.reduce((n,h) => n + h.allocatedCents, 0), 10001);
+  assert.equal(full[0].allocatedCents, 1001);
+  for (const symbol of symbols.slice(3)) saved = deleteHolding(saved, symbol);
+  assert.deepEqual(paperHoldings(saved, catalog).map(h=>h.allocatedCents), [3334,3334,3333]);
+  saved = undoDeletion(saved);
+  assert.equal(paperHoldings(saved,catalog).reduce((n,h)=>n+h.allocatedCents,0), 10001);
+  for (const symbol of [...saved.symbols]) saved = deleteHolding(saved, symbol);
+  assert.equal(saved.paperAmountCents, 10001);
+  assert.deepEqual(paperHoldings(saved, catalog), []);
+  assert.throws(() => changePaperAmount(saved,"buy",100));
+  assert.equal(changePaperAmount(saved,"sell",10001).paperAmountCents,0);
+  const restored = undoDeletion(saved);
+  assert.equal(paperHoldings(restored, catalog)[0].allocatedCents,10001);
+});
+test("session recovery keeps paper funds and older sessions start at zero; a successful new idea resets funds", () => {
+  const old = createBasket("Chips", suggestions, symbols); delete old.paperAmountCents;
+  assert.equal(restoreBasket(JSON.stringify(old),symbols).paperAmountCents,0);
+  const funded = changePaperAmount(old,"buy",123456);
+  assert.equal(restoreBasket(JSON.stringify(funded),symbols).paperAmountCents,123456);
+  for (const paperAmountCents of [-1,1.5,null,"100",Number.MAX_SAFE_INTEGER+1])
+    assert.equal(restoreBasket(JSON.stringify({...funded,paperAmountCents}),symbols),null);
+  assert.equal(createBasket("Energy",suggestions,symbols).paperAmountCents,0);
+});
+test("export preserves paper funding, per-holding allocations and unallocated funds without invented gains", () => {
+  const saved = changePaperAmount(createBasket("Chips",suggestions,symbols),"buy",123456);
+  const data = exportBasket(saved,suggestions.stocks,"2026-10-10T21:00:00Z");
+  assert.equal(data.paperAmountCents,123456);assert.equal(data.paperAmountUsd,1234.56);assert.equal(data.mode,"paper");
+  assert.equal(data.holdings.reduce((n,h)=>n+h.allocatedCents,0),123456);
+  assert.equal(data.unallocatedCents,0);assert.equal(data.exportedAt,"2026-10-10T21:00:00Z");
+  assert.equal(exportBasket({...saved,symbols:[]},suggestions.stocks).unallocatedCents,123456);
+  assert.equal(data.profit,undefined);
 });
 
 test("basket replay compounds equal daily returns, shares dates, and recomputes after deletion", () => {
