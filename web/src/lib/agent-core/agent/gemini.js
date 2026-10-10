@@ -9,6 +9,8 @@
 //      check_selection, get_memory, remember_preference, google_search.
 //   3. Every model turn is sent back complete, thought signatures included, as Gemini 3 requires.
 //   4. The final answer is checked again in code; a wrong one gets one correction turn.
+// A caller may pass live Polymarket signals (signals.js): they add one block to the prompt and a
+// line of live odds to the served summary, with no extra Gemini call.
 // Google Search grounding runs as a separate grounded call inside the google_search tool.
 //
 // Plain Node 20+ (global fetch), no dependencies. The deployed backend runs this same file with
@@ -16,6 +18,7 @@
 import { buildBasket } from "./basket.js";
 import { cleanSessionId, localMemory } from "./memory.js";
 import { ALLOWED, notesForPrompt } from "./retrieval.js";
+import { checkSignalIds, oddsLine, signalsForPrompt, usableSignals } from "./signals.js";
 import { BASKET_SIZE, checkSelection, executeTool, functionDeclarations } from "./tools.js";
 
 export const MAX_MODEL_CALLS = 4;
@@ -144,6 +147,21 @@ const ANSWER_SCHEMA = {
   },
   required: ["summary", "symbols"]
 };
+/** With live signals in the prompt, the answer also names the ones it used. */
+const answerSchema = signals =>
+  signals.length
+    ? {
+        ...ANSWER_SCHEMA,
+        properties: {
+          ...ANSWER_SCHEMA.properties,
+          signals: {
+            type: "array",
+            description: "Ids of the live Polymarket events you used; empty when none applies.",
+            items: { type: "string", enum: signals.map(signal => signal.id) }
+          }
+        }
+      }
+    : ANSWER_SCHEMA;
 
 const thinking = model => (/^gemini-3/.test(model) ? { thinkingConfig: { thinkingLevel: "minimal" } } : {});
 
@@ -158,7 +176,7 @@ export function tidySummary(text) {
   return words.slice(0, MAX_SUMMARY_WORDS).join(" ").replace(/[\s,;:–—-]+$/u, "");
 }
 
-function parseAnswer(text) {
+function parseAnswer(text, signals) {
   let data;
   try {
     data = JSON.parse(text);
@@ -168,7 +186,10 @@ function parseAnswer(text) {
   const summary = tidySummary(data?.summary);
   if (!summary) return { ok: false, errors: ["summary must be a short non-empty string."] };
   const checked = checkSelection(data?.symbols);
-  return checked.ok ? { ok: true, value: { summary, stocks: checked.stocks } } : checked;
+  if (!checked.ok) return checked;
+  // Internal: which live signals the pick rests on. Never part of the public response.
+  const signalIds = checkSignalIds(data?.signals, checked.stocks, signals);
+  return { ok: true, value: { summary, stocks: checked.stocks, ...(signalIds.length ? { signalIds } : {}) } };
 }
 
 /** What is remembered for the session, written into the prompt so it is always applied. */
@@ -209,17 +230,27 @@ export function createFindStocks(options = {}) {
 
   /**
    * @param {{ idea: string }} input
-   * @param {{ signal?: AbortSignal, sessionId?: string, basket?: boolean }} [callOptions]
+   * @param {{ signal?: AbortSignal, sessionId?: string, basket?: boolean, signals?: object[] }} [callOptions]
+   *   signals: optional live Polymarket signals (see signals.js); without them nothing changes.
    * @returns {Promise<{ summary: string, stocks: { symbol: string, name: string }[], basket?: object }>}
    */
-  return async function findStocks({ idea } = {}, { signal, sessionId: givenSession, basket = false } = {}) {
+  return async function findStocks({ idea } = {}, { signal, sessionId: givenSession, basket = false, signals } = {}) {
     const text = typeof idea === "string" ? idea.trim() : "";
     if (!text) throw new AgentError("invalid_idea", "idea must be a non-empty string.", 400);
     if (text.length > MAX_IDEA_LENGTH) {
       throw new AgentError("invalid_idea", `idea must be at most ${MAX_IDEA_LENGTH} characters.`, 400);
     }
     const sessionId = cleanSessionId(givenSession ?? options.sessionId ?? process.env.MYETF_SESSION_ID);
-    const finish = selection => (basket ? { ...selection, basket: buildBasket(selection) } : selection);
+    const live = usableSignals(signals);
+    /** The public response: the odds line is built now, from the live figures. */
+    const finish = ({ signalIds, ...selection }) => {
+      const line = oddsLine(signalIds, live);
+      return {
+        ...selection,
+        ...(line ? { summary: `${selection.summary} ${line}` } : {}),
+        ...(basket ? { basket: buildBasket(selection) } : {})
+      };
+    };
 
     const cacheKey = `${sessionId ?? "-"}|${normalizeIdea(text)}`;
     const cached = await cache.get(cacheKey).catch(() => null);
@@ -319,6 +350,7 @@ export function createFindStocks(options = {}) {
       parts: [{
         text:
           `${notesForPrompt(text)}\n\n` +
+          (live.length ? `${signalsForPrompt(live)}\n\n` : "") +
           `SESSION\n${sessionBlock(record)}\n\n` +
           `IDEA\n"""${text}"""`
       }]
@@ -344,7 +376,7 @@ export function createFindStocks(options = {}) {
             ...(lastCall ? { toolConfig: { functionCallingConfig: { mode: "NONE" } } } : {}),
             generationConfig: {
               responseMimeType: "application/json",
-              responseJsonSchema: ANSWER_SCHEMA,
+              responseJsonSchema: answerSchema(live),
               temperature: 0.3,
               ...thinking(model)
             }
@@ -378,7 +410,7 @@ export function createFindStocks(options = {}) {
           continue;
         }
 
-        const answer = parseAnswer(parts.filter(part => part.text && !part.thought).map(part => part.text).join(""));
+        const answer = parseAnswer(parts.filter(part => part.text && !part.thought).map(part => part.text).join(""), live);
         if (answer.ok) {
           if (sessionId) {
             await memory

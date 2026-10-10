@@ -57,7 +57,11 @@ browser tab. Without the header nothing is remembered.
 - `stocks`: exactly 3, unique symbols, always from the 40 tickers the weighting service can tilt
   (`agent/project-notes.json`, taken from `backend/src/polyslice_api/data/universe.json`). Names are the
   list's own, not written by the model.
-- `summary`: at most 12 words.
+- `summary`: at most 12 words from Gemini. When the pick rests on live Polymarket markets, the server
+  appends one sentence with their odds (at most 2 markets), for example
+  `"Your AI chips and Taiwan risk basket Live Polymarket odds: China invades Taiwan 8% (▼2 pts this week)."`
+  That sentence is built by the server from the live figures when the answer is served (also for a
+  cached answer), never written by Gemini. No market, or Polymarket unreachable: no sentence.
 - With `"basket": true` the response also has
   `"basket": { "title", "allocationMethod": "equal", "holdings": [{ "symbol", "name", "weightPct" }] }`
   (33.33 / 33.33 / 33.34, from the controller's `startingWeights`).
@@ -82,6 +86,13 @@ A failure is always an error: the service never substitutes demo or fallback com
   budgets shown in `GET /api/health`. A call that takes over 9 seconds moves on to the next model.
 - **Tools:** `check_selection` (exactly 3, unique, allowed), `get_memory`, `remember_preference`, and
   `google_search` (a separate grounded Gemini call; when it has no quota the agent decides without it).
+- **Live Polymarket context (no extra Gemini call):** the handler loads the same live signals as
+  `/api/weights` (`liveSignals`, cached 60 s, waited for at most 3 s) and the agent's prompt gets one
+  line per live signal: id, question, Yes odds, 7-day change and β per ticker. The stocks must fit the
+  idea first; when the idea touches one of these events the agent prefers the fitting tickers with
+  the largest |β| and names the signal ids it used in an internal field. The server drops unknown ids
+  and ids with no β on a picked ticker; what is left feeds the odds sentence. If the signals fail or
+  are missing, the request runs exactly as it did before (the local `backend/server.js` passes none).
 - **Typical time:** 1.5 to 5 seconds; a repeat is instant.
 
 ### Try it

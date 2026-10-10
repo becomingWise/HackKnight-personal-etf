@@ -2,11 +2,15 @@
 // src/lib/agent-core by `pnpm sync:agent`). The response is exactly the agent's:
 //   { summary, stocks: [{ symbol, name }] }   (+ `basket` when the body says "basket": true)
 // Failures are errors, never substitute companies. Contract: docs/API.md section 1.
+// The live Polymarket signals of /api/weights go to the agent as context (no extra Gemini call);
+// when they cannot be read the agent answers exactly as it does without them.
 import { AgentError, createFindStocks } from "../agent-core/agent/gemini.js";
 import { preflight } from "../http/cors";
 import { clientIp, hit, ipKey, type Limit, type RateResult } from "../http/rateLimit";
 import { error, json } from "../http/respond";
 import { geminiBudget } from "../sponsors/gemini";
+import type { Signal } from "../weights/engine";
+import { liveSignals } from "../weights/signals";
 import { agentBudget, agentCache, tigerAgentMemory } from "./adapters";
 
 type Selection = {
@@ -16,11 +20,13 @@ type Selection = {
 };
 export type FindStocks = (
   input: { idea: unknown },
-  options: { signal?: AbortSignal; sessionId?: string; basket?: boolean },
+  options: { signal?: AbortSignal; sessionId?: string; basket?: boolean; signals?: Signal[] },
 ) => Promise<Selection>;
 
 export type AgentHandlerDeps = {
   findStocks: FindStocks;
+  /** The live Polymarket signals; optional context, so a failure here never fails the request. */
+  signals?: () => Promise<Signal[]>;
   rateLimit: (limits: Limit[]) => Promise<RateResult>;
   log?: (event: string, detail?: Record<string, unknown>) => void;
 };
@@ -28,6 +34,25 @@ export type AgentHandlerDeps = {
 const MAX_BODY_BYTES = 16 * 1024;
 const PER_IP_PER_MINUTE = 30;
 const PER_IP_PER_DAY = 600;
+/** A cold signal lookup is 11 Polymarket searches; the pick does not wait longer than this for it. */
+const SIGNALS_WAIT_MS = 3_000;
+
+async function signalsOrNone(load: AgentHandlerDeps["signals"]): Promise<Signal[] | undefined> {
+  if (!load) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      load(),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(resolve, SIGNALS_WAIT_MS, undefined);
+      }),
+    ]);
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 let agent: FindStocks | undefined;
 
@@ -43,6 +68,7 @@ export const defaultAgentDeps: AgentHandlerDeps = {
     }) as FindStocks;
     return agent(input, options);
   },
+  signals: liveSignals,
   rateLimit: hit,
 };
 
@@ -77,9 +103,10 @@ export function createAgentStocksHandler(deps: AgentHandlerDeps = defaultAgentDe
 
     try {
       const sessionId = request.headers.get("x-session-id") ?? undefined;
+      const signals = await signalsOrNone(deps.signals);
       const result = await deps.findStocks(
         { idea: body?.idea },
-        { signal: request.signal, sessionId, basket: body?.basket === true },
+        { signal: request.signal, sessionId, basket: body?.basket === true, signals },
       );
       return json(request, 200, result);
     } catch (err) {

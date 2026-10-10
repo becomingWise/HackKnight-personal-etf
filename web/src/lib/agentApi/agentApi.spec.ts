@@ -7,6 +7,7 @@ import { AgentError, createFindStocks } from "../agent-core/agent/gemini.js";
 import { createMemoryStore } from "../agent-core/agent/memory.js";
 import { memoryApiCache } from "../cache/apiCache";
 import { memoryModelBudget } from "../gemini/budget";
+import type { Signal } from "../weights/engine";
 import { agentBudget, agentCache } from "./adapters";
 import { createAgentStocksHandler, type FindStocks } from "./handler";
 
@@ -129,6 +130,89 @@ describe("POST /api/stocks (stock agent)", () => {
     expect(response.headers.get("Access-Control-Allow-Headers")).toContain("X-Session-Id");
   });
 
+  it("passes the live Polymarket signals on, and answers without them when they fail", async () => {
+    const signals: Signal[] = [
+      {
+        id: "taiwan",
+        label: "China invades Taiwan",
+        status: "live",
+        price: 0.08,
+        question: "Will China invade Taiwan by end of 2026?",
+        changes: { "1w": -0.02 },
+        betas: { TSM: -1.0, NVDA: -0.5 },
+      },
+    ];
+    const findStocks = vi.fn<FindStocks>(async () => SELECTION);
+    const live = createAgentStocksHandler({
+      findStocks,
+      signals: async () => signals,
+      rateLimit: allow,
+    });
+    expect((await live.POST(post({ idea: "AI chips" }))).status).toBe(200);
+    expect(findStocks.mock.calls[0][1].signals).toBe(signals);
+
+    const failing = createAgentStocksHandler({
+      findStocks,
+      signals: async () => {
+        throw new Error("gamma down");
+      },
+      rateLimit: allow,
+    });
+    const response = await failing.POST(post({ idea: "AI chips" }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(SELECTION);
+    expect(findStocks.mock.calls[1][1].signals).toBeUndefined();
+  });
+
+  it("adds the odds line from live data and keeps { summary, stocks } only", async () => {
+    const callModel = vi.fn(async () => ({
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [
+              {
+                text: JSON.stringify({
+                  summary: "Your AI chips basket",
+                  symbols: ["NVDA", "TSM", "AMD"],
+                  signals: ["taiwan", "made_up"],
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    }));
+    const findStocks = createFindStocks({
+      callModel,
+      memory: createMemoryStore(),
+      cache: agentCache(memoryApiCache()),
+      budget: agentBudget(memoryModelBudget()),
+      sessionId: null,
+    }) as FindStocks;
+    const { POST } = createAgentStocksHandler({
+      findStocks,
+      signals: async () => [
+        {
+          id: "taiwan",
+          label: "China invades Taiwan",
+          status: "live",
+          price: 0.08,
+          changes: { "1w": -0.02 },
+          betas: { TSM: -1.0 },
+        },
+      ],
+      rateLimit: allow,
+    });
+    const body = await (await POST(post({ idea: "AI chips and Taiwan risk" }))).json();
+    expect(body).toEqual({
+      summary:
+        "Your AI chips basket Live Polymarket odds: China invades Taiwan 8% (▼2 pts this week).",
+      stocks: SELECTION.stocks,
+    });
+    expect(callModel).toHaveBeenCalledTimes(1);
+  });
+
   it("counts the agent's calls against the model budgets and keeps search blocks apart", async () => {
     const budget = agentBudget(memoryModelBudget());
     expect(await budget.reserve("gemini-3.5-flash-lite", "agent")).toBeNull();
@@ -145,6 +229,7 @@ describe("the copies of /agent", () => {
     "agent/gemini.js",
     "agent/tools.js",
     "agent/retrieval.js",
+    "agent/signals.js",
     "agent/memory.js",
     "agent/basket.js",
     "agent/project-notes.json",

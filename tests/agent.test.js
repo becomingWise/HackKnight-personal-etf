@@ -5,6 +5,7 @@ import test from "node:test";
 import { AgentError, MAX_MODEL_CALLS, createFindStocks, modelChains, tidySummary } from "../agent/gemini.js";
 import { createMemoryStore } from "../agent/memory.js";
 import { ALLOWED, retrieve } from "../agent/retrieval.js";
+import { checkSignalIds, oddsLine, usableSignals } from "../agent/signals.js";
 import { checkSelection, executeTool } from "../agent/tools.js";
 
 const text = value => ({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(value) }] } }] });
@@ -235,4 +236,89 @@ test("summaries are cut to twelve words; model chains keep Flash for search only
   assert.deepEqual(modelChains({ GEMINI_MODEL: "gemini-3.8-flash" }).agent, ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]);
   assert.equal(modelChains({ GEMINI_MODEL: "gemini-3.8-flash" }).search[0], "gemini-3.8-flash");
   assert.equal(modelChains({ GEMINI_MODEL: "gemini-3.1-flash-lite" }).agent[0], "gemini-3.1-flash-lite");
+});
+
+// ---------- Live Polymarket signals (agent/signals.js) ----------
+
+const SIGNALS = [
+  { id: "taiwan", label: "China invades Taiwan", status: "live", price: 0.08, question: "Will China invade Taiwan by end of 2026?", changes: { "1w": -0.02 }, betas: { TSM: -1.0, NVDA: -0.5, AMD: -0.5, LMT: 0.6 } },
+  { id: "chip_export_law", label: "AI-chip export licensing becomes law", status: "live", price: 0.31, question: "AI-chip export licensing becomes law?", changes: { "1w": 0.04 }, betas: { NVDA: -0.6, AMD: -0.5 } },
+  { id: "openai_1t", label: "OpenAI IPOs above $1T", status: "live", price: 0.2, question: "OpenAI IPO above $1T?", changes: { "1w": null }, betas: { MSFT: 0.4, NVDA: 0.3, AMD: 0.2 } },
+  { id: "btc_100k", label: "Bitcoin reaches $100k in 2026", status: "live", price: 0.5, question: "Bitcoin $100k?", changes: { "1w": 0 }, betas: { IBIT: 0.9, COIN: 0.8 } },
+  { id: "recession", label: "US recession by end of 2026", status: "unavailable", price: null, betas: { TLT: 0.7 } }
+];
+const withSignals = (ids, symbols) => text({ summary: "Your AI chips basket", symbols: symbols ?? ["NVDA", "TSM", "AMD"], signals: ids });
+
+test("signals: one compact line per live signal goes into the prompt, with the rule", async () => {
+  const model = gemini(answer());
+  await agent(model)({ idea: "AI chips and Taiwan risk" }, { signals: SIGNALS });
+  const { body } = model.requests[0];
+  const prompt = body.contents[0].parts[0].text;
+  assert.match(prompt, /LIVE POLYMARKET EVENTS/);
+  assert.ok(prompt.includes('- taiwan: "Will China invade Taiwan by end of 2026?" Yes 8%, 7-day change -2 pts. β: TSM -1, LMT +0.6, NVDA -0.5, AMD -0.5'));
+  assert.ok(prompt.includes("Yes 31%, 7-day change +4 pts. β: NVDA -0.6, AMD -0.5"));
+  assert.ok(prompt.includes("7-day change unknown"));
+  assert.match(prompt, /must fit the idea first/);
+  assert.match(prompt, /largest \|β\|/);
+  // Only live signals are shown, and only they can be named.
+  assert.ok(!prompt.includes("recession:"));
+  assert.deepEqual(body.generationConfig.responseJsonSchema.properties.signals.items.enum, ["taiwan", "chip_export_law", "openai_1t", "btc_100k"]);
+  assert.deepEqual(body.generationConfig.responseJsonSchema.required, ["summary", "symbols"]);
+});
+
+test("signals: unknown ids and ids with no β on a picked ticker are dropped", () => {
+  const live = usableSignals(SIGNALS);
+  const stocks = [{ symbol: "NVDA" }, { symbol: "TSM" }, { symbol: "AMD" }];
+  // btc_100k has no β on any of the three; "made_up" and "recession" are not live signals.
+  assert.deepEqual(checkSignalIds(["btc_100k", "made_up", "recession", "openai_1t", "taiwan", "taiwan", 7], stocks, live), ["taiwan", "openai_1t"]);
+  assert.deepEqual(checkSignalIds(["taiwan"], [{ symbol: "JPM" }, { symbol: "BAC" }, { symbol: "GS" }], live), []);
+  assert.deepEqual(checkSignalIds("taiwan", stocks, live), []);
+  assert.deepEqual(checkSignalIds(undefined, stocks, live), []);
+});
+
+test("signals: the odds line is built from live data, at most two markets, and the response keeps its shape", async () => {
+  const model = gemini(withSignals(["openai_1t", "btc_100k", "made_up", "chip_export_law", "taiwan"]));
+  const result = await agent(model)({ idea: "AI chips and Taiwan risk" }, { signals: SIGNALS, basket: true });
+  // Strongest link to the picked tickers first: taiwan (TSM -1), then chip_export_law (NVDA -0.6).
+  assert.equal(result.summary, "Your AI chips basket Live Polymarket odds: China invades Taiwan 8% (▼2 pts this week), AI-chip export licensing becomes law 31% (▲4 pts this week).");
+  assert.deepEqual(Object.keys(result).sort(), ["basket", "stocks", "summary"]);
+  assert.deepEqual(result.stocks.map(stock => Object.keys(stock).sort()), Array(3).fill(["name", "symbol"]));
+  assert.equal(result.basket.title, "Your AI chips basket");
+
+  assert.equal(oddsLine(["openai_1t", "btc_100k"], usableSignals(SIGNALS)), "Live Polymarket odds: OpenAI IPOs above $1T 20%, Bitcoin reaches $100k in 2026 50% (flat this week).");
+  assert.equal(oddsLine(["taiwan"], usableSignals([{ ...SIGNALS[0], price: 0.004, changes: { "1w": 0.01 } }])), "Live Polymarket odds: China invades Taiwan <1% (▲1 pt this week).");
+  assert.equal(oddsLine(["taiwan"], []), "");
+  assert.equal(oddsLine(undefined, usableSignals(SIGNALS)), "");
+});
+
+test("signals: Gemini cannot write the odds; a pick that names no signal gets no line", async () => {
+  const lying = gemini(text({ summary: "Taiwan invasion odds are 99% today", symbols: ["NVDA", "TSM", "AMD"], signals: [] }));
+  assert.equal((await agent(lying)({ idea: "AI chips" }, { signals: SIGNALS })).summary, "Taiwan invasion odds are 99% today");
+  const unrelated = gemini(withSignals(["btc_100k"]));
+  assert.equal((await agent(unrelated)({ idea: "AI chips" }, { signals: SIGNALS })).summary, "Your AI chips basket");
+});
+
+test("signals: a cached answer is served with the odds of that moment", async () => {
+  const model = gemini(withSignals(["taiwan"]));
+  const findStocks = agent(model);
+  await findStocks({ idea: "AI chips and Taiwan risk" }, { signals: SIGNALS });
+  const later = [{ ...SIGNALS[0], price: 0.09, changes: { "1w": -0.01 } }];
+  const again = await findStocks({ idea: "AI chips and Taiwan risk" }, { signals: later });
+  assert.equal(again.summary, "Your AI chips basket Live Polymarket odds: China invades Taiwan 9% (▼1 pt this week).");
+  // Without live signals the same cached answer is the plain one.
+  assert.deepEqual(await findStocks({ idea: "AI chips and Taiwan risk" }), { summary: "Your AI chips basket", stocks: again.stocks });
+  assert.equal(model.requests.length, 1);
+});
+
+test("signals: missing or failed signals behave exactly as before", async () => {
+  const plain = gemini(answer());
+  const expected = await agent(plain)({ idea: "AI chips and Taiwan risk" });
+  const dead = SIGNALS.map(signal => ({ ...signal, status: "unavailable", price: null }));
+  for (const signals of [undefined, null, [], "oops", dead, [{ id: "taiwan" }, null, { id: "x", price: 0.5 }]]) {
+    const model = gemini(answer());
+    assert.deepEqual(await agent(model)({ idea: "AI chips and Taiwan risk" }, { signals }), expected);
+    assert.deepEqual(model.requests[0], plain.requests[0]);
+  }
+  assert.ok(!("signals" in plain.requests[0].body.generationConfig.responseJsonSchema.properties));
+  assert.deepEqual(usableSignals(dead), []);
 });
