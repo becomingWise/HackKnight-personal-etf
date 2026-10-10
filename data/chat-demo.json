@@ -1,0 +1,39 @@
+{
+  "themes": [
+    {
+      "keywords": ["technology", "tech", "ai", "software", "cloud", "人工智能", "科技", "tecnología"],
+      "summary": "Technology demo: these three fictional companies illustrate an idea-to-stock response. No Google API was called.",
+      "stocks": [
+        { "symbol": "CLOUD_DEMO", "name": "Nimbus Cloud", "reason": "Fictional cloud tools company, used to illustrate a technology theme." },
+        { "symbol": "CHIP_DEMO", "name": "Byteworks", "reason": "Fictional computing hardware company, representing the tools behind new software." },
+        { "symbol": "AI_DEMO", "name": "Aurora Systems", "reason": "Fictional AI software company, included as a sample match to your idea." }
+      ]
+    },
+    {
+      "keywords": ["clean energy", "solar", "renewable", "climate", "sustainability", "wind", "清洁能源", "太阳能", "环保", "energía limpia"],
+      "summary": "Clean energy demo: these three fictional companies illustrate an idea-to-stock response. No Google API was called.",
+      "stocks": [
+        { "symbol": "SOLAR_DEMO", "name": "Sunbeam Solar", "reason": "Fictional solar equipment company, used to illustrate a clean energy theme." },
+        { "symbol": "TIDAL_DEMO", "name": "Tidal Power", "reason": "Fictional ocean energy company, representing another renewable technology." },
+        { "symbol": "GRID_DEMO", "name": "Evergreen Grid", "reason": "Fictional energy storage company, included as a sample match to your idea." }
+      ]
+    },
+    {
+      "keywords": ["healthcare", "health", "medical", "medicine", "biotech", "健康", "医疗", "salud"],
+      "summary": "Healthcare demo: these three fictional companies illustrate an idea-to-stock response. No Google API was called.",
+      "stocks": [
+        { "symbol": "HEALTH_DEMO", "name": "Pulse Health", "reason": "Fictional health technology company, used to illustrate a healthcare theme." },
+        { "symbol": "LAB_DEMO", "name": "Vital Labs", "reason": "Fictional medical research company, representing a second part of the theme." },
+        { "symbol": "CARE_DEMO", "name": "Harbor Care", "reason": "Fictional care tools company, included as a sample match to your idea." }
+      ]
+    }
+  ],
+  "generic": {
+    "summary": "Generic example: the mock service does not understand this idea yet. These fictional companies demonstrate the flow; they are not matches generated from your text.",
+    "stocks": [
+      { "symbol": "SOLAR_DEMO", "name": "Sunbeam Solar", "reason": "Fictional company in the generic example, not an analysis of your idea." },
+      { "symbol": "CLOUD_DEMO", "name": "Nimbus Cloud", "reason": "Fictional company in the generic example, not an analysis of your idea." },
+      { "symbol": "HEALTH_DEMO", "name": "Pulse Health", "reason": "Fictional company in the generic example, not an analysis of your idea." }
+    ]
+  }
+}

@@ -1,0 +1,209 @@
+{
+  "sectors": [
+    {
+      "id": "semis",
+      "name": "Semiconductors",
+      "blurb": "Chip designers, foundries and equipment makers.",
+      "holdings": [
+        { "symbol": "NVDA", "name": "NVIDIA", "base": 25 },
+        { "symbol": "TSM", "name": "Taiwan Semiconductor", "base": 20 },
+        { "symbol": "AVGO", "name": "Broadcom", "base": 15 },
+        { "symbol": "AMD", "name": "Advanced Micro Devices", "base": 12 },
+        { "symbol": "ASML", "name": "ASML Holding", "base": 10 },
+        { "symbol": "MU", "name": "Micron Technology", "base": 10 },
+        { "symbol": "INTC", "name": "Intel", "base": 8 }
+      ]
+    },
+    {
+      "id": "bigtech",
+      "name": "Big Tech & AI",
+      "blurb": "Hyperscalers and platforms building on AI.",
+      "holdings": [
+        { "symbol": "MSFT", "name": "Microsoft", "base": 22 },
+        { "symbol": "AAPL", "name": "Apple", "base": 20 },
+        { "symbol": "GOOGL", "name": "Alphabet", "base": 18 },
+        { "symbol": "AMZN", "name": "Amazon", "base": 17 },
+        { "symbol": "META", "name": "Meta Platforms", "base": 13 },
+        { "symbol": "ORCL", "name": "Oracle", "base": 10 }
+      ]
+    },
+    {
+      "id": "energy",
+      "name": "Energy",
+      "blurb": "Oil majors, producers and oilfield services.",
+      "holdings": [
+        { "symbol": "XOM", "name": "Exxon Mobil", "base": 28 },
+        { "symbol": "CVX", "name": "Chevron", "base": 22 },
+        { "symbol": "COP", "name": "ConocoPhillips", "base": 16 },
+        { "symbol": "OXY", "name": "Occidental Petroleum", "base": 12 },
+        { "symbol": "SLB", "name": "SLB", "base": 12 },
+        { "symbol": "FSLR", "name": "First Solar", "base": 10 }
+      ]
+    },
+    {
+      "id": "defense",
+      "name": "Defense",
+      "blurb": "Prime contractors and defense technology.",
+      "holdings": [
+        { "symbol": "LMT", "name": "Lockheed Martin", "base": 22 },
+        { "symbol": "RTX", "name": "RTX", "base": 22 },
+        { "symbol": "NOC", "name": "Northrop Grumman", "base": 18 },
+        { "symbol": "GD", "name": "General Dynamics", "base": 14 },
+        { "symbol": "LHX", "name": "L3Harris", "base": 12 },
+        { "symbol": "PLTR", "name": "Palantir", "base": 12 }
+      ]
+    },
+    {
+      "id": "financials",
+      "name": "Financials",
+      "blurb": "Money-center banks and brokers.",
+      "holdings": [
+        { "symbol": "JPM", "name": "JPMorgan Chase", "base": 30 },
+        { "symbol": "BAC", "name": "Bank of America", "base": 20 },
+        { "symbol": "GS", "name": "Goldman Sachs", "base": 18 },
+        { "symbol": "MS", "name": "Morgan Stanley", "base": 17 },
+        { "symbol": "SCHW", "name": "Charles Schwab", "base": 15 }
+      ]
+    },
+    {
+      "id": "crypto",
+      "name": "Crypto",
+      "blurb": "Spot bitcoin, exchanges and treasury companies.",
+      "holdings": [
+        { "symbol": "IBIT", "name": "iShares Bitcoin Trust", "base": 35 },
+        { "symbol": "COIN", "name": "Coinbase", "base": 25 },
+        { "symbol": "MSTR", "name": "Strategy", "base": 15 },
+        { "symbol": "HOOD", "name": "Robinhood", "base": 15 },
+        { "symbol": "MARA", "name": "MARA Holdings", "base": 10 }
+      ]
+    },
+    {
+      "id": "rates",
+      "name": "Rates & Credit",
+      "blurb": "Treasuries and corporate bond funds.",
+      "holdings": [
+        { "symbol": "TLT", "name": "20+ Year Treasury", "base": 25 },
+        { "symbol": "IEF", "name": "7-10 Year Treasury", "base": 25 },
+        { "symbol": "LQD", "name": "Investment Grade Corporates", "base": 20 },
+        { "symbol": "HYG", "name": "High Yield Corporates", "base": 15 },
+        { "symbol": "SHY", "name": "1-3 Year Treasury", "base": 15 }
+      ]
+    }
+  ],
+  "signals": [
+    {
+      "id": "taiwan",
+      "label": "China invades Taiwan",
+      "query": "China invade Taiwan",
+      "match": "by December 31, 2027",
+      "betas": {
+        "TSM": -1.0, "NVDA": -0.5, "AMD": -0.5, "AVGO": -0.4, "ASML": -0.5, "MU": -0.4, "INTC": 0.5,
+        "AAPL": -0.6,
+        "LMT": 0.6, "RTX": 0.6, "NOC": 0.6, "GD": 0.4, "LHX": 0.5, "PLTR": 0.4,
+        "TLT": 0.3, "IEF": 0.2, "HYG": -0.3
+      }
+    },
+    {
+      "id": "no_cuts",
+      "label": "No Fed rate cuts in 2026",
+      "query": "Fed rate cut",
+      "match": "no Fed rate cuts happen in 2026",
+      "betas": {
+        "TLT": -0.6, "IEF": -0.4, "HYG": -0.3, "LQD": -0.3,
+        "JPM": 0.3, "BAC": 0.3, "SCHW": 0.2,
+        "IBIT": -0.4, "COIN": -0.4, "MSTR": -0.5, "MARA": -0.5, "HOOD": -0.3,
+        "ORCL": -0.2
+      }
+    },
+    {
+      "id": "recession",
+      "label": "US recession by end of 2026",
+      "query": "US recession 2026",
+      "match": "US recession by end of 2026",
+      "betas": {
+        "TLT": 0.7, "IEF": 0.5, "SHY": 0.2, "HYG": -0.6,
+        "JPM": -0.4, "BAC": -0.4, "GS": -0.5, "MS": -0.4, "SCHW": -0.3,
+        "XOM": -0.3, "CVX": -0.3, "COP": -0.4, "OXY": -0.4, "SLB": -0.4,
+        "AMZN": -0.3, "META": -0.3, "MU": -0.4,
+        "COIN": -0.4, "HOOD": -0.4
+      }
+    },
+    {
+      "id": "hormuz_normal",
+      "label": "Strait of Hormuz traffic normalizes",
+      "query": "Strait of Hormuz",
+      "match": "traffic returns to normal by December 31",
+      "betas": {
+        "XOM": -0.5, "CVX": -0.5, "COP": -0.6, "OXY": -0.6, "SLB": -0.3, "FSLR": -0.2,
+        "LMT": -0.2, "RTX": -0.2
+      }
+    },
+    {
+      "id": "bab_closed",
+      "label": "Bab el-Mandeb Strait closed",
+      "query": "Bab el-Mandeb",
+      "match": "closed by December 31",
+      "betas": {
+        "XOM": 0.4, "CVX": 0.4, "COP": 0.5, "OXY": 0.5,
+        "LMT": 0.3, "RTX": 0.3, "NOC": 0.2,
+        "AMZN": -0.2
+      }
+    },
+    {
+      "id": "iran_deal",
+      "label": "US-Iran final nuclear deal",
+      "query": "Iran nuclear deal",
+      "match": "Final Nuclear Deal by December 31, 2026",
+      "betas": {
+        "XOM": -0.4, "CVX": -0.4, "COP": -0.5, "OXY": -0.5,
+        "LMT": -0.3, "RTX": -0.3, "NOC": -0.3
+      }
+    },
+    {
+      "id": "ukraine_ceasefire",
+      "label": "Russia-Ukraine ceasefire agreement",
+      "query": "Russia Ukraine ceasefire",
+      "match": "ceasefire agreement by March 31, 2027",
+      "betas": {
+        "LMT": -0.6, "RTX": -0.5, "NOC": -0.5, "GD": -0.6, "LHX": -0.5, "PLTR": -0.3,
+        "XOM": -0.2, "CVX": -0.2
+      }
+    },
+    {
+      "id": "btc_100k",
+      "label": "Bitcoin reaches $100k in 2026",
+      "query": "Bitcoin 100,000",
+      "match": "reach $100,000 by December 31, 2026",
+      "betas": {
+        "IBIT": 0.9, "COIN": 0.8, "MSTR": 1.0, "MARA": 1.0, "HOOD": 0.5
+      }
+    },
+    {
+      "id": "chip_export_law",
+      "label": "AI-chip export licensing becomes law",
+      "query": "AI-chip export licensing",
+      "match": "AI-chip export licensing become law",
+      "betas": {
+        "NVDA": -0.6, "AMD": -0.5, "AVGO": -0.2, "ASML": -0.2, "INTC": 0.2
+      }
+    },
+    {
+      "id": "openai_1t",
+      "label": "OpenAI IPOs above $1T",
+      "query": "OpenAI IPO market cap",
+      "match": "closing market cap above $1T",
+      "betas": {
+        "MSFT": 0.4, "ORCL": 0.4, "NVDA": 0.3, "AMD": 0.2, "GOOGL": -0.1
+      }
+    },
+    {
+      "id": "ai_safety_bill",
+      "label": "US enacts AI safety bill",
+      "query": "AI safety bill",
+      "match": "AI safety bill before 2027",
+      "betas": {
+        "META": -0.4, "GOOGL": -0.3, "MSFT": -0.2, "NVDA": -0.2, "PLTR": -0.2
+      }
+    }
+  ]
+}

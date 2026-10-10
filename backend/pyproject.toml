@@ -1,0 +1,26 @@
+[project]
+name = "polyslice-api"
+version = "0.1.0"
+description = "PolySlice API: Polymarket-driven basket weighting"
+authors = [
+    { name = "Hao Li", email = "beinghaoli@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.143.0",
+    "httpx>=0.28.1",
+    "uvicorn[standard]>=0.54.0",
+    "yfinance>=1.7.0",
+]
+
+[project.scripts]
+polyslice-api = "polyslice_api:main"
+
+[build-system]
+requires = ["uv_build>=0.12.24,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
