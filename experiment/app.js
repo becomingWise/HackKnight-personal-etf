@@ -14,14 +14,31 @@ const dateTime = value => value ? new Date(value).toLocaleString("en-US", { mont
 const fitLabel = fit => fit?.status === "observed" ? "Observed association" : fit?.status === "insufficient" || !fit ? "Not enough history" : "Weak evidence";
 const state = { overview: null, saved: null, analysis: null, eventId: null, eventOpen: true, target: null, range: 63, request: 0, busy: false };
 const sessionId = crypto.randomUUID();
-const arrow = '<span aria-hidden="true">↗</span>';
+const iconPaths = {
+  back: 'M19 12H5 M12 19l-7-7 7-7',
+  right: 'M5 12h14 M12 5l7 7-7 7',
+  down: 'M12 5v14 M5 12l7 7 7-7',
+  external: 'M7 17 17 7 M7 7h10v10',
+  undo: 'M3 10h8 M3 10V3 M3 10a8 8 0 1 1 2 8',
+  refresh: 'M20 7a8 8 0 0 0-13-2L3 9 M3 3v6h6 M4 17a8 8 0 0 0 13 2l4-4 M21 21v-6h-6',
+  download: 'M12 3v12 M7 10l5 5 5-5 M5 16v5h14v-5',
+  plus: 'M12 5v14 M5 12h14',
+  minus: 'M5 12h14',
+  close: 'M6 6l12 12 M6 18 18 6',
+  chevronDown: 'M6 9l6 6 6-6',
+  chevronUp: 'M6 15l6-6 6 6',
+};
+const icon = name => `<svg class="icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="${iconPaths[name]}"/></svg>`;
+const arrow = icon("external");
 const errorNode = '<p id="error" class="error" role="alert" hidden></p>';
-const brand = '<span class="brandmark" aria-hidden="true">m<span>↗</span></span><span>MyETF <b>Lab</b></span>';
-const footer = '<footer><span>MyETF Lab</span><span>Paper funds · illustrative scenarios</span></footer>';
+const brand = `<span class="brandmark" aria-hidden="true">m${arrow}</span><span>MyETF <b>Lab</b></span>`;
 const paperAmount = () => (state.saved?.paperAmountCents ?? 0) / 100;
 const holdings = () => paperHoldings(state.saved, state.overview.stocks);
 const currentEvent = () => state.analysis?.events.find(e => e.id === state.eventId);
-const subtitle = event => event?.subtitle && event.subtitle !== "Yes" ? event.subtitle : "";
+const subtitle = event => {
+  const value = event?.subtitle?.trim();
+  return value && value !== "Yes" && !(event.title ?? event.label ?? "").toLowerCase().includes(value.toLowerCase()) ? value : "";
+};
 const eventName = event => `${event.title ?? event.label}${subtitle(event) ? ` — ${subtitle(event)}` : ""}`;
 
 async function api(path, body) {
@@ -36,7 +53,7 @@ function header(step) {
   return `<header class="topbar"><a class="brand" href="/" data-route="/" aria-label="MyETF Lab home">${brand}</a>
     <nav class="steps" aria-label="Your basket journey">${[["Idea", "/"], ["Basket", "/basket"]].map(([name, path], i) => {
       const disabled = i === 1 && !state.saved;
-      return disabled ? `<span><i>${i+1}</i>${name}</span>` : `<a href="${path}" data-route="${path}" ${step === i+1 ? 'aria-current="step"' : ""}><i>${i+1}</i>${name}</a>`;
+      return disabled ? `<span>${name}</span>` : `<a href="${path}" data-route="${path}" ${step === i+1 ? 'aria-current="step"' : ""}>${name}</a>`;
     }).join("")}</nav></header>`;
 }
 function navigate(path) {
@@ -56,18 +73,17 @@ function resizeIdea() {
 function renderIdea() {
   document.title = "Your idea — MyETF Lab";
   $("#app").innerHTML = `<main class="idea-page"><section class="chat-card glass" aria-labelledby="home-title">
-    <div class="chat-header"><div class="home-brand">${brand}</div><p class="eyebrow">YOUR IDEAS, YOUR BASKET</p>
-      <h1 id="home-title">What would you like<br>to invest in?</h1><p>Start with a thought. We'll find the companies.</p></div>
+    <div class="chat-header"><div class="home-brand">${brand}</div><h1 id="home-title">What would you like<br>to invest in?</h1></div>
     <form id="idea-form"><div class="chat-input-area"><label class="sr-only" for="idea">Your investing idea</label>
-      <textarea id="idea" maxlength="500" rows="2" placeholder="I believe the next big thing is…" required ${state.busy ? "disabled" : ""}>${escape(state.saved?.idea ?? "")}</textarea>
+      <textarea id="idea" maxlength="500" rows="2" placeholder="Your investing idea…" aria-describedby="input-hint" required ${state.busy ? "disabled" : ""}>${escape(state.saved?.idea ?? "")}</textarea>
       <button id="suggest" class="primary" type="submit" ${state.busy || !state.overview ? "disabled" : ""}>Send ${arrow}</button></div>
-      <div class="chat-foot"><span id="loading" role="status" ${state.busy ? "" : "hidden"}>Finding your companies…</span><span id="input-hint" ${state.busy ? "hidden" : ""}>Enter to send <span aria-hidden="true">·</span> Shift + Enter for a new line</span></div></form>
-    ${errorNode}</section><p class="home-note">A little curiosity. A new perspective.</p></main>`;
+      <div class="chat-foot"><span id="loading" role="status" ${state.busy ? "" : "hidden"}>Finding your companies…</span><span id="input-hint" class="sr-only">Enter to send. Shift + Enter for a new line.</span></div></form>
+    ${errorNode}</section></main>`;
   resizeIdea();
 }
 function amountDialog() {
   return `<dialog id="amount-dialog" class="amount-dialog" aria-labelledby="amount-title"><form id="amount-form" novalidate>
-    <p class="eyebrow">PAPER FUNDS</p><h2 id="amount-title"></h2><p id="amount-note" class="muted"></p>
+    <h2 id="amount-title"></h2><p id="amount-note" class="muted"></p>
     <label class="amount-label" for="amount">Amount in USD</label><div class="amount-input"><span aria-hidden="true">$</span>
       <input id="amount" name="amount" type="text" inputmode="decimal" maxlength="22" placeholder="0.00" aria-describedby="amount-note amount-error" autocomplete="off" required></div>
     <p id="amount-preview" class="small-note" aria-live="polite"></p><p id="amount-error" class="error" role="alert" hidden></p>
@@ -77,20 +93,19 @@ function amountDialog() {
 function renderBasket(message = "") {
   document.title = "Your basket — MyETF Lab";
   const rows = holdings(), amount = state.saved.paperAmountCents;
-  $("#app").innerHTML = header(2) + `<main class="page basket-page"><div class="page-heading"><div><p class="eyebrow">YOUR BASKET</p><h1>A basket that fits you.</h1><p class="idea-summary">${escape(state.saved.idea)}</p></div><a href="/" data-route="/" class="text-button">← Back to idea</a></div>
-    <section class="funding-panel glass" aria-label="Paper amount"><div><span class="eyebrow">${rows.length ? "YOUR PAPER AMOUNT" : "UNALLOCATED PAPER FUNDS"}</span><strong class="paper-total">${formatUsdCents(amount)}</strong><p>${rows.length ? `${rows.length} companies · equally allocated` : "Restore a company to allocate these funds"}</p></div>
-      <div class="fund-actions"><button id="buy" class="primary" ${rows.length ? "" : "disabled"}>Buy <span aria-hidden="true">+</span></button><button id="sell" class="secondary" ${amount > 0 ? "" : "disabled"}>Sell <span aria-hidden="true">−</span></button></div></section>
-    <div class="basket-toolbar"><span>${rows.length} companies <span class="toolbar-dot">·</span> Equal weights</span><div><button id="undo" class="text-button" ${state.saved.removed.length ? "" : "disabled"}>↶ Undo deletion</button><button id="export" class="text-button" ${rows.length || amount > 0 ? "" : "disabled"}>Export ↓</button></div></div>
-    <p class="source-note">${state.saved.source === "preview" ? "Example suggestions · matched to your idea. Prices and event histories use real public observations." : "Gemini suggestions · keep the companies that fit your idea."}</p>
+  $("#app").innerHTML = header(2) + `<main class="page basket-page"><div class="page-heading"><div><h1>Your basket</h1><span class="source-badge">${state.saved.source === "preview" ? "Example basket" : "Gemini basket"}</span></div><a href="/" data-route="/" class="text-button" aria-label="Back to idea">${icon("back")}Back</a></div>
+    <section class="funding-panel glass" aria-label="Paper amount"><div><span class="funding-label">${rows.length ? "Paper funds" : "Unallocated paper funds"}</span><strong class="paper-total">${formatUsdCents(amount)}</strong></div>
+      <div class="fund-actions"><button id="buy" class="primary" ${rows.length ? "" : "disabled"}>${icon("plus")}Buy</button><button id="sell" class="secondary" ${amount > 0 ? "" : "disabled"}>${icon("minus")}Sell</button></div></section>
+    <div class="basket-toolbar"><button id="undo" class="text-button" ${state.saved.removed.length ? "" : "disabled"}>${icon("undo")}Undo</button><button id="export" class="text-button" ${rows.length || amount > 0 ? "" : "disabled"}>${icon("download")}Export</button></div>
     <p id="basket-message" class="small-note" role="status" ${message ? "" : "hidden"}>${escape(message)}</p>${errorNode}
-    <section class="holdings-panel glass" aria-label="Basket companies"><div class="holdings-labels" aria-hidden="true"><span>COMPANY</span><span>SECTOR</span><span>WEIGHT</span><span>PAPER ALLOCATION</span><span></span></div>
-      ${rows.length ? rows.map(stock => `<article class="holding-row"><div class="holding-company"><span class="ticker-mark" aria-hidden="true">${escape(stock.symbol.slice(0,3))}</span><div><h2>${escape(stock.name)}</h2><span class="holding-symbol">${escape(stock.symbol)}</span></div></div>
+    <section class="holdings-panel glass" aria-label="Basket companies"><div class="holdings-labels" aria-hidden="true"><span>Company</span><span>Sector</span><span>Weight</span><span>Allocation</span><span></span></div>
+      ${rows.length ? rows.map(stock => `<article class="holding-row"><div class="holding-company"><div><h2>${escape(stock.name)}</h2><span class="holding-symbol">${escape(stock.symbol)}</span></div></div>
         <span class="holding-sector">${escape(stock.sector)}</span><span class="holding-weight"><span class="sr-only">Weight </span>${stock.weightPct.toFixed(2)}%</span>
-        <strong class="holding-dollars"><span class="sr-only">Paper allocation </span>${formatUsdCents(stock.allocatedCents)}</strong><button class="delete-button" data-remove="${escape(stock.symbol)}" aria-label="Delete ${escape(stock.symbol)}">×</button></article>`).join("") : '<div class="empty-basket"><h2>Your basket is empty.</h2><p>Undo a deletion or return to your idea to start again.</p></div>'}
-    </section><div class="basket-next"><span>${rows.length ? "100% allocated · delete a company to rebalance" : "Your paper funds are preserved"}</span><button id="explore" class="secondary" ${rows.length ? "" : "disabled"}>Events to watch <span aria-hidden="true">↓</span></button></div>
-    <section id="outlook" class="outlook-section" aria-labelledby="outlook-title"><div class="outlook-heading"><p class="eyebrow">ON THE HORIZON</p><h2 id="outlook-title" tabindex="-1">What could move your ETF?</h2><p>Follow the possibilities. Explore what changing odds could mean for your basket.</p></div>
+        <strong class="holding-dollars"><span class="sr-only">Paper allocation </span>${formatUsdCents(stock.allocatedCents)}</strong><button class="delete-button" data-remove="${escape(stock.symbol)}" aria-label="Delete ${escape(stock.symbol)}">${icon("close")}</button></article>`).join("") : '<div class="empty-basket"><h2>Your basket is empty.</h2><p>Undo a deletion to restore it.</p></div>'}
+    </section><div class="basket-next"><button id="explore" class="secondary" ${rows.length ? "" : "disabled"}>Events to watch ${icon("down")}</button></div>
+    <section id="outlook" class="outlook-section" aria-labelledby="outlook-title"><div class="outlook-heading"><h2 id="outlook-title" tabindex="-1">What could move your ETF?</h2></div>
       <p id="analysis-error" class="error" role="alert" hidden></p><div id="analysis-content">${rows.length ? '<p class="loading" role="status">Finding events connected to your companies…</p>' : '<p class="empty-events glass">Restore a company to see what could affect your basket.</p>'}</div>
-    </section></main>` + footer + amountDialog();
+    </section></main>` + amountDialog();
   const request = ++state.request;
   if (rows.length) void loadOutlook(request);
 }
@@ -125,26 +140,27 @@ function renderEventDetail() {
     const active = button === selected && state.eventOpen;
     button.setAttribute("aria-expanded", active);
     button.closest(".event-post").classList.toggle("selected", active);
-    button.querySelector(".event-action").textContent = active ? "Close scenario ↑" : "Explore basket impact →";
+    button.querySelector(".event-action").innerHTML = active ? `Close scenario ${icon("chevronUp")}` : `Explore impact ${icon("chevronDown")}`;
   });
   const panel = $("#scenario-panel");
   selected.closest(".event-post").append(panel); panel.hidden = !state.eventOpen;
   if (!state.eventOpen) return;
-  $("#scenario-controls").innerHTML = `<div class="scenario-heading"><div><p class="eyebrow">WHAT IF THE ODDS CHANGE?</p><h2>Move the odds. Explore your basket.</h2></div><span class="session-pill">20 trading sessions</span></div>
-    <div class="scenario-numbers"><div class="probability-comparison ${Number.isFinite(event?.probability) ? "" : "unavailable-odds"}"><div><span>Observed Yes odds</span><strong>${pct(event?.probability)}</strong></div><span class="probability-arrow" aria-hidden="true">→</span><div><label for="probability">Your scenario</label><output id="target-probability" for="probability">${pct(state.target)}</output></div></div>
+  $("#scenario-controls").innerHTML = `<div class="scenario-heading"><h2>Next 20 trading days</h2></div>
+    <div class="scenario-numbers"><div class="probability-comparison ${Number.isFinite(event?.probability) ? "" : "unavailable-odds"}"><div><span>Market odds</span><strong>${pct(event?.probability)}</strong></div><span class="probability-arrow" aria-hidden="true">${icon("right")}</span><div><label for="probability">Your odds</label><output id="target-probability" for="probability">${pct(state.target)}</output></div></div>
       <div id="scenario-output" class="basket-effect" aria-live="polite"></div></div>
     <input id="probability" type="range" min="0" max="100" step="0.1" value="${(state.target ?? 0)*100}" aria-label="Hypothetical Yes probability" ${available ? "" : "disabled"}>
-    <div class="range-labels"><span>0%</span><button id="reset-scenario" class="reset-button" ${available ? "" : "disabled"}>↶ Reset to observed</button><span>100%</span></div><p id="scenario-note" class="scenario-note"></p>`;
-  $("#event-detail").innerHTML = `<details class="reliability"><summary>Evidence & scenario assumptions</summary>
+    <div class="range-labels"><span>0%</span><button id="reset-scenario" class="reset-button" aria-label="Reset to observed odds" ${available ? "" : "disabled"}>${icon("undo")}Reset</button><span>100%</span></div><p id="scenario-note" class="scenario-note"></p>`;
+  $("#event-detail").innerHTML = `<details class="reliability"><summary>How this is calculated</summary>
         ${event.stale ? '<p class="caution">Previous observations · the latest refresh failed for this event.</p>' : ""}
         ${event.historyError ? `<p class="caution">Some underlying odds observations could not be downloaded: ${escape(event.historyError)}</p>` : ""}
         <p>${sourceName(event.provider)} · Affects ${event.linkedHoldings.map(escape).join(", ")}. ${escape(event.oddsKind ?? "Yes outcome price")}. Observed ${dateTime(event.observedAt)}.</p>
         <p>Contract ${escape(event.marketId ?? "unavailable")}${event.endDate ? ` · closes ${dateTime(event.endDate)}` : ""}.</p>
+        <p>Basket history simulates today's holdings using daily equal weights and adjusted prices, indexed to 100 at the start. It is not an actual historical ETF.</p><p id="fit-interval"></p>
         <p>Basket evidence: ${event.fit.n} overlapping days${event.fit.start ? ` (${escape(event.fit.start)} to ${escape(event.fit.end)})` : ""}. ${Number.isFinite(event.fit.partialR2) ? `Partial R² ${(event.fit.partialR2*100).toFixed(1)}%.` : ""} ${event.fit.holdout ? `Later direction ${event.fit.holdout.directionStable ? "consistent" : "changed"}; ${event.fit.holdout.n} held-out days.` : "Not enough history for a later direction check."} ${Number.isFinite(event.fit.qValue) ? `Multiple-event q=${event.fit.qValue.toFixed(3)}.` : ""}</p>
         <p>Odds move gradually to your slider value over 20 scheduled US trading sessions. The cumulative effect is applied once, with broader-market movement and other events held fixed. Fits control for SPY, need 60 varying overlapping changes and only use odds known before the equity close, at most 18 hours old.</p>
         <p>The shaded 95% band reflects uncertainty in the fitted relationship, not future-return uncertainty. This is an illustrative scenario, not a validated forecast. Dollar effects use your paper funding amount; they do not record gains or sales.</p>
         <p>${event.provider === "kalshi" ? "Kalshi uses observed hourly Yes bid/ask midpoints." : "Polymarket uses observed 12-hour Yes prices."} Outcomes and expirations remain separate.</p>
-        ${event.rules ? `<p>Settlement rule: ${escape(event.rules)}</p>` : ""}${event.historySource ? `<a href="${safeUrl(event.historySource)}" target="_blank" rel="noreferrer">Historical data source ↗</a>` : ""}
+        ${event.rules ? `<p>Settlement rule: ${escape(event.rules)}</p>` : ""}${event.historySource ? `<a href="${safeUrl(event.historySource)}" target="_blank" rel="noreferrer">Historical data source ${arrow}</a>` : ""}
       </details>`;
   updateScenario();
 }
@@ -155,17 +171,19 @@ function updateScenario() {
   if ($("#target-probability")) $("#target-probability").textContent = pct(state.target);
   $("#probability")?.style.setProperty("--range-progress", `${(state.target ?? 0)*100}%`);
   $("#probability")?.setAttribute("aria-valuetext", `${pct(state.target)} hypothetical Yes odds`);
-  if ($("#scenario-output")) $("#scenario-output").innerHTML = `<span>Illustrative basket change</span><strong class="${path.estimatePct < 0 ? "negative" : "positive"}">${path.points.length ? signed(path.estimatePct) : "Unavailable"}</strong>
-    <small>${path.points.length && paperAmount() > 0 ? `${signedMoney(paperAmount()*path.estimatePct/100)} on ${formatUsdCents(state.saved.paperAmountCents)} in paper funds` : "Compared with unchanged odds"}</small>`;
-  if ($("#scenario-note")) $("#scenario-note").textContent = path.points.length ? `${fitLabel(event.fit)} · ${event.fit.n} overlapping days${path.extrapolated ? " · This odds move exceeds the largest observed daily change." : ""}` : path.reason;
+  if ($("#scenario-output")) $("#scenario-output").innerHTML = `<span>Illustrative change</span><strong class="${path.estimatePct < 0 ? "negative" : "positive"}">${path.points.length ? signed(path.estimatePct) : "Unavailable"}</strong>
+    ${path.points.length && paperAmount() > 0 ? `<small>${signedMoney(paperAmount()*path.estimatePct/100)}</small>` : ""}`;
+  $("#scenario-output")?.classList.toggle("is-unavailable", !path.points.length);
+  if ($("#scenario-note")) $("#scenario-note").textContent = path.points.length ? `${fitLabel(event.fit)}${path.extrapolated ? " · Beyond observed odds moves" : ""}` : path.reason;
   $("#basket-chart").innerHTML = chartMarkup({ id: "basket", label: "Your basket historical simulation and illustrative scenario", history: history.slice(-state.range), projection: path.points });
-  $("#basket-chart-note").textContent = history.length < 2 ? state.analysis.historyReason ?? "Basket price history is unavailable." : "Simulation of today's holdings · daily equal weights · index starts at 100";
-  $("#fit-interval").textContent = path.points.length ? `Illustrative scenario · 95% fit interval ${signed(path.lowPct)} to ${signed(path.highPct)}` : "History is shown; a future illustration needs enough overlapping observations.";
+  $("#basket-chart-note").hidden = history.length >= 2;
+  $("#basket-chart-note").textContent = state.analysis.historyReason ?? "Basket price history is unavailable.";
+  if ($("#fit-interval")) $("#fit-interval").textContent = path.points.length ? `95% fit interval: ${signed(path.lowPct)} to ${signed(path.highPct)}` : "A future illustration needs enough overlapping observations.";
   document.querySelectorAll("[data-range]").forEach(button => { const active = Number(button.dataset.range) === state.range; button.classList.toggle("active", active); button.setAttribute("aria-pressed", active); });
   bindCharts($("#basket-chart"));
 }
 function basketChartShell() {
-  return `<div class="basket-chart-heading"><h2>Your basket</h2><div class="range-tabs" aria-label="Historical chart range">${[[21,"1M"],[63,"3M"],[252,"1Y"]].map(([n,label]) => `<button data-range="${n}">${label}</button>`).join("")}</div></div><div id="basket-chart"></div><div class="chart-legend"><span><i></i>Observed history</span><span><i class="dashed"></i>Illustrative scenario</span><span><i class="band"></i>Fit uncertainty</span></div><p id="basket-chart-note" class="chart-caption"></p><p id="fit-interval" class="small-note"></p>`;
+  return `<div class="basket-chart-heading"><h2>Basket simulation</h2><div class="range-tabs" aria-label="Historical chart range">${[[21,"1M"],[63,"3M"],[252,"1Y"]].map(([n,label]) => `<button data-range="${n}">${label}</button>`).join("")}</div></div><div id="basket-chart"></div><div class="chart-legend"><span><i></i>History</span><span><i class="dashed"></i>Scenario</span><span><i class="band"></i>Fit uncertainty</span></div><p id="basket-chart-note" class="chart-caption" role="status"></p>`;
 }
 async function loadOutlook(request) {
   try {
@@ -176,18 +194,18 @@ async function loadOutlook(request) {
     if (selected?.id !== state.eventId) state.eventOpen = true;
     if (selected?.id !== state.eventId || !Number.isFinite(state.target)) state.target = Number.isFinite(selected?.probability) ? selected.probability : null;
     state.eventId = selected?.id ?? null;
-    $("#analysis-content").innerHTML = `<div class="feed-meta"><span>${data.events.length} possibilities connected to your holdings</span><span>Prediction-market signals</span></div>
-      <div class="event-feed" aria-label="Events that could affect your ETF">${data.events.map((event, i) => `<article class="event-post glass" aria-labelledby="event-title-${i}">
-        <div class="event-post-heading"><span class="event-avatar ${escape(event.provider)}" aria-hidden="true">${event.provider === "kalshi" ? "K" : "P"}</span><div><span class="event-source">${sourceName(event.provider)}${event.url ? `<a href="${safeUrl(event.url)}" target="_blank" rel="noreferrer" aria-label="View ${escape(eventName(event))} on ${sourceName(event.provider)}">↗</a>` : ""}</span><span class="event-timestamp">${event.observedAt ? `Observed ${dateTime(event.observedAt)}` : "Quote unavailable"}</span></div><span class="event-odds">${event.status === "available" ? pct(event.probability) : "—"}<small>Yes odds</small></span></div>
-        <button class="event-story" data-event="${escape(event.id)}" aria-expanded="false" aria-controls="scenario-panel"><span class="event-headline" id="event-title-${i}">${escape(eventName(event))}</span><span class="event-connection">${escape(event.businessLink)}</span><span class="event-holdings"><span>In your basket</span>${event.linkedHoldings.map(symbol => `<span class="holding-chip">${escape(symbol)}</span>`).join("")}</span><span class="event-story-footer"><span class="event-evidence">${fitLabel(event.fit)}</span><span class="event-action">Explore basket impact →</span></span></button>
+    $("#analysis-content").innerHTML = `<div class="event-feed" aria-label="Events that could affect your ETF">${data.events.map((event, i) => `<article class="event-post glass" aria-labelledby="event-title-${i}">
+        <div class="event-post-heading"><div><span class="event-source">${sourceName(event.provider)}${event.url ? `<a href="${safeUrl(event.url)}" target="_blank" rel="noreferrer" aria-label="View ${escape(eventName(event))} on ${sourceName(event.provider)}">${arrow}</a>` : ""}</span></div><span class="event-odds ${event.status === "available" ? "" : "unavailable"}">${event.status === "available" ? pct(event.probability) : "Unavailable"}<small>Observed Yes odds</small></span></div>
+        <button class="event-story" data-event="${escape(event.id)}" aria-expanded="false" aria-controls="scenario-panel"><span class="event-headline" id="event-title-${i}">${escape(eventName(event))}</span><span class="event-connection">${escape(event.businessLink)}</span><span class="event-holdings"><span>Affects</span>${event.linkedHoldings.map(symbol => `<span class="holding-chip">${escape(symbol)}</span>`).join("")}</span><span class="event-story-footer"><span class="event-action">Explore impact ${icon("chevronDown")}</span></span></button>
       </article>`).join("")}</div>
       <section id="scenario-panel" class="scenario-panel thread-reply" aria-label="Selected event basket scenario" hidden><div id="scenario-controls"></div>${basketChartShell()}<div id="event-detail"></div></section>
-      ${data.events.length ? "" : '<p class="empty-events glass">No verified events cover this basket in the current snapshot.</p>'}<div class="snapshot-bar"><span>Snapshot ${dateTime(data.builtAt)}</span><button id="refresh" class="text-button">Refresh observations ↻</button></div>`;
+      ${data.events.length ? "" : '<p class="empty-events glass">No verified events cover this basket in the current snapshot.</p>'}<div class="snapshot-bar"><details class="data-info"><summary>Data sources</summary><p>Snapshot: ${dateTime(data.builtAt)}. Prices and event odds use observed public data. Events represent prediction-market contracts.</p></details><button id="refresh" class="text-button">${icon("refresh")}Refresh</button></div>`;
     if (selected) renderEventDetail();
     else {
       const panel = $("#scenario-panel"); panel.hidden = false; panel.classList.add("glass");
       $("#scenario-controls").hidden = true;
-      $("#scenario-panel .chart-legend").innerHTML = '<span><i></i>Observed history</span>';
+      $("#scenario-panel .chart-legend").innerHTML = '<span><i></i>History</span>';
+      $("#event-detail").innerHTML = '<details class="reliability"><summary>How this is calculated</summary><p>Basket history simulates today’s holdings using daily equal weights and adjusted prices, indexed to 100 at the start.</p><p id="fit-interval"></p></details>';
       updateScenario();
     }
   } catch (err) {
@@ -267,7 +285,7 @@ document.addEventListener("click", async event => {
     const request = ++state.request;
     button.disabled = true; button.textContent = "Refreshing…"; $("#analysis-error").hidden = true;
     try { await api("/api/refresh", {}); if (request === state.request && location.pathname === "/basket") { state.analysis = null; await reloadOutlook(); } }
-    catch (err) { if (button.isConnected) { $("#analysis-error").hidden = false; $("#analysis-error").textContent = err.message; button.disabled = false; button.textContent = "Refresh observations ↻"; } }
+    catch (err) { if (button.isConnected) { $("#analysis-error").hidden = false; $("#analysis-error").textContent = err.message; button.disabled = false; button.innerHTML = `${icon("refresh")}Refresh`; } }
   }
   if (button.id === "export") {
     const url = URL.createObjectURL(new Blob([JSON.stringify(exportBasket(state.saved, state.overview.stocks), null, 2)], { type: "application/json" }));

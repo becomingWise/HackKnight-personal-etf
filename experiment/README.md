@@ -15,6 +15,12 @@ The design references the centered chat card on main at `08cc76de`, with a blue
 liquid-glass treatment, soft gradients and reduced-motion support. No main application
 behavior is merged into this experiment.
 
+The interface keeps headings, funding, holdings, event connections and scenario results
+prominent. Repeated counts, equal-weight summaries, echoed ideas and promotional copy are
+removed. Example baskets retain a concise source badge; quotes retain their observed-odds
+label. Timestamps, calculation assumptions and fit intervals live in expandable details.
+Back, Undo, Reset, Export and Refresh use consistent inline SVG icons.
+
 - `/`: MyETF Lab chat card, expanding idea input and Send button. Enter submits;
   Shift + Enter inserts a newline. Loading and errors stay beside the input.
 - `/basket`: compact company rows, equal percentages and paper dollar allocations.
