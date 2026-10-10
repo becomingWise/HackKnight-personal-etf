@@ -112,6 +112,7 @@ The adapter must reject on any non-2xx status; the controller then shows its own
 - **Timing.** Typically 4 to 10 seconds. Gemini has 20 seconds in total, including one retry on invalid
   output; after that the keyword fallback answers in the same shape.
 - **Caching.** The same idea returns the cached answer for 10 minutes (per server instance).
+- **Model backup.** If `gemini-3.5-flash` is rate limited or overloaded, `gemini-3.5-flash-lite` answers instead (still `"source": "gemini"`); only if both fail does the keyword fallback run.
 - **Rate limits.** 20 requests per minute and 300 per day per IP, 1,500 per day in total.
 - **CORS.** Allowed origins: `https://becomingwise.github.io`, `http://localhost:8000`,
   `http://127.0.0.1:8000`, `http://localhost:3000`, `http://127.0.0.1:3000`. `OPTIONS` preflight is
@@ -227,10 +228,11 @@ Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/weights" -C
 
 Two ready-made modules implement the controller's ports. Neither is wired into the app.
 
-| Port            | Module                   | Calls               |
-| --------------- | ------------------------ | ------------------- |
-| `findStocks`    | `/js/stocks-adapter.js`  | `POST /api/stocks`  |
-| `adjustWeights` | `/js/weights-adapter.js` | `POST /api/weights` |
+| Port                 | Module                   | Calls                                                    |
+| -------------------- | ------------------------ | -------------------------------------------------------- |
+| `findStocks`         | `/js/stocks-adapter.js`  | `POST /api/stocks`                                       |
+| `adjustWeights`      | `/js/weights-adapter.js` | `POST /api/weights`                                      |
+| save / open a basket | `/js/baskets-adapter.js` | `POST /api/baskets`, `GET /api/baskets/{id}` (section 3) |
 
 **How to switch (5 lines):**
 
@@ -254,7 +256,169 @@ controller's own error and retry handling keeps working. Expect about 4 to 10 se
 
 ---
 
-## 3. `GET /api/health` — LIVE
+## 3. Saved baskets — LIVE
+
+| Endpoint                | Purpose                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `POST /api/baskets`     | Save a basket; returns it with a short `id` and a share `url`                |
+| `GET /api/baskets/{id}` | Load a saved basket                                                          |
+| `GET /b/{id}`           | The share URL. Returns the same JSON for now; the page is the frontend's job |
+
+A saved basket never changes. It keeps the idea, summary, stocks, weights, the cited Polymarket markets and
+the odds observed when it was created.
+
+### `POST /api/baskets`
+
+Send the `/api/stocks` response and the `/api/weights` response exactly as received. Extra fields are
+ignored, so the controller's trimmed-down state works too.
+
+```json
+{
+  "idea": "AI chips and Taiwan risk",
+  "stocks": {
+    "summary": "…",
+    "stocks": [
+      { "symbol": "TSM", "name": "Taiwan Semiconductor", "reason": "…", "marketId": "1633611" }
+    ],
+    "source": "gemini",
+    "markets": [
+      {
+        "id": "1633611",
+        "title": "…",
+        "url": "https://polymarket.com/event/…",
+        "outcome": "Yes",
+        "probability": 0.105,
+        "observedAt": "2026-10-10T00:34:53.768Z"
+      }
+    ]
+  },
+  "weights": {
+    "status": "adjusted",
+    "holdings": [{ "symbol": "TSM", "weightPct": 100 }],
+    "explanation": "…",
+    "evidence": []
+  }
+}
+```
+
+| Field     | Type           | Rule                                                                                                                                                                                                                       |
+| --------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `idea`    | string         | 1 to 500 characters                                                                                                                                                                                                        |
+| `stocks`  | object         | A `/api/stocks` response. Required: `summary`, `stocks[]` with `symbol`, `name`, `reason` (1 to 10 stocks, unique symbols). Optional: `source`, `markets[]`, `stocks[].marketId`                                           |
+| `weights` | object \| null | A `/api/weights` response. `holdings` must contain exactly the stock symbols and total 100. `status` may also be `"unavailable"`. Omit or send `null` when the weights step failed: the basket is saved with equal weights |
+
+Body limit: 64 KB.
+
+### Response — `201` (and the body of `GET /api/baskets/{id}`, `200`)
+
+```json
+{
+  "id": "7fkbjd9w",
+  "url": "https://prophetf.vercel.app/b/7fkbjd9w",
+  "createdAt": "2026-10-10T01:22:45.855Z",
+  "idea": "AI chips and Taiwan risk",
+  "summary": "This portfolio targets leading semiconductor companies… Key Polymarket odds: …",
+  "source": "gemini",
+  "stocks": [
+    {
+      "symbol": "TSM",
+      "name": "Taiwan Semiconductor",
+      "reason": "Polymarket gives 11% that China will invade Taiwan by December 31, 2027, which matters for TSM because…",
+      "marketId": "1633611",
+      "weightPct": 32.75
+    }
+  ],
+  "weights": {
+    "status": "adjusted",
+    "explanation": "Tilted by Polymarket odds moves over the past week: …",
+    "holdings": [{ "symbol": "TSM", "weightPct": 32.75 }],
+    "evidence": [
+      {
+        "title": "Will AI-chip export licensing become law this year?",
+        "url": "https://polymarket.com/event/which-bills-will-become-law-in-2026",
+        "outcome": "Yes",
+        "probability": 0.225,
+        "observedAt": "2026-10-10T00:35:01.000Z",
+        "change7d": -0.125,
+        "symbols": ["INTC", "NVDA"]
+      }
+    ]
+  },
+  "markets": [
+    {
+      "id": "1633611",
+      "title": "Will China invade Taiwan by December 31, 2027?",
+      "url": "https://polymarket.com/event/will-china-invade-taiwan-by-december-31-2027",
+      "outcome": "Yes",
+      "probability": 0.105,
+      "observedAt": "2026-10-10T00:34:53.768Z",
+      "change7d": null,
+      "citedBy": ["stocks"]
+    }
+  ]
+}
+```
+
+| Field       | Type                               | Meaning                                                                                                                                                                                                                                                                         |
+| ----------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`        | string                             | 8 characters, lowercase letters and digits without look-alikes                                                                                                                                                                                                                  |
+| `url`       | string                             | Link to share                                                                                                                                                                                                                                                                   |
+| `createdAt` | string                             | ISO time                                                                                                                                                                                                                                                                        |
+| `source`    | `"gemini"` \| `"fallback"` \| null | From `/api/stocks`; `null` when the client did not send it                                                                                                                                                                                                                      |
+| `stocks[]`  | array                              | Each stock with its final `weightPct`; `marketId` is `null` when the reason cites no market                                                                                                                                                                                     |
+| `weights`   | object                             | The saved weights step: `status` (`adjusted`, `unchanged`, `unavailable`), `explanation`, `holdings`, `evidence`                                                                                                                                                                |
+| `markets[]` | array                              | Every market cited by either step, once, with the odds **at creation**. `id` is the Polymarket market id (`null` if it could not be identified). `citedBy` lists `"stocks"` and/or `"weights"`. When both steps cite a market, the odds shown are the ones from the stocks step |
+
+The `201` response also has a `Location: /api/baskets/{id}` header. `GET` responses are cacheable for 60
+seconds.
+
+### Errors
+
+| Status | `error.code`      | When                                                                                                                                                   |
+| ------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 400    | `invalid_request` | Not JSON, a missing or invalid field (the message names it, e.g. `stocks.stocks: …`), holdings that do not match the stocks, weights not totalling 100 |
+| 404    | `not_found`       | No basket with this id                                                                                                                                 |
+| 413    | `too_large`       | Body over 64 KB                                                                                                                                        |
+| 429    | `rate_limited`    | More than 20 saves per minute or 300 per day from one IP                                                                                               |
+| 503    | `storage_error`   | The database is unreachable                                                                                                                            |
+
+### From the frontend: `/js/baskets-adapter.js` (not wired in)
+
+```js
+import { saveBasket, getBasket, basketFromState } from "./baskets-adapter.js";
+
+// After the weights step, from the controller's snapshot:
+const basket = await saveBasket(basketFromState(controller.getState()));
+showShareLink(basket.url); // https://prophetf.vercel.app/b/7fkbjd9w
+
+// Or with the raw API responses: saveBasket({ idea, stocks: stocksResponse, weights: weightsResponse })
+
+// Opening a shared basket:
+const saved = await getBasket("7fkbjd9w");
+```
+
+`basketFromState` maps `controller.getState()` (status `ready`) to the request. Because the controller
+drops `marketId`, `source` and `markets`, a basket saved this way keeps only the markets cited in the
+weights evidence. To keep the stocks-step markets too, pass the raw `/api/stocks` response. Both functions
+take `{ signal }` as a second argument and reject on any non-2xx status. For another backend URL:
+`createBaskets({ baseUrl: "http://localhost:3000" })`.
+
+### Try it
+
+```powershell
+$api = "https://prophetf.vercel.app"; $idea = "AI chips and Taiwan risk"
+$stocks = Invoke-RestMethod -Method Post -Uri "$api/api/stocks" -ContentType "application/json" -Body (@{ idea = $idea } | ConvertTo-Json)
+$n = $stocks.stocks.Count; $base = [math]::Floor(10000 / $n)
+$holdings = for ($i = 0; $i -lt $n; $i++) { @{ symbol = $stocks.stocks[$i].symbol; weightPct = $(if ($i -eq $n - 1) { (10000 - $base * $i) / 100 } else { $base / 100 }) } }
+$weights = Invoke-RestMethod -Method Post -Uri "$api/api/weights" -ContentType "application/json" -Body (@{ idea = $idea; holdings = @($holdings) } | ConvertTo-Json -Depth 4)
+$body = [Text.Encoding]::UTF8.GetBytes((@{ idea = $idea; stocks = $stocks; weights = $weights } | ConvertTo-Json -Depth 8))
+$basket = Invoke-RestMethod -Method Post -Uri "$api/api/baskets" -ContentType "application/json; charset=utf-8" -Body $body
+$basket.url; Invoke-RestMethod -Uri "$api/api/baskets/$($basket.id)" | ConvertTo-Json -Depth 6
+```
+
+---
+
+## 4. `GET /api/health` — LIVE
 
 No parameters. `200` when the database is reachable, `503` otherwise.
 
@@ -281,7 +445,7 @@ No parameters. `200` when the database is reachable, `503` otherwise.
 
 ---
 
-## 4. The Python service in `/backend` (reference, not deployed)
+## 5. The Python service in `/backend` (reference, not deployed)
 
 The weighting method is owned by the Polymarket teammate and lives in `/backend` (FastAPI, local port 8001;
 see `/backend/README.md`). It is not deployed publicly; `POST /api/weights` above is its TypeScript port.

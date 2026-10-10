@@ -27,6 +27,17 @@ function isLive(market: Raw): boolean {
   return !!market.active && !market.closed && price !== null && price > 0 && price < 1;
 }
 
+function tokenIds(market: Raw): string[] {
+  // v2 markets list outcome ids in positionIds (array); v1 in clobTokenIds (JSON text).
+  if (Array.isArray(market.positionIds)) return market.positionIds.map(String);
+  try {
+    const ids = JSON.parse(String(market.clobTokenIds ?? "[]"));
+    return Array.isArray(ids) ? ids.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const volume = (market: Raw): number => Number(market.volume ?? 0) || 0;
 
@@ -55,6 +66,9 @@ export function resolveSignal(cfg: UniverseSignal, payload: unknown): Signal {
   return {
     ...base,
     question: String(best.market.question).trim(),
+    marketId: best.market.id === undefined ? undefined : String(best.market.id),
+    tokenIds: tokenIds(best.market),
+    endDate: typeof best.market.endDate === "string" ? best.market.endDate : null,
     url: `https://polymarket.com/event/${best.event.slug}`,
     price: yesPrice(best.market),
     changes: {

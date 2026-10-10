@@ -27,7 +27,7 @@ export function corsHeaders(request: Request): Record<string, string> {
   const headers: Record<string, string> = { Vary: "Origin" };
   if (isAllowedOrigin(origin)) {
     headers["Access-Control-Allow-Origin"] = origin!;
-    headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
+    headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
     headers["Access-Control-Allow-Headers"] = "Content-Type";
     headers["Access-Control-Max-Age"] = "86400";
   }

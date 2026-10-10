@@ -60,6 +60,8 @@ export type MarketCandidate = {
   volume: number;
   /** Tickers the weighting backend links to this market (empty for free-text search hits). */
   linkedSymbols: string[];
+  /** The weighting backend's sensitivity of each linked ticker to this market. */
+  linkedBetas?: Record<string, number>;
 };
 
 type GammaMarket = z.infer<typeof gammaMarket>;

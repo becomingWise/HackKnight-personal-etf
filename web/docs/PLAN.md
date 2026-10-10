@@ -28,12 +28,14 @@ file, and a short note Lucas can forward to the frontend teammate.
 - [ ] Open: GitHub Pages is down (404); offer to serve the static frontend from this Vercel project (not built)
 - [ ] Do not merge `main` yet (Lucas, 2026-10-09)
 
-## Step 2 — Saved baskets (Tiger)
+## Step 2 — Saved baskets (done, live)
 
-- [ ] Migration: `baskets` (short id, idea, summary, stocks, weights, cited market ids, odds at creation, created_at)
-- [ ] `POST /api/baskets` → `{ id, url }`; `GET /api/baskets/{id}`
-- [ ] zod validation, rate limit, CORS, tests
-- [ ] Adapter docs: how the frontend saves and loads a basket
+- [x] Migration `0003_baskets.sql`: `baskets` (short id, idea, summary, source, stocks, weights, cited markets with odds at creation, market ids)
+- [x] `POST /api/baskets` accepts the `/api/stocks` + `/api/weights` responses as-is → basket with `id` and share `url`
+- [x] `GET /api/baskets/{id}` and `GET /b/{id}` (JSON for now; the page is the frontend's job)
+- [x] zod validation, 64 KB limit, rate limit, CORS (GET allowed), tests incl. the adapter round trip
+- [x] `/js/baskets-adapter.js`: `saveBasket`, `getBasket`, `basketFromState` (not wired in), documented
+- [x] Found and fixed during testing: Gemini free-tier per-minute quota (429) silently triggered the keyword fallback → backup model `gemini-3.5-flash-lite`, planning step moved to the lite model, better keyword fallback
 
 ## Step 3 — Odds history (Tiger showcase)
 

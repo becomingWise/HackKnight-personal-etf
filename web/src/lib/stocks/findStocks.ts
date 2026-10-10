@@ -187,19 +187,19 @@ async function gatherCandidates(
   ]);
 
   const byId = new Map<string, MarketCandidate>();
-  const add = (m: MarketCandidate, linked: string[] = []) => {
+  const add = (m: MarketCandidate, linked: Record<string, number> = {}) => {
     const existing = byId.get(m.id);
-    const linkedSymbols = [...new Set([...(existing?.linkedSymbols ?? []), ...linked])];
-    byId.set(m.id, { ...(existing ?? m), linkedSymbols });
+    const linkedBetas = { ...existing?.linkedBetas };
+    for (const [symbol, beta] of Object.entries(linked)) {
+      if (!STOCK_BY_SYMBOL.has(symbol)) continue;
+      if (Math.abs(beta) > Math.abs(linkedBetas[symbol] ?? 0)) linkedBetas[symbol] = beta;
+    }
+    byId.set(m.id, { ...(existing ?? m), linkedSymbols: Object.keys(linkedBetas), linkedBetas });
   };
   // Signal markets first: they are the ones the weighting backend can act on.
   signalResults.forEach((results, i) => {
     const best = pickBest(results, signalJobs[i]);
-    if (best)
-      add(
-        best,
-        Object.keys(signalJobs[i].betas).filter((s) => STOCK_BY_SYMBOL.has(s)),
-      );
+    if (best) add(best, signalJobs[i].betas);
   });
   // Then round-robin over the free-text queries so each one is represented.
   const longest = Math.max(0, ...textResults.map((r) => r.length));
@@ -257,6 +257,8 @@ async function planQueries(
       schema: PLAN_JSON_SCHEMA,
       timeoutMs: 6000,
       thinking: ThinkingLevel.MINIMAL,
+      // The lighter model plans queries, leaving the main model's per-minute quota for the pick.
+      prefer: "lite",
       signal: abort,
     });
     const parsed = planSchema.safeParse(raw);
@@ -320,14 +322,22 @@ export function fallbackSelection(
   observedAt: string,
 ): FindStocksResponse {
   const sectors = matchSectors(idea);
+  // The market a stock is most sensitive to, among the live candidates.
   const linked = (symbol: string) =>
-    candidates.find((m) => m.linkedSymbols.includes(symbol)) ?? null;
+    candidates
+      .filter((m) => m.linkedSymbols.includes(symbol))
+      .sort(
+        (a, b) => Math.abs(b.linkedBetas?.[symbol] ?? 0) - Math.abs(a.linkedBetas?.[symbol] ?? 0),
+      )[0] ?? null;
 
   let symbols: string[];
   if (sectors.length) {
-    const pool = sectors.flatMap((id) =>
-      STOCKS.filter((s) => s.sectorId === id).map((s) => s.symbol),
-    );
+    // Round-robin over the matched sectors, so an idea spanning two themes gets both.
+    const lists = sectors.map((id) => STOCKS.filter((s) => s.sectorId === id).map((s) => s.symbol));
+    const pool: string[] = [];
+    for (let i = 0; i < Math.max(...lists.map((l) => l.length)); i++) {
+      for (const list of lists) if (list[i]) pool.push(list[i]);
+    }
     // Stocks backed by a live market first, keeping the sector order otherwise.
     symbols = [...pool.filter((s) => linked(s)), ...pool.filter((s) => !linked(s))];
   } else {

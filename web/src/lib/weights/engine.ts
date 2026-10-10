@@ -18,6 +18,10 @@ export type Signal = {
   /** Current probability of Yes; null when the market could not be resolved. */
   price: number | null;
   question?: string;
+  /** Polymarket ids of the resolved market. Internal: never part of the /api/weights response. */
+  marketId?: string;
+  tokenIds?: string[];
+  endDate?: string | null;
   url?: string;
   changes?: Partial<Record<Window, number | null>> | null;
 };

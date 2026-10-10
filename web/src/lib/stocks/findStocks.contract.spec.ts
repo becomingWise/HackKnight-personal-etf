@@ -295,6 +295,30 @@ describe("fallbackSelection", () => {
   });
 });
 
+describe("fallbackSelection across themes", () => {
+  it("covers every matched sector and cites the market each stock is most sensitive to", () => {
+    const fed = market({
+      id: "fed",
+      question: "Will no Fed rate cuts happen in 2026?",
+      probability: 0.956,
+    });
+    const out = fallbackSelection(
+      "Bitcoin goes up and the Fed cuts rates",
+      [
+        market({ linkedSymbols: ["TLT"], linkedBetas: { TLT: 0.3 } }),
+        { ...fed, linkedSymbols: ["TLT", "IBIT"], linkedBetas: { TLT: -0.6, IBIT: -0.4 } },
+      ],
+      "2026-10-10T00:00:00.000Z",
+    );
+    const symbols = out.stocks.map((s) => s.symbol);
+    expect(symbols).toContain("TLT");
+    expect(symbols).toContain("IBIT");
+    expect(symbols.some((s) => ["COIN", "MSTR"].includes(s))).toBe(true);
+    // TLT is linked to both markets; the Fed market has the larger beta.
+    expect(out.stocks.find((s) => s.symbol === "TLT")!.marketId).toBe("fed");
+  });
+});
+
 describe("odds helpers", () => {
   it("formats odds the way reasons quote them", () => {
     expect(formatOdds(0.075)).toBe("7.5");
