@@ -70,7 +70,7 @@ test("selection errors retain the idea and allow a successful retry", async () =
 });
 
 test("malformed stock selections cannot open a dashboard or call the weighting adapter", async () => {
-  const responses = [null, { summary: "Empty", stocks: [] }, { summary: "Duplicate", stocks: [selection().stocks[0], selection().stocks[0]] }, { summary: "Missing reason", stocks: [{ symbol: "A", name: "A" }] }];
+  const responses = [null, { summary: "Empty", stocks: [] }, { summary: "Duplicate", stocks: [selection().stocks[0], selection().stocks[0]] }, { summary: "Missing name", stocks: [{ symbol: "A" }] }];
   for (const response of responses) {
     let calls = 0;
     const controller = createController(services({ findStocks: async () => response, adjustWeights: async () => { calls += 1; } }));

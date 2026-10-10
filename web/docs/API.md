@@ -483,6 +483,84 @@ Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/weights" -C
 
 ---
 
+## 2b. Event risk — `POST /api/risk`
+
+How much a basket moves **if each linked Polymarket event happens, or doesn't**. Takes any basket (the
+same body as `POST /api/weights`; `idea` is optional and ignored) and uses the same live markets and
+per-stock sensitivities. Nothing is reweighted.
+
+For each live market linked to at least one holding, with p its current probability and β the basket's
+weighted sensitivity (1.0 = 10% per 100-point odds move):
+
+- `ifYesPct` = β × (1 − p) × 10: the basket's move if the event happens (odds go to 100%)
+- `ifNoPct` = −β × p × 10: its move if it doesn't (odds go to 0%)
+
+Weighted by the market's own odds the two average to zero: **the odds show how much is at stake, not
+which way to bet.** This is a scenario stress test, not value at risk. The sensitivities are hand-set
+estimates assumed to scale linearly; in our research only some were confirmed by data (Fed odds →
+Treasuries and homebuilders is the cleanest). Show `basis` and `note` near the numbers.
+
+### Request
+
+```json
+{
+  "holdings": [
+    { "symbol": "TLT", "weightPct": 40 },
+    { "symbol": "JPM", "weightPct": 30 },
+    { "symbol": "AAPL", "weightPct": 30 }
+  ]
+}
+```
+
+Same rules as `/api/weights`: at least 1 holding, unique symbols (case-insensitive), weights 0–100
+totalling 100 within 0.01.
+
+### Success response — `200`
+
+```json
+{
+  "markets": [
+    {
+      "title": "US recession by end of 2026?",
+      "url": "https://polymarket.com/event/us-recession-by-end-of-2026",
+      "probability": 0.065,
+      "observedAt": "2026-10-10T16:34:36.875Z",
+      "ifYesPct": 1.496,
+      "ifNoPct": -0.104,
+      "drivers": [
+        { "symbol": "TLT", "weightPct": 40, "beta": 0.7, "ifYesPct": 2.618 },
+        { "symbol": "JPM", "weightPct": 30, "beta": -0.4, "ifYesPct": -1.122 }
+      ]
+    }
+  ],
+  "uncovered": [],
+  "basis": "Sensitivities are hand-set estimates per stock and market, assumed linear in the odds. …",
+  "note": "Event probabilities indicate risk, not expected returns: …"
+}
+```
+
+(Live answer from 2026-10-10, shortened to one market.)
+
+| Field                | Type   | Guarantee                                                                                                     |
+| -------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
+| `markets`            | array  | Live markets linked to any holding, largest swing (`ifYesPct − ifNoPct`) first; `[]` if none                  |
+| `markets[].ifYesPct` | number | Basket move in percent if the event happens; rounded to 0.001                                                 |
+| `markets[].ifNoPct`  | number | Basket move in percent if it doesn't; rounded to 0.001                                                        |
+| `markets[].drivers`  | array  | Linked holdings (symbols echoed as sent), largest contribution first; their `ifYesPct` add up to the market's |
+| `uncovered`          | array  | Symbols no live market is linked to: show "no measurable event exposure"                                      |
+| `basis`, `note`      | string | Caveats to display with the numbers                                                                           |
+
+Errors: `422` (invalid body, duplicate symbols, weights not totalling 100), `429` (over 60 requests a
+minute from one IP, with `Retry-After`), `502` (Polymarket lookup failed), all in the common
+`{ "error": { "code", "message" } }` shape. Same CORS origins as the other endpoints. Live odds are
+shared with `/api/weights` and cached for 60 seconds.
+
+### Try it
+
+```bash
+curl -X POST https://prophetf.vercel.app/api/risk -H "Content-Type: application/json" -d '{"holdings":[{"symbol":"TLT","weightPct":40},{"symbol":"JPM","weightPct":30},{"symbol":"AAPL","weightPct":30}]}'
+```
+
 ## Frontend adapters: switching from mocks to the live backend
 
 Two ready-made modules implement the controller's ports. Neither is wired into the app.
