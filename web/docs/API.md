@@ -234,11 +234,11 @@ Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/weights" -C
 
 Two ready-made modules implement the controller's ports. Neither is wired into the app.
 
-| Port                                              | Module                   | Calls                                                                                                                                                                             |
-| ------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `findStocks`                                      | `/js/stocks-adapter.js`  | `POST /api/stocks`                                                                                                                                                                |
-| `adjustWeights`                                   | `/js/weights-adapter.js` | `POST /api/weights`                                                                                                                                                               |
-| save / open a basket, odds charts, manager's note | `/js/baskets-adapter.js` | `POST /api/baskets`, `GET /api/baskets/{id}` (section 3), `GET /api/baskets/{id}/odds`, `GET /api/markets/{id}/history` (section 4), `POST /api/baskets/{id}/letter` (section 4b) |
+| Port                                              | Module                   | Calls                                                                                                                                                                                                                            |
+| ------------------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `findStocks`                                      | `/js/stocks-adapter.js`  | `POST /api/stocks`                                                                                                                                                                                                               |
+| `adjustWeights`                                   | `/js/weights-adapter.js` | `POST /api/weights`                                                                                                                                                                                                              |
+| save / open a basket, odds charts, manager's note | `/js/baskets-adapter.js` | `POST /api/baskets`, `GET /api/baskets/{id}` (section 3), `GET /api/baskets/{id}/odds`, `GET /api/markets/{id}/history` (section 4), `POST /api/baskets/{id}/letter` (section 4b), `POST /api/baskets/{id}/narrate` (section 4c) |
 
 **How to switch (5 lines):**
 
@@ -595,7 +595,79 @@ Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/baskets/dfx
 
 ---
 
-## 5. `GET /api/built-with` — LIVE (Tiger and Gemini; other sponsors arrive with step 4)
+## 4c. Audio briefing — LIVE (ElevenLabs)
+
+| Endpoint                         | Purpose                                                         |
+| -------------------------------- | --------------------------------------------------------------- |
+| `POST /api/baskets/{id}/narrate` | Creates (once) and returns the audio briefing of a saved basket |
+| `GET /api/audio/{id}`            | The MP3 itself; `{id}` is the basket id                         |
+
+The script is the basket's manager's note (section 4b) with a one-line intro, adapted for speech: company
+names instead of tickers, weights rounded to whole percentages. ElevenLabs reads it; the MP3 is stored in
+Tiger. No request body.
+
+### `POST /api/baskets/{id}/narrate`
+
+```json
+{
+  "id": "dfxt3jwb",
+  "mode": "live",
+  "script": "Here is the ProphETF briefing for your idea: AI chips and Taiwan risk. This portfolio is betting on artificial intelligence hardware and the geopolitical risks surrounding Taiwan. NVIDIA carries the heaviest weight at 27%…",
+  "words": 128,
+  "audioUrl": "https://prophetf.vercel.app/api/audio/dfxt3jwb",
+  "mime": "audio/mpeg",
+  "bytes": 1040762,
+  "durationSeconds": 65,
+  "model": "eleven_flash_v2_5",
+  "generatedAt": "2026-10-10T03:19:40.561Z",
+  "cached": false
+}
+```
+
+| Field             | Meaning                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mode`            | `"live"`: `audioUrl` is a playable MP3. `"mock"`: no audio (see below); `audioUrl`, `mime`, `bytes`, `durationSeconds`, `model` and `generatedAt` are `null` |
+| `script`          | The text that is (or would be) read aloud. Always present                                                                                                    |
+| `audioUrl`        | Put it in `<audio src>`; byte ranges are supported, so seeking and Safari work                                                                               |
+| `durationSeconds` | Length of the MP3 (128 kbit/s), typically about a minute                                                                                                     |
+| `cached`          | `true` when the stored briefing was returned                                                                                                                 |
+| `note`            | Only in `mock` mode: why there is no audio                                                                                                                   |
+
+- **Always answers 200 for an existing basket.** If ElevenLabs is switched off, fails, or the daily budget
+  of 30 new briefings is used up, the response is `mode: "mock"` with the script and a `note`, so the page
+  can show the text or read it with the browser's `speechSynthesis`. Nothing is stored in that case, and a
+  later call tries again.
+- A basket never changes, so its briefing is created once (2 to 4 seconds if the manager's note already
+  exists, a few more otherwise) and then returned in about 0.1 seconds. Calling it again is safe.
+
+| Status | `error.code`    | When                                         |
+| ------ | --------------- | -------------------------------------------- |
+| 404    | `not_found`     | No basket with this id                       |
+| 429    | `rate_limited`  | More than 10 requests per minute from one IP |
+| 503    | `storage_error` | The database is unreachable                  |
+
+### `GET /api/audio/{id}`
+
+`200` with `Content-Type: audio/mpeg`, or `206` for a `Range` request. `404` (JSON error) when the basket has
+no stored briefing. Cacheable for a day; readable from any origin.
+
+### From the frontend
+
+```js
+import { getBasketNarration } from "./baskets-adapter.js";
+const briefing = await getBasketNarration(basket.id);
+if (briefing.audioUrl) audioElement.src = briefing.audioUrl;
+else showText(briefing.script); // mode "mock"
+```
+
+```powershell
+$b = Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/baskets/dfxt3jwb/narrate"
+$b.mode; $b.durationSeconds; Start-Process $b.audioUrl
+```
+
+---
+
+## 5. `GET /api/built-with` — LIVE (Tiger, Gemini, ElevenLabs; Solana and Presage arrive with step 4)
 
 Live proof per sponsor, as JSON for the frontend to render. No parameters.
 
@@ -653,7 +725,19 @@ Live proof per sponsor, as JSON for the frontend to render. No parameters.
     "demoIdeasCached": 4,
     "demoIdeas": 4
   },
-  "elevenlabs": { "enabled": false, "configured": false, "mode": "mock" },
+  "elevenlabs": {
+    "enabled": true,
+    "configured": true,
+    "mode": "live",
+    "model": "eleven_flash_v2_5",
+    "usedFor": "POST /api/baskets/{id}/narrate: …",
+    "briefings": 1,
+    "audioSeconds": 65,
+    "audioStoredIn": "Tiger (bytea), served from /api/audio/{id}",
+    "charactersBilled": 85,
+    "lastBriefingAt": "2026-10-10T03:19:40.561Z",
+    "latestAudioUrl": "https://prophetf.vercel.app/api/audio/dfxt3jwb"
+  },
   "solana": { "enabled": false, "configured": false, "mode": "mock" },
   "presage": { "enabled": false, "configured": false, "mode": "mock" }
 }
@@ -661,7 +745,7 @@ Live proof per sponsor, as JSON for the frontend to render. No parameters.
 
 `queryLatencyMs` values are measured on each request by running the same queries the chart endpoints use.
 `lastTickAt` is the time of the latest tick-job reading; `trackedMarkets` is how many markets saved baskets
-cite. Under `gemini`, `cachedStockAnswers` and `lettersWritten` count live cache entries and `demoIdeasCached` shows how many of the demo ideas are currently warm. The fields under `elevenlabs`, `solana` and `presage` will grow in step 4. Only sponsors the project actually uses are listed.
+cite. Under `gemini`, `cachedStockAnswers` and `lettersWritten` count live cache entries and `demoIdeasCached` shows how many of the demo ideas are currently warm. Under `elevenlabs`, `briefings` and `audioSeconds` count the MP3s stored in Tiger and `latestAudioUrl` is a playable example. The fields under `solana` and `presage` will grow in step 4. Only sponsors the project actually uses are listed.
 
 ---
 

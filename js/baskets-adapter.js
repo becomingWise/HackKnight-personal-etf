@@ -80,6 +80,16 @@ export function createBaskets({ baseUrl = DEFAULT_BASKETS_API, fetch: fetchFn = 
       return parse(response, "The letter could not be written");
     },
 
+    /**
+     * Audio briefing of a saved basket. Resolves to { script, mode, audioUrl, durationSeconds, ... }.
+     * mode "live": audioUrl is an MP3 to play. mode "mock": audioUrl is null, only the script is
+     * available (audio switched off or temporarily unavailable). The first call takes a few seconds.
+     */
+    async getBasketNarration(id, { signal } = {}) {
+      const response = await fetchFn(`${root}/${encodeURIComponent(id)}/narrate`, { method: "POST", signal });
+      return parse(response, "The briefing could not be created");
+    },
+
     /** Odds history of one Polymarket market (a marketId). range: "1d" | "7d" | "30d". */
     async getMarketHistory(marketId, range = "7d", { signal } = {}) {
       const url = `${api}/markets/${encodeURIComponent(marketId)}/history?range=${encodeURIComponent(range)}`;
@@ -89,4 +99,5 @@ export function createBaskets({ baseUrl = DEFAULT_BASKETS_API, fetch: fetchFn = 
 }
 
 /** Ready-to-use functions pointing at the deployed backend. */
-export const { saveBasket, getBasket, getBasketOdds, getBasketLetter, getMarketHistory } = createBaskets();
+export const { saveBasket, getBasket, getBasketOdds, getBasketLetter, getBasketNarration, getMarketHistory } =
+  createBaskets();

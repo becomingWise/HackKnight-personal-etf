@@ -60,7 +60,7 @@ file, and a short note Lucas can forward to the frontend teammate.
 Sponsors in use: Tiger Data, Gemini, ElevenLabs, Solana, Presage (plus the GoDaddy domain). **Snowflake is
 not used**: no keys, no endpoint, not listed in `/api/built-with`, and it must not appear in the Devpost text.
 
-- [ ] a. ElevenLabs: `POST /api/baskets/{id}/narrate` → MP3 briefing of the summary and key odds, cached in Tiger; `GET /api/audio/{id}`
+- [x] a. ElevenLabs (LIVE, `FEATURE_ELEVENLABS=true` on Vercel and locally): `POST /api/baskets/{id}/narrate` reads the manager's note (company names, rounded weights) with `eleven_flash_v2_5`; MP3 stored once per basket in Tiger (`briefings`), served with range support from `GET /api/audio/{id}`; script-only answer when ElevenLabs is off, fails or the daily budget (30 new briefings) is used; `getBasketNarration` in the adapter; proof in `/api/built-with`
 - [ ] b. Solana devnet: `POST /api/baskets/{id}/publish` → memo tx with the basket hash + odds snapshot; `GET /api/baskets/{id}/verify`
 - [x] c. Manager's note: `POST /api/baskets/{id}/letter`, written by Gemini (Snowflake was dropped on 2026-10-09), cached per basket, template fallback, numbers checked against the basket; `getBasketLetter` in the adapter
 - [ ] d. Presage: `POST /api/tilt-check` (mock first) the frontend can call before saving a basket
@@ -80,4 +80,4 @@ not used**: no keys, no endpoint, not listed in `/api/built-with`, and it must n
 
 - [ ] Schedule `POST https://prophetf.vercel.app/api/jobs/tick` every minute on cron-job.org with header `Authorization: Bearer <CRON_SECRET from web/.env.local>`
 - [ ] The GitHub Pages site is down (404): someone with access must republish it (frontend owner)
-- [ ] Step 4: ElevenLabs key + voice id, fund the Solana devnet attester, Presage key
+- [ ] Step 4: fund the Solana devnet attester, Presage key

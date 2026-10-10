@@ -1,10 +1,11 @@
 // GET /api/built-with — live proof per sponsor, as JSON for the frontend to render.
 import { connection } from "next/server";
+import { elevenLabsProof } from "@/lib/builtwith/elevenlabs";
 import { geminiProof } from "@/lib/builtwith/gemini";
 import { tigerProof } from "@/lib/builtwith/tiger";
 import { sponsorStatus } from "@/lib/flags";
 import { preflight } from "@/lib/http/cors";
-import { error, json } from "@/lib/http/respond";
+import { baseUrl, error, json } from "@/lib/http/respond";
 import { GEMINI_LITE_MODEL, GEMINI_MODEL } from "@/lib/sponsors/gemini";
 
 export const maxDuration = 30;
@@ -27,7 +28,7 @@ export async function GET(request: Request) {
         ],
         ...(await geminiProof()),
       },
-      elevenlabs: status.elevenlabs,
+      elevenlabs: { ...status.elevenlabs, ...(await elevenLabsProof(baseUrl(request))) },
       solana: status.solana,
       presage: status.presage,
     });

@@ -27,9 +27,9 @@ const defaults: LetterHandlerDeps = {
 };
 
 // The version is part of the key: bump it when the letter's rules change.
-const cacheKey = (basketId: string) => `v4:${basketId}`;
+export const letterCacheKey = (basketId: string) => `v4:${basketId}`;
 
-type Cached = LetterResult & { generatedAt: string };
+export type CachedLetter = LetterResult & { generatedAt: string };
 
 export function createLetterHandler(deps: LetterHandlerDeps = defaults) {
   const tooMany = (request: Request, rate: RateResult) =>
@@ -50,7 +50,7 @@ export function createLetterHandler(deps: LetterHandlerDeps = defaults) {
     ]);
     if (!perIp.allowed) return tooMany(request, perIp);
 
-    const body = (value: Cached, cached: boolean, cachedAt: string | null) => ({
+    const body = (value: CachedLetter, cached: boolean, cachedAt: string | null) => ({
       id,
       letter: value.letter,
       words: wordCount(value.letter),
@@ -60,8 +60,8 @@ export function createLetterHandler(deps: LetterHandlerDeps = defaults) {
       cachedAt,
     });
 
-    const key = cacheKey(id);
-    const hitEntry = await deps.cache?.get<Cached>("letter", key);
+    const key = letterCacheKey(id);
+    const hitEntry = await deps.cache?.get<CachedLetter>("letter", key);
     if (hitEntry) {
       return json(
         request,
@@ -94,7 +94,7 @@ export function createLetterHandler(deps: LetterHandlerDeps = defaults) {
       deps,
       request.signal,
     );
-    const value: Cached = { ...result, generatedAt: new Date().toISOString() };
+    const value: CachedLetter = { ...result, generatedAt: new Date().toISOString() };
     // Only AI letters are cached, so a template never sticks once Gemini is back.
     if (result.source === "gemini") await deps.cache?.set("letter", key, value, LETTER_TTL_SECONDS);
     return json(request, 200, body(value, false, null), cacheHeaders(null));
