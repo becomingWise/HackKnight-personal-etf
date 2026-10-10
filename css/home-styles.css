@@ -68,6 +68,5 @@ html, body {
 
 
 .edge-gradient {
-	/*background: radial-gradient(circle, white 40%, lightskyblue 45%, white 60%, lightskyblue 85%, white 90%);*/
 	background: radial-gradient(circle, lightskyblue 70%, white 100%);
 }
