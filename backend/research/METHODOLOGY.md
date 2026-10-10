@@ -42,11 +42,14 @@ Walk-forward means a β used on date d is fit only on data before the first of d
 - **Event study** (`eventstudy.py`): for each spike, exposure-weighted abnormal return in windows around it, signed so positive = moved as predicted. One score per date (same-day events can't double count), t-test across dates, binomial hit rate, and a placebo that moves the same spikes to 500 random dates.
 - **Backtest** (`backtest.py`): daily replay of tilted vs. static weights using only odds known at each close, 5 bp per unit turnover, stats per half-period. Continuous and spike-triggered modes.
 - **H1, intraday lead-lag** (`intraday.py`): hourly spikes in hourly chained odds (HH:30 UTC grid, aligned with stocks' hourly bars); for each, the |β|-weighted, signed abnormal return of the 20 most-exposed stocks bar by bar from −6 to +6. H1a sums bars +1..+6, H1b bars −6..−1; one score per date, t-test, 500-run placebo. Hourly stock bars come from Yahoo (last ~730 days, so Oct 2024 on). Details in amendments 7–11. `uv run python -m polyslice_api.intraday`.
-- **Pre-registered H2–H3** (cross-sectional dose-response, live mechanism on the holdout): see the plan.
+- **H2, cross-sectional dose-response** (`crosssection.py`): on each daily spike date, regress every universe stock's day-0 abnormal return (capped) on its predicted move β × Δp (Fama–MacBeth, one slope per date); also the top-minus-bottom quintile spread and a high-vs-low contract-volume split. Slope 1 = calibrated βs. Because βs are capped at ±1.5, a slope above 1 can mean the cap is binding, not that the βs are biased. Details in amendments 12–16. `uv run python -m polyslice_api.crosssection`.
+- **Pre-registered H3** (live mechanism on the holdout): see the plan.
 
 ## Results log
 
 Newest first. "Tests run" counts distinct statistical tests behind each claim, for multiple-testing context.
+
+**2026-10-10: H2 implemented, not yet run.** `crosssection.py`, `tests/test_crosssection.py`. On synthetic data with loadings inside the β cap, the pipeline recovered a slope of 1.15 (planted 1.0). With no planted volume effect, H2c came out t 2.4 but placebo p 0.16, a reminder that a modest t on ~13 dates isn't reliable on its own. No real results yet (same network block as H1).
 
 **2026-10-10: H1 implemented, not yet run.** Code and tests are in place (`intraday.py`, `tests/test_intraday.py`). An end-to-end run on synthetic data recovered a planted +1..+3-bar effect and found no lead where none was planted. No real results yet: the session that built it could not reach Polymarket or Yahoo. Next: build the hourly caches and run on the development period.
 

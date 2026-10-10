@@ -81,3 +81,11 @@ Primary metric: max drawdown during spike windows (spike day through +10 days) v
 9. *Hour axis.* −6h…+6h are trading bars relative to bar 0 (the spike's hour), so windows crossing the close include the overnight move in the next session's first bar. Bar returns are close-to-close; abnormal return uses that day's walk-forward β_mkt (amendment 4), uncapped (amendment 2), with the index-join filter (amendment 1). Cumulative abnormal return is the sum over bars.
 10. *Most-exposed stocks.* The 20 largest |β| from the pooled walk-forward model as of the spike's date (stocks with |β| < 0.05 are excluded first, the model's default); weights are |β|.
 11. *Inference.* Spikes on the same trading day are averaged into one score (date clustering), t-test across dates. Placebo: each spike keeps its series and direction and moves to a random in-session hour of the same series in the same period; 500 runs, seed 7, two-sided. Development period by default; the holdout run (`--holdout`) happens once, at the end, with H2–H3.
+
+**2026-10-10, implementing H2, before H2 was run on any real data.** Clarifications; no threshold changes:
+
+12. *Predicted move.* pred_i = β_i × Δp / 10 (app units back to return per unit of odds), so a slope of 1 means calibrated βs. β is the pooled walk-forward β usable on the spike date, for every stock where it's estimable (no |β| floor). Stocks without a β or a day-0 return drop out; a date needs ≥ 50 stocks.
+13. *Dates.* A spike on a weekend or holiday counts on the next trading day, as in the event study. Spikes from several series on the same trading day add into one prediction, giving one slope per date.
+14. *H2b.* The quintiles are the top and bottom 20% of stocks by pred on that date; the spread is computed per date, then t-tested across dates.
+15. *H2c.* The median is taken over the contract volumes of the period's spikes. A date is "high" if all its spikes are above the median and "low" if all are at or below it; dates with both are excluded and counted. The test is the difference in mean slope (Welch t). Its placebo keeps each spike's volume label.
+16. *Placebo.* Each spike keeps its series, Δp and volume label and moves to a random date of the same series in the same period; 500 runs, seed 7, two-sided on each test's statistic.
