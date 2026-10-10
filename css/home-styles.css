@@ -10,8 +10,9 @@ html, body {
 }
 /*started from gemini*/ 
 .chat-container {
-	width: 400px;
-	height: 400px;
+	width: 800px;
+	height: auto;
+	max-height: 80vh;
  	background: #ffffff;
  	border-radius: 12px;
  	box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
@@ -28,6 +29,11 @@ html, body {
  	font-weight: bold;
  	text-align: center;
  }
+
+.chat-prompt {
+	background: #007bff;
+	text-align: center;
+}
 
  .chat-messages {
  	flex: 1;
@@ -58,6 +64,7 @@ html, body {
  	color: #333;
  	align-self: flex-start;
  	border-bottom-left-radius: 2px;
+	width: 100%;
  }
 
  .chat-input-area {
@@ -69,11 +76,16 @@ html, body {
 
  .chat-input-area textarea {
  	flex: 1;
- 	padding: 10px;
+ 	padding: 20px;
  	border: 1px solid #ccc;
  	border-radius: 8px;
  	outline: none;
  	font-size: 14px;
+	resize:none;
+	overflow-y: hidden;
+	field-sizing: content;
+	min-block-size: 2lh;
+	max-block-size: 8lh;
  }
 
  .chat-input-area button {
@@ -92,35 +104,6 @@ html, body {
  }
 
 
-
-#homepage-prompt-container {
-	height: 100dvh;
-	width: 100%;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-}
-
-#prompt-input {
-	width:50%;
-	height:20%;
-	text-align: top-left;
-	font-family: Inter, -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-}
-
-#prompt-submit-btn {
-	display:flex;
-	background-color: white;
-	margin: 10px;
-	width: 100px;
-	height: 30px;
-	align-items: center;
-	justify-content: center;
-	text-decoration: none;
-	border-radius: 10px;
-	border-style: solid;
-}
 
 .edge-gradient {
 	/*background: radial-gradient(circle, white 40%, lightskyblue 45%, white 60%, lightskyblue 85%, white 90%);*/
