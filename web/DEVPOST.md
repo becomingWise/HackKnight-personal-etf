@@ -1,6 +1,6 @@
 # ProphETF — Devpost draft
 
-> Draft by the backend side. Paragraphs marked **TODO** need the frontend teammate, the analyst teammate or
+> Draft by the backend side. Paragraphs marked **TODO** need the frontend teammate, the weighting teammate or
 > Lucas. Everything else describes what is deployed at https://prophetf.vercel.app today. Numbers come from
 > `GET /api/built-with` on 2026-10-10; refresh them before submitting.
 >
@@ -46,7 +46,9 @@ visitor sees at each step) and a link to the live site.
 **The decision is a workflow, not an agent.** We followed Anthropic's "Building effective agents": a fixed
 code path of four small stages, each testable on its own, with one line per stage reported back to the user.
 
-1. **Analyst** — collects Polymarket markets for the idea and analyzes them into one "evidence packet".
+1. **Analyst** — collects Polymarket markets for the idea and analyzes them into one "evidence packet". It
+   is built on our teammate's weighting research: 11 tracked Polymarket markets, each with a sensitivity
+   (beta) per ticker, say which stocks an event matters for and in which direction.
 2. **Gate** — plain code. Fewer than two relevant, liquid, open markets means no AI call and an honest
    "not enough evidence".
 3. **Decider** — one Gemini call. It sees the idea, the packet and the 40 allowed tickers, and nothing else.
@@ -55,13 +57,15 @@ code path of four small stages, each testable on its own, with one line per stag
 
 The backend is a Next.js app on Vercel with API routes only, TypeScript, zod on every external payload, and
 287 tests with Gemini and Polymarket mocked. The website is a separate static app that calls it through
-three small adapters. The weighting method was researched and backtested in Python and ported to TypeScript;
-88 recorded requests are replayed through the original Python engine to prove the port gives identical
-answers.
+three small adapters. The weighting method and the market-to-ticker sensitivities come from a teammate's research in Python,
+ported to TypeScript; 88 recorded requests are replayed through the original Python engine to prove the
+port gives identical answers.
 
 **TODO (frontend teammate): one paragraph on how the website is built.**
-**TODO (analyst teammate): one paragraph on the analyst, once it replaces the built-in one.**
-**TODO (weighting teammate): one or two sentences on the research behind the weighting method.**
+**The research behind it (TODO, weighting teammate: please check and reword).** The sensitivities and the
+tilt were studied separately on a 514-stock S&P 500 universe with pre-registered tests and a six-month
+holdout that was run once, on 2026-10-10. No test confirmed a return edge, so we present the tilt as an
+explanation of how the odds moved, not as a way to beat the market.
 
 ## How we used Google Gemini
 
@@ -147,8 +151,8 @@ wide) and refuse resolved, never-traded or illiquid markets as evidence.
 
 ## What's next
 
-- A real analyst behind the evidence packet: richer market analysis, themes and ticker links than the
-  built-in one.
+- More tracked markets behind the analyst: today 11 markets carry sensitivities; the research universe
+  already covers 514 stocks.
 - More tickers and sectors; today an idea outside the seven sectors is declined.
 - Tracking how a saved basket would have done as its odds moved.
 - Alerts when the odds behind a saved basket move sharply.

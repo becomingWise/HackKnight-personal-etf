@@ -89,6 +89,7 @@ Solana, Presage and the custom domain (2026-10-10). Their flags stay off and not
 ## Step 5 — What is left (in this order, nothing else)
 
 1. **Integrate the teammate's analyst** when it is ready (HANDOFF option A or B, `ANALYST_MODE`).
+   - [x] The default analyst is named `signals` (was `mock`, still accepted): it already runs on the teammate's live method (11 tracked markets, betas). The teammate's research part (514 stocks) is finished and needs no hosting
    - [ ] Teammate chooses the option and delivers; then: `/api/analyze` passes the gate for the 4 demo ideas, `pnpm eval:decider`, set `ANALYST_MODE` on Vercel, redeploy
 2. **Help the frontend connect and go live.**
    - [ ] Frontend wires `js/stocks-adapter.js`, `js/weights-adapter.js`, `js/baskets-adapter.js` (see `docs/API.md`, "Frontend adapters")

@@ -70,9 +70,9 @@ const pipeline = (generate: GenerateJson) => ({
   generate,
   search: async () => [],
   rateLimit: allow,
-  mode: "mock" as const,
+  mode: "signals" as const,
   checkerLlm: false,
-  analysts: { mock: async (idea: string) => packet(idea) },
+  analysts: { signals: async (idea: string) => packet(idea) },
 });
 
 const allow = async () => ({ allowed: true, retryAfterSeconds: 0 });

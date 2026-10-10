@@ -1,4 +1,4 @@
-// Fixed ideas and mock evidence packets for `pnpm eval:decider`. The packets never change, so a
+// Fixed ideas and hand-written evidence packets for `pnpm eval:decider`. The packets never change, so a
 // change in the pass rate comes from the prompt or the model, not from the markets.
 import type { EvidencePacket, Signal } from "../analyst/packet";
 

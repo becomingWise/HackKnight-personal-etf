@@ -23,12 +23,12 @@ Errors on every endpoint use a non-2xx status and this body:
 Implements the "Stock selection port" in `/docs/team-contracts.md`: an idea in, 3 to 5 stocks out. Since
 2026-10-10 the answer comes from a fixed four-stage workflow (code in `web/src/lib/pipeline/`):
 
-| Stage      | Owner            | What it does                                                                                                                                            |
-| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| a. analyst | backend teammate | Collects Polymarket markets for the idea and analyzes them into an **evidence packet** (section 1b). Today a mock analyst answers.                      |
-| b. gate    | code             | Enough relevant, fresh, liquid markets? If not, the request ends here with `422 not_enough_evidence` and Gemini is not called.                          |
-| c. decider | Lucas            | Gemini (`gemini-3.5-flash`, structured JSON) picks 3 to 5 of the 40 allowed tickers and writes each reason, citing market ids from the packet.          |
-| d. checker | code             | Verifies the answer against the packet. On errors the decider gets them back for **one** revision. An optional LLM review is off (`CHECKER_LLM=false`). |
+| Stage      | Owner            | What it does                                                                                                                                                                                                                                                         |
+| ---------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a. analyst | backend teammate | Collects Polymarket markets for the idea and analyzes them into an **evidence packet** (section 1b). Today the built-in **signals analyst** answers: the weighting teammate's 11 tracked markets and their per-ticker sensitivities (betas), plus Polymarket search. |
+| b. gate    | code             | Enough relevant, fresh, liquid markets? If not, the request ends here with `422 not_enough_evidence` and Gemini is not called.                                                                                                                                       |
+| c. decider | Lucas            | Gemini (Flash-Lite, structured JSON) picks 3 to 5 of the 40 allowed tickers and writes each reason, citing market ids from the packet.                                                                                                                               |
+| d. checker | code             | Verifies the answer against the packet. On errors the decider gets them back for **one** revision. An optional LLM review is off (`CHECKER_LLM=false`).                                                                                                              |
 
 The request and the response are unchanged; the response has one new optional field, `trace`.
 
@@ -92,7 +92,7 @@ The request and the response are unchanged; the response has one new optional fi
       "step": "analyst",
       "status": "ok",
       "ms": 387,
-      "summary": "15 markets, 2 themes, 39 ticker signals (mock)"
+      "summary": "15 markets, 2 themes, 39 ticker signals (signals)"
     },
     { "step": "gate", "status": "ok", "ms": 0, "summary": "passed: 15 of 15 markets usable" },
     { "step": "decider", "status": "ok", "ms": 6618, "summary": "4 stocks (1 Gemini call)" },
@@ -127,12 +127,12 @@ No allocation percentages, weights or stock prices are ever returned, per the co
 
 **`trace` entries:** `{ "step", "status", "ms", "summary" }`.
 
-| Field     | Values                                                                                                                                                                                                             |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `step`    | `"analyst"`, `"gate"`, `"decider"`, `"checker"` (from `/api/decide` the trace starts at `"gate"`)                                                                                                                  |
-| `status`  | `"ok"`; `"warn"` = worked with a caveat (a revision was needed, stocks were dropped, the backup analyst answered); `"failed"`; `"skipped"`                                                                         |
-| `ms`      | Time the stage took                                                                                                                                                                                                |
-| `summary` | One line for people, for example `"7 markets, 3 themes, 12 ticker signals (mock)"`, `"passed: 7 of 9 markets usable (2 not relevant, 0 illiquid, 0 ended)"`, `"4 stocks (2 Gemini calls)"`, `"passed, 1 revision"` |
+| Field     | Values                                                                                                                                                                                                                |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `step`    | `"analyst"`, `"gate"`, `"decider"`, `"checker"` (from `/api/decide` the trace starts at `"gate"`)                                                                                                                     |
+| `status`  | `"ok"`; `"warn"` = worked with a caveat (a revision was needed, stocks were dropped, the backup analyst answered); `"failed"`; `"skipped"`                                                                            |
+| `ms`      | Time the stage took                                                                                                                                                                                                   |
+| `summary` | One line for people, for example `"7 markets, 3 themes, 12 ticker signals (signals)"`, `"passed: 7 of 9 markets usable (2 not relevant, 0 illiquid, 0 ended)"`, `"4 stocks (2 Gemini calls)"`, `"passed, 1 revision"` |
 
 A cached answer carries the trace of the run that produced it.
 
@@ -159,7 +159,7 @@ A cached answer carries the trace of the run that produced it.
       "step": "analyst",
       "status": "ok",
       "ms": 412,
-      "summary": "1 markets, 0 themes, 0 ticker signals (mock)"
+      "summary": "1 markets, 0 themes, 0 ticker signals (signals)"
     },
     {
       "step": "gate",
@@ -266,7 +266,7 @@ Every id in `themes[].marketIds` and `tickerSignals[].marketIds` must be the `id
 
 ### `POST /api/analyze`
 
-Runs only the analyst (and reports what the gate would say). The mock analyst makes one Gemini call on the
+Runs only the analyst (and reports what the gate would say). The signals analyst makes one Gemini call on the
 lighter model for a new idea (its search plan, cached for a day); nothing else calls Gemini. When the gate
 would fail, `gate.reason` has the plain-words explanation. Use it to see what the decider
 is given for an idea, or to check a new analyst.
@@ -312,7 +312,9 @@ Response — `200`:
         "why": "NVIDIA loses if \"AI-chip export licensing becomes law\" gets more likely."
       }
     ],
-    "warnings": ["Mock analyst: keyword search and fixed market-to-ticker links, no analysis."]
+    "warnings": [
+      "Signals analyst: keyword search; market-to-ticker sensitivities from the weighting research."
+    ]
   },
   "gate": { "passed": true, "summary": "passed: 15 of 15 markets usable" },
   "trace": [
@@ -320,7 +322,7 @@ Response — `200`:
       "step": "analyst",
       "status": "ok",
       "ms": 720,
-      "summary": "15 markets, 2 themes, 39 ticker signals (mock)"
+      "summary": "15 markets, 2 themes, 39 ticker signals (signals)"
     },
     { "step": "gate", "status": "ok", "ms": 0, "summary": "passed: 15 of 15 markets usable" }
   ]
@@ -333,13 +335,13 @@ Response — `200`:
 **Which analyst answers** is set by the `ANALYST_MODE` env var (shown in `GET /api/health` under
 `pipeline.analystMode`):
 
-| `ANALYST_MODE`   | Analyst                                                                                                                                                                                                                                                                                                                                                                                    |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `mock` (default) | Built in: one Flash-Lite call turns the idea into 3 to 6 search queries and the sectors it touches (cached 24 hours, 5 s limit, keywords instead when it fails or the budget is used up), then Polymarket search, the weighting universe's market → ticker links, 24-hour and 7-day changes from the odds history in Tiger (Polymarket's own change fields where Tiger has no history yet) |
-| `module`         | `analyze(idea)` exported by `web/src/lib/analyst/index.ts` (HANDOFF option A)                                                                                                                                                                                                                                                                                                              |
-| `tiger`          | Reads the tables `analyst_packets` and `market_analysis` (HANDOFF option B)                                                                                                                                                                                                                                                                                                                |
+| `ANALYST_MODE`      | Analyst                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `signals` (default) | Built in, on the weighting teammate's method (`/backend`): its 11 tracked Polymarket markets ("signals") and their per-ticker sensitivities (betas) link markets to tickers. One Flash-Lite call turns the idea into 3 to 6 search queries and the sectors it touches (cached 24 hours, 5 s limit, keywords instead when it fails or the budget is used up), then Polymarket search, and 24-hour and 7-day changes from the odds history in Tiger (Polymarket's own change fields where Tiger has no history yet). `ANALYST_MODE=mock` is the old name of this mode and still selects it |
+| `module`            | `analyze(idea)` exported by `web/src/lib/analyst/index.ts` (HANDOFF option A)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `tiger`             | Reads the tables `analyst_packets` and `market_analysis` (HANDOFF option B)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
-If the `module` or `tiger` analyst throws or returns an invalid packet, the mock answers instead; the
+If the `module` or `tiger` analyst throws or returns an invalid packet, the signals analyst answers instead; the
 `analyst` trace entry then has `"status": "warn"` and the packet's first warning says why.
 
 PowerShell:
@@ -378,7 +380,7 @@ $body = @{ idea = "AI chips and Taiwan risk"; packet = $a.packet } | ConvertTo-J
 Invoke-RestMethod -Method Post -Uri "https://prophetf.vercel.app/api/decide" -ContentType "application/json; charset=utf-8" -Body $body | ConvertTo-Json -Depth 5
 ```
 
-**Eval.** `pnpm eval:decider` in `/web` runs the decider on 10 fixed ideas with fixed mock packets
+**Eval.** `pnpm eval:decider` in `/web` runs the decider on 10 fixed ideas with fixed hand-written packets
 (`web/src/lib/pipeline/evalCases.ts`) and prints, per case and in total: whether the first answer passed
 every checker rule, whether the final answer did, whether every number in it is grounded in the cited
 markets, the Gemini calls, the latency, and how many reasons paste a market question word for word. It runs on
@@ -1076,7 +1078,7 @@ No parameters. `200` when the database is reachable, `503` otherwise.
 also carries `"gemini"`: the model chains and, per model, `usedToday`, `dailyBudget` (80% of the limit),
 `remainingToday`, `limitPerDay`, `blockedUntil` and `blockedBecause`, for example
 `{ "model": "gemini-3.5-flash-lite", "usedToday": 75, "dailyBudget": 400, "remainingToday": 325, "limitPerDay": 500, "blockedUntil": null, "blockedBecause": null }`.
-It also carries `"pipeline": { "analystMode": "mock", "checkerLlm": false }`: which analyst writes the evidence
+It also carries `"pipeline": { "analystMode": "signals", "checkerLlm": false }`: which analyst writes the evidence
 packet for `/api/stocks` (section 1b) and whether the checker's LLM review is on.
 
 ---

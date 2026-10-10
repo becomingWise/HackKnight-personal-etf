@@ -50,9 +50,10 @@ flowchart LR
 ```
 
 - **Analyst** collects markets and analyzes them into an evidence packet (`src/lib/analyst/packet.ts`). The
-  built-in one asks Gemini for search queries, searches Polymarket, links markets to tickers and reads odds
-  changes from Tiger. A teammate's analyst can replace it without touching anything else
-  (`docs/HANDOFF.md`).
+  default "signals" analyst is built on our teammate's weighting research (`/backend`): its 11 tracked
+  Polymarket markets and their per-ticker sensitivities (betas) link markets to tickers. Gemini plans the
+  Polymarket search and Tiger supplies the odds changes. Another analyst can replace it without touching
+  anything else (`docs/HANDOFF.md`).
 - **Gate** is plain code. Fewer than two relevant, liquid, open markets means no Gemini call and an honest
   "not enough evidence" answer.
 - **Decider** is one Gemini call with structured JSON output. Its only source of facts is the packet.
@@ -153,7 +154,7 @@ for the job endpoints. Deploys go through the Vercel CLI: `npx vercel --prod` fr
 web/
   src/app/api/        route handlers (thin)
   src/lib/pipeline/   gate, decider prompt, checker, the workflow, eval cases
-  src/lib/analyst/    evidence packet contract, built-in analyst, hooks for the real one
+  src/lib/analyst/    evidence packet contract, the signals analyst, hooks for another one
   src/lib/gemini/     models, fallback chains, per-model budgets
   src/lib/odds/       odds history: SQL, recording, backfill, the one-minute job
   src/lib/weights/    TypeScript port of the Python weighting engine in /backend
@@ -163,5 +164,6 @@ web/
   docs/               API.md, HANDOFF.md, DEMO.md, PLAN.md
 ```
 
-The weighting method itself (`POST /api/weights`) is a teammate's research and lives in `/backend` (Python);
-this app runs a TypeScript port, checked by replaying 88 recorded requests through the Python engine.
+The weighting method (`POST /api/weights`) and the market-to-ticker sensitivities the analyst uses are a
+teammate's research and live in `/backend` (Python); this app runs a TypeScript port, checked by replaying
+88 recorded requests through the Python engine.

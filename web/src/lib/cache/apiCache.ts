@@ -32,7 +32,7 @@ export function normalizeIdea(idea: string): string {
 }
 
 // The version is part of the key: bump it when the response shape changes.
-export const stocksCacheKey = (idea: string) => hash(`stocks:v2:${normalizeIdea(idea)}`);
+export const stocksCacheKey = (idea: string) => hash(`stocks:v3:${normalizeIdea(idea)}`);
 
 /** The mock analyst's search plan for an idea. */
 export const planCacheKey = (idea: string) => hash(`plan:v1:${normalizeIdea(idea)}`);

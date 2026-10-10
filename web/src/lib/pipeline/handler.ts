@@ -2,7 +2,7 @@
 //   POST /api/stocks (alias /api/findstock)  idea → analyst → gate → decider → checker
 //   POST /api/analyze                        idea → the analyst's evidence packet
 //   POST /api/decide                         idea + packet → gate → decider → checker
-import type { MockAnalystDeps } from "../analyst/mock";
+import type { SignalsAnalystDeps } from "../analyst/signals";
 import { evidencePacketSchema, type Analyst, type EvidencePacket } from "../analyst/packet";
 import { createPlanner, type Planner } from "../analyst/plan";
 import {
@@ -54,9 +54,9 @@ export type HandlerDeps = {
   cache?: ApiCache;
   /** Stores the odds of the packet's markets (odds history). */
   record?: (packet: EvidencePacket) => Promise<unknown>;
-  /** Odds 24 hours and 7 days ago, for the mock analyst. */
-  pastOdds?: MockAnalystDeps["pastOdds"];
-  /** The mock analyst's search planner. Default: one Gemini call, cached. null: keywords only. */
+  /** Odds 24 hours and 7 days ago, for the signals analyst. */
+  pastOdds?: SignalsAnalystDeps["pastOdds"];
+  /** The signals analyst's search planner. Default: one Gemini call, cached. null: keywords only. */
   plan?: Planner | null;
   /** These three default to ANALYST_MODE, the built-in analysts and CHECKER_LLM. */
   mode?: AnalystMode;
@@ -92,10 +92,10 @@ function pipelineDeps(deps: HandlerDeps, ai: boolean): PipelineDeps {
     deps.plan === null || !ai
       ? undefined
       : (deps.plan ?? createPlanner({ generate: deps.generate, cache: deps.cache }));
-  const mock = { search: deps.search, pastOdds: deps.pastOdds, now: deps.now, plan };
+  const base = { search: deps.search, pastOdds: deps.pastOdds, now: deps.now, plan };
   return {
     generate: deps.generate,
-    analysts: { ...defaultAnalysts(mock), ...deps.analysts },
+    analysts: { ...defaultAnalysts(base), ...deps.analysts },
     mode: deps.mode ?? analystMode(),
     checkerLlm: deps.checkerLlm ?? env().CHECKER_LLM,
     deciderBudget: async () => ai,
@@ -299,7 +299,7 @@ export function createAnalyzeHandler(deps: HandlerDeps = defaultStocksDeps) {
     if (!perIp.allowed) return tooMany(request, perIp);
 
     try {
-      // The mock analyst's search plan is a Gemini call (unless cached), so it counts.
+      // The signals analyst's search plan is a Gemini call (unless cached), so it counts.
       const ai = await aiAllowed(request, deps);
       const { packet, gated, trace } = await currentEvidence(
         parsed.data.idea,
