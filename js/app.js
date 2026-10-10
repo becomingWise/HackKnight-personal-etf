@@ -1,6 +1,10 @@
 import { validateBasket, calculateBasket, applyScenario, equalWeightHoldings } from "./portfolio.js";
 import { renderBuilder, updateBuilder, renderErrors, renderResult, renderScenarioControls, renderScenario, showReady, showLoadError } from "./ui.js";
 
+import { renderEvidenceCards } from "./evidence-cards.js";
+import { eventRisk } from "./risk-adapter.js";
+
+
 
 const demoState = () => ({
   budget: 1000,
@@ -27,6 +31,14 @@ function update() {
     renderScenarioControls(result, state.scenarioChanges);
     renderScenario(applyScenario(result, state.scenarioChanges));
   }
+  const evidenceContainer = document.querySelector("#evidence");      // any empty container
+  setInterval(function () {
+    console.log("update Evidence Cards");
+    renderEvidenceCards(evidenceContainer, state.adjustment);             // odds cards right away
+    eventRisk({ holdings: state.holdings })                // then add "If yes / If no"
+      .then((risk) => renderEvidenceCards(evidenceContainer, state.adjustment, risk))
+      .catch(() => { });                                    // cards still work without risk data
+  }, 6000);
 }
 
 function dispatch(action) {

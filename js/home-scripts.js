@@ -37,14 +37,16 @@ async function handleSendMessage() {
 sendButton.addEventListener('click', async () => {
 	console.log("click");
 	await handleSendMessage();
-    window.location.href = "./dashboard.html";
+    //window.location.href = "./dashboard.html";
+	window.location.href = "./dashboard.html?idea=" + encodeURIComponent(userInput.value.trim());
 });
 userInput.addEventListener('keydown', async (e) => {
 	if (e.key === 'Enter') {
 		if (userInput.value.trim().length > 0) {
 			console.log("enter");
 			await handleSendMessage();
-    		window.location.href = "./dashboard.html";
+    		//window.location.href = "./dashboard.html";
+			window.location.href = "./dashboard.html?idea=" + encodeURIComponent(userInput.value.trim());
 		}
 	}
 });
