@@ -2,15 +2,58 @@
 .lab-nav {
   max-width: 1140px;
   margin: auto;
-  padding: 14px 30px 0;
-  font-size: 15px;
+  padding: 12px 30px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 28px;
+  font-size: 14px;
 }
-.lab-nav a,
+.lab-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.lab-logo span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: #4057db;
+  color: #fff;
+  font-size: 16px;
+}
+.lab-nav nav {
+  display: flex;
+  gap: 4px;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.lab-nav nav a {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-weight: 500;
+  color: var(--muted);
+  text-decoration: none;
+}
+.lab-nav nav a:hover {
+  color: var(--ink);
+}
+.lab-nav nav a[aria-current="page"] {
+  background: #ffffffb0;
+  color: var(--blue);
+}
 .lab-handoff a {
   color: var(--blue);
   text-decoration: none;
 }
-.lab-nav a:hover,
 .lab-handoff a:hover {
   text-decoration: underline;
 }
@@ -55,7 +98,7 @@
 }
 /* The idea card stays centred with the link above it and the footer below. */
 .idea-page {
-  min-height: calc(100dvh - 130px);
+  min-height: calc(100dvh - 150px);
 }
 /* On Vercel the data is the committed snapshot: there is nothing to refresh. */
 #refresh {

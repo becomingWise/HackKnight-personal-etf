@@ -6,8 +6,15 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildHandoff, handoffNotice, parseHandoff } from "../../../public/lab-own/bridge.js";
 import { restoreBasket } from "../../../public/lab-static/session.js";
-import { DISCLAIMER, LAB_FILES, labCopy, syncLab } from "../../../scripts/sync-lab.mjs";
+import {
+  DISCLAIMER,
+  LAB_FILES,
+  LAB_NAV_LINKS,
+  labCopy,
+  syncLab,
+} from "../../../scripts/sync-lab.mjs";
 import { labBasketUrl } from "../../app/consoleView";
+import { NAV, DISCLAIMER as SITE_DISCLAIMER } from "../../app/productView";
 import { ClarifyError } from "../agent-core/agent/gemini.js";
 import { createSuggestionService } from "../agent-core/experiment/suggestions.js";
 import { agentBudget } from "../agentApi/adapters";
@@ -58,7 +65,14 @@ describe("pnpm sync:lab", () => {
 
   it("the page links back to the AI page and carries the disclaimer", () => {
     const page = readFileSync("public/lab-static/index.html", "utf8");
-    expect(page).toContain('<a href="/">← AI research and track record</a>');
+    // The same header links as the rest of the site, with the Lab marked as the current page.
+    expect(LAB_NAV_LINKS).toEqual(NAV.map((item) => [item.href, item.label]));
+    for (const [href, label] of LAB_NAV_LINKS) {
+      expect(page).toContain(
+        `<a href="${href}"${href === "/lab" ? ' aria-current="page"' : ""}>${label}</a>`,
+      );
+    }
+    expect(DISCLAIMER).toBe(SITE_DISCLAIMER);
     expect(page).toContain(DISCLAIMER);
     expect(DISCLAIMER).toBe(
       "Paper portfolios for research and fun. Not investment advice. Not affiliated with Polymarket or Kalshi.",

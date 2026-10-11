@@ -16,6 +16,33 @@ Errors on every endpoint use a non-2xx status and this body:
 
 ---
 
+## 0. The website (pages in `/web`) — LIVE
+
+The product UI is part of this app since 2026-10-10 (Lucas owns it). Every page has the same header
+(ProphETF · Build · Paper-trade Lab · Track record · How it works) and the footer disclaimer. Opening a
+page makes **no Gemini and no ElevenLabs call**; those happen only when a visitor submits an idea,
+saves a basket or presses Listen.
+
+| Page                  | What it shows                                                                                                                                                                              | Calls                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `/` (Build)           | Idea box and 4 example ideas; then the basket with tilted weights, "Why these weights" (table, Polymarket cards, "If yes / If no"), the AI panel with each agent's record, and the actions | `POST /api/stocks`, then `POST /api/votes` and `POST /api/weights` together, then `POST /api/risk` with the tilted weights |
+| "Save & share" on `/` | Saves the basket, writes the manager's note once, offers Listen                                                                                                                            | `POST /api/baskets`, `POST /api/baskets/{id}/letter`; Listen: `POST /api/baskets/{id}/narrate`, `GET /api/audio/{id}`      |
+| `/b/{id}`             | The share page of a saved basket: stocks and weights, the odds saved with it, the note if one was written, the briefing if one exists (otherwise a Listen button)                          | Reads the database only                                                                                                    |
+| `/track-record`       | The method in one paragraph, the summary card, agent bars and decisions                                                                                                                    | `GET /api/track-record`                                                                                                    |
+| `/how-it-works`       | The pipeline and one card per technology with live numbers                                                                                                                                 | `GET /api/built-with`, `GET /api/savings`                                                                                  |
+| `/lab`, `/lab/basket` | Shaun's paper-trading Lab (section 1g), with the same header                                                                                                                               | `/api/lab/*`                                                                                                               |
+| `/console`            | The old backend test console, not linked, kept for debugging                                                                                                                               | as before                                                                                                                  |
+
+A `422 needs_clarification` on `/` is shown as the agent's question with one button per option. Every
+other failure is shown in plain words (`plainError` in `web/src/app/productView.ts`); a server message is
+never shown raw. If the votes or the weights fail, the basket is still shown, with equal weights or
+without the panel. Screenshots: `web/docs/product/`.
+
+**Changed for this:** `GET /b/{id}` is now this page, not JSON (the JSON is `GET /api/baskets/{id}`), and
+`GET /api/built-with` has two more counts, `tiger.rows.stock_closes` and `tiger.rows.panel_decisions`.
+
+---
+
 ## 1. `findStocks` — LIVE
 
 `POST /api/stocks` (alias: `POST /api/findstock`, identical behaviour)
@@ -476,7 +503,7 @@ Gemini call**. Any frontend can build the same link.
   notice ("Not tradable in the Lab yet: TLT, IBIT.") and the rest are kept.
 - When none is tradable, no basket is loaded: the notice says so and links back to `/`.
 - At most 10 symbols; `idea` is optional (at most 500 characters).
-- The Lab header links back with "← AI research and track record".
+- The Lab carries the site's header (Build, Paper-trade Lab, Track record, How it works).
 
 ## 1e. `GET /api/savings` — LIVE
 
@@ -880,11 +907,11 @@ controller's own error and retry handling keeps working. Expect about 4 to 10 se
 
 ## 3. Saved baskets — LIVE
 
-| Endpoint                | Purpose                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------- |
-| `POST /api/baskets`     | Save a basket; returns it with a short `id` and a share `url`                |
-| `GET /api/baskets/{id}` | Load a saved basket                                                          |
-| `GET /b/{id}`           | The share URL. Returns the same JSON for now; the page is the frontend's job |
+| Endpoint                | Purpose                                                       |
+| ----------------------- | ------------------------------------------------------------- |
+| `POST /api/baskets`     | Save a basket; returns it with a short `id` and a share `url` |
+| `GET /api/baskets/{id}` | Load a saved basket                                           |
+| `GET /b/{id}`           | The share URL: a page (section 0), no longer JSON             |
 
 A saved basket never changes. It keeps the idea, summary, stocks, weights, the cited Polymarket markets and
 the odds observed when it was created.

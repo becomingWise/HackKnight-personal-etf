@@ -21,6 +21,8 @@ export async function tigerProof() {
         odds_ticks: number;
         markets: number;
         baskets: number;
+        stock_closes: number;
+        panel_decisions: number;
         hourly_buckets: number;
         last_tick_at: Date | null;
         first_tick_at: Date | null;
@@ -31,6 +33,8 @@ export async function tigerProof() {
         (select count(*)::int from odds_ticks) as odds_ticks,
         (select count(*)::int from markets) as markets,
         (select count(*)::int from baskets) as baskets,
+        (select count(*)::int from stock_closes) as stock_closes,
+        (select count(*)::int from panel_decisions) as panel_decisions,
         (select count(*)::int from odds_1h) as hourly_buckets,
         (select max(time) from odds_ticks where source = 'tick') as last_tick_at,
         (select min(time) from odds_ticks) as first_tick_at,
@@ -78,6 +82,8 @@ export async function tigerProof() {
       odds_ticks: c.odds_ticks,
       markets: c.markets,
       baskets: c.baskets,
+      stock_closes: c.stock_closes,
+      panel_decisions: c.panel_decisions,
       odds_1h_buckets: c.hourly_buckets,
     },
     ticksBySource: Object.fromEntries(bySource.map((r) => [r.source, r.ticks])),

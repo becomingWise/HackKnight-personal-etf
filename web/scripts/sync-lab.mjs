@@ -15,8 +15,21 @@ export const DISCLAIMER =
   "Paper portfolios for research and fun. Not investment advice. Not affiliated with Polymarket or Kalshi.";
 
 // Outside #app, because the Lab re-renders everything inside it.
+// The site's shared header (the same links as src/app/productView.ts NAV; a spec compares them).
+export const LAB_NAV_LINKS = [
+  ["/", "Build"],
+  ["/lab", "Paper-trade Lab"],
+  ["/track-record", "Track record"],
+  ["/how-it-works", "How it works"],
+];
 const LAB_NAV =
-  '<nav class="lab-nav" aria-label="ProphETF"><a href="/">← AI research and track record</a></nav>' +
+  '<header class="lab-nav"><a class="lab-logo" href="/"><span aria-hidden="true">p.</span>ProphETF</a>' +
+  '<nav aria-label="Main">' +
+  LAB_NAV_LINKS.map(
+    ([href, label]) =>
+      `<a href="${href}"${href === "/lab" ? ' aria-current="page"' : ""}>${label}</a>`,
+  ).join("") +
+  "</nav></header>" +
   '<div id="lab-handoff" class="lab-handoff" role="status" hidden></div>';
 const LAB_FOOTER = `<footer class="lab-footer"><p id="lab-data-as-of" hidden></p><p>${DISCLAIMER}</p></footer>`;
 

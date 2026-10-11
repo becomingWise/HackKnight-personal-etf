@@ -98,7 +98,14 @@ function DecisionRow({ row }: { row: Decision }) {
   );
 }
 
-export function TrackRecordSection({ track }: { track: TrackRecord }) {
+export function TrackRecordSection({
+  track,
+  eyebrow = "3 · TRACK RECORD",
+}: {
+  track: TrackRecord;
+  /** The small label above the title; the console numbers its cards. */
+  eyebrow?: string;
+}) {
   const [all, setAll] = useState(false);
   const agents = agentsByPct(track.agents);
   const coin = track.baselines.coinFlip;
@@ -108,7 +115,7 @@ export function TrackRecordSection({ track }: { track: TrackRecord }) {
   return (
     <div className="grid gap-5">
       <section className={panel}>
-        <p className="text-xs font-semibold tracking-[0.18em] text-blue">3 · TRACK RECORD</p>
+        <p className="text-xs font-semibold tracking-[0.18em] text-blue">{eyebrow}</p>
         <h2 className="mt-1 text-xl font-semibold">Is the AI panel right?</h2>
         <p className="mt-1 text-sm text-muted">
           {scopeText(track)} Each week five AI agents said whether a basket of three stocks would

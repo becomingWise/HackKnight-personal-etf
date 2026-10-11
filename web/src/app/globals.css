@@ -60,3 +60,13 @@ body {
   background: var(--bg);
   color: var(--ink);
 }
+
+/* Every link, button and field shows where the keyboard is. */
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+/* A heading that only receives focus from a script (the new result) shows no box. */
+[tabindex="-1"]:focus-visible {
+  outline: none;
+}
