@@ -1,164 +1,135 @@
-# ProphETF — Devpost draft
+# ProphETF — Devpost submission draft
 
-> Draft by the backend side. Paragraphs marked **TODO** need the frontend teammate, the weighting teammate or
-> Lucas. Everything else describes what is deployed at https://prophetf.vercel.app today. Numbers come from
-> `GET /api/built-with` on 2026-10-10; refresh them before submitting.
->
-> We list only what the product really uses: **Gemini, Tiger Data, ElevenLabs and Polymarket data.**
+**Tagline:** Turn an idea into a stock basket, backed by live prediction-market odds.
 
-**Tagline:** Turn a hunch into a stock basket that shows its evidence: live prediction-market odds.
+**Live:** https://prophetf.vercel.app · **Code:** https://github.com/becomingWise/HackKnight-personal-etf
+
+**Built with**
+
+- **In the product:** Google Gemini API, Tiger Data (Postgres + TimescaleDB), Polymarket and Kalshi
+  public data (read-only, no keys), daily stock closes from Yahoo Finance, and ElevenLabs for the
+  audio briefing of a saved basket.
+- **How we built and run it:** Claude Code, Vercel, cron-job.org, GitHub and GitHub Actions, Next.js
+  and TypeScript, Python.
+
+---
 
 ## Inspiration
 
-**TODO (Lucas): replace with the team's real starting point.** A neutral version:
-
-Everyone has market opinions: "AI chips are exposed to Taiwan", "rate cuts are coming". Turning one into a
-portfolio usually means either guessing or trusting an AI that sounds confident and cites nothing.
-Prediction markets are the opposite: thousands of people putting money on exactly those events, with a
-price that is a probability. We wanted to connect the two, so that an idea becomes a basket where every
-pick comes with a number you can check and watch.
+Everyone has a market opinion: "AI chips are exposed to Taiwan", "rates will stay high". Turning that
+opinion into a portfolio usually means guessing, or asking an AI that sounds sure and shows nothing.
+Prediction markets already put a live number on exactly these events. We wanted a tool that connects
+the two, and that is honest about what it does not know: it asks when your idea is unclear, and it
+grades its own AI in public.
 
 ## What it does
 
-1. **You type an idea** in plain language, for example "AI chips and Taiwan risk".
-2. **It finds the evidence.** Live Polymarket markets about the events behind the idea, with their current
-   odds and how they moved over the last day and week.
-3. **It picks 3 to 5 stocks** from a universe of 40 tickers across seven sectors. Each pick has a reason
-   that cites a market and its odds, for example: "Polymarket gives 11% that China invades Taiwan by the end
-   of 2027, which matters for TSMC because its advanced fabs are concentrated in Taiwan."
-4. **It weights the basket** by how the odds moved: a stock that benefits from an event that became more
-   likely gets more weight, with the markets behind each tilt listed.
-5. **You save and share the basket.** From then on the odds behind it are recorded every minute and charted
-   over 1, 7 and 30 days.
-6. **It explains itself.** Gemini writes a short manager's note for the basket, and ElevenLabs reads it
-   aloud as a one-minute briefing.
+- **You type an idea.** A Gemini agent picks three stocks for it from 40 tickers. If the idea is too
+  broad ("money"), not covered ("car") or not an idea at all, it asks one question and offers two or
+  three options instead of forcing a basket.
+- **Polymarket odds set the weights.** Weights start equal and are tilted by how the odds of the
+  linked events moved this week. You see the table, the markets behind it, and how far the basket
+  would move if each event happens or does not.
+- **Five AI agents vote.** A growth investor, a value and risk analyst, a macro analyst, a skeptic
+  and a fit checker each vote on every stock and answer one question: will this basket beat the
+  S&P 500 next week?
+- **We keep score.** Every call is stored and graded a week later. The track record page shows each
+  agent's share of right calls with its range, next to a coin flip.
+- **Paper-trade it.** One click sends the basket to the Lab, where you fund it with paper dollars and
+  move an event's odds with a slider to see an illustrative scenario.
+- **Save and share.** A saved basket gets a link, a short manager's note, and an audio briefing.
 
-When there is not enough evidence, it says so, in plain words, with ideas that do work, instead of inventing
-a basket. Every answer also carries a trace of how it was decided.
-
-Paper portfolios for research and fun. Not investment advice. Not affiliated with Polymarket.
-
-**TODO (frontend teammate): two or three sentences on the interface** (the chat flow, the dashboard, what a
-visitor sees at each step) and a link to the live site.
+Nothing is bought or sold. These are paper portfolios for research and fun.
 
 ## How we built it
 
-**The decision is a workflow, not an agent.** We followed Anthropic's "Building effective agents": a fixed
-code path of four small stages, each testable on its own, with one line per stage reported back to the user.
+One Next.js app on Vercel serves the website and the API. The stock agent is plain JavaScript shared
+with a local server; the weights are a TypeScript port of our Python research engine, kept identical
+by a parity test; the Lab is a separate small app that a sync script copies in. Everything stored
+lives in one Tiger Cloud database. All tests run with the AI and the markets mocked: 416 in the web
+app and 133 at the repository root.
 
-1. **Analyst** — collects Polymarket markets for the idea and analyzes them into one "evidence packet". It
-   is built on our teammate's weighting research: 11 tracked Polymarket markets, each with a sensitivity
-   (beta) per ticker, say which stocks an event matters for and in which direction.
-2. **Gate** — plain code. Fewer than two relevant, liquid, open markets means no AI call and an honest
-   "not enough evidence".
-3. **Decider** — one Gemini call. It sees the idea, the packet and the 40 allowed tickers, and nothing else.
-4. **Checker** — plain code. Allowed tickers, 3 to 5 unique stocks, every cited market exists in the packet,
-   every percentage matches the packet within one point. On errors the decider gets exactly one revision.
+### How we used Google Gemini
 
-The backend is a Next.js app on Vercel with API routes only, TypeScript, zod on every external payload, and
-287 tests with Gemini and Polymarket mocked. The website is a separate static app that calls it through
-three small adapters. The weighting method and the market-to-ticker sensitivities come from a teammate's research in Python,
-ported to TypeScript; 88 recorded requests are replayed through the original Python engine to prove the
-port gives identical answers.
+Gemini is the product's brain in three places. **The stock agent** combines function calling
+(a selection checker, session memory, a web-search tool) with structured JSON output. Its answer
+schema starts with a `clarity` field, so the model must judge the idea before it writes a single
+ticker, and our server refuses a basket unless the idea is clear. **The voting panel** is five Gemini
+calls in parallel, each with its own role and its own track record in the prompt. **The manager's
+note** of a saved basket is one more call, and every percentage in it is checked against the basket
+before anyone sees it. We run entirely on the free tier: each model has a budget counted in the
+database with a fallback chain, and an answer is reused for everyone until a Polymarket market it
+cites moves three points.
 
-**TODO (frontend teammate): one paragraph on how the website is built.**
-**The research behind it (TODO, weighting teammate: please check and reword).** The sensitivities and the
-tilt were studied separately on a 514-stock S&P 500 universe with pre-registered tests and a six-month
-holdout that was run once, on 2026-10-10. No test confirmed a return edge, so we present the tilt as an
-explanation of how the odds moved, not as a way to beat the market.
+### How we used Tiger Data
 
-## How we used Google Gemini
+Tiger Cloud (Postgres with TimescaleDB) is our only database. Odds are a time series, so
+`odds_ticks` is a hypertable with a columnstore policy, a cron job adds one reading per market every
+minute, and `odds_1h` is a continuous aggregate over it; charts read both with `time_bucket_gapfill`.
+The track record is plain SQL over three tables: stock closes, panel decisions and one row per
+agent's vote. The same database holds the saved baskets, the audio files, the response caches, the
+rate limits and the Gemini budgets, so our serverless functions share one source of truth.
+`/api/built-with` shows the live row counts and query timings.
 
-Gemini makes the decisions that need judgment, and code checks every one of them.
+### How we used ElevenLabs
 
-- **Search planning.** One call turns a free-form idea into Polymarket search queries and the sectors it
-  touches, so "robots replace warehouse workers" finds the right markets without a keyword list.
-- **The final decision.** One call with structured JSON output picks the stocks and writes each reason. The
-  packet is its only source of facts, and our checker rejects any ticker, market or percentage that is not
-  in it. Gemini gets the checker's exact errors back for a single revision.
-- **The manager's note.** A short letter per saved basket, with its numbers verified against the basket
-  before it is shown.
-- **Evals.** A script runs the decider on 10 fixed ideas with fixed evidence and scores rule compliance and
-  grounding. Our first prompt change came from it: one model pasted the market question into every reason
-  (29 of 29); after the change, 0 of 31, with 9 of 9 answers passing on the first try.
-- **Free tier, no billing.** One file lists our models, their limits and a fallback order per task. Each
-  model may use 80% of its quota, counted in the database; when the budget is gone the app answers from the
-  evidence alone, in the same shape, rather than failing.
-
-## How we used Tiger Data
-
-Tiger Cloud (Postgres + TimescaleDB) is the only datastore, and the time-series features carry the product.
-
-- **Hypertable.** `odds_ticks` holds every probability we observe (about 19,800 ticks for 201 markets so
-  far), with the columnstore on chunks older than a day, segmented by market.
-- **Continuous aggregate.** `odds_1h` keeps hourly candles with a refresh policy; week and month charts read
-  it, day charts read the raw ticks.
-- **Gap-filled charts in one query.** `time_bucket_gapfill` with `locf` puts any number of markets on one
-  shared time axis: 30 days for a six-market basket (1,446 points) in about 70 ms, a single market's week in
-  about 6 ms.
-- **A one-minute job** records the odds of every market a saved basket cites, and history is backfilled the
-  first time a market is seen. The analyst reads 24-hour and 7-day changes from this history.
-- **Everything else too:** baskets, a response cache shared by all serverless instances, rate limits,
-  per-model AI budgets, and the audio files.
-- `GET /api/built-with` shows the live row counts, chunks, policy jobs and query latencies.
-
-## How we used ElevenLabs
-
-Every saved basket can be heard. The manager's note is rewritten as a spoken script (company names instead
-of tickers, rounded numbers) and sent to ElevenLabs text-to-speech (`eleven_flash_v2_5`). The result is a
-one-minute briefing: one MP3 per basket, stored in Tiger and streamed with seeking support. If ElevenLabs is
-unavailable the script is still returned as text.
-
-## How we used Polymarket data
-
-Polymarket is our evidence, read-only: public market search, current prices and price history, with no
-trading, keys or wallets. We use a market's midpoint as its probability (the last trade when the spread is
-wide) and refuse resolved, never-traded or illiquid markets as evidence.
+Press Listen on a saved basket and ElevenLabs reads its manager's note as a briefing of about one
+minute. We prepare the script for the ear first: tickers become company names and weights are
+rounded. Each basket is narrated once; the MP3 is stored in Tiger and streamed from our own endpoint
+with byte ranges, so seeking works on every browser. If ElevenLabs is unavailable, the briefing is
+shown as text.
 
 ## Challenges we ran into
 
-- **Making an LLM cite real numbers.** Early answers quoted odds that were close but wrong, or cited markets
-  that did not exist. The fix was structural: the model only sees a packet, and code verifies every
-  percentage and every market id against it.
-- **A free AI quota.** We exhausted a model's daily quota in one afternoon of testing. That forced the
-  design we should have had from the start: per-model budgets in the database, a fallback chain, caching,
-  and a no-AI answer path, so a busy demo degrades instead of breaking.
-- **Saying "I don't know".** An idea with no relevant market used to get a forced basket. The gate now stops
-  it before any AI call and tells the user why, with examples that work.
-- **Two languages, one method.** The weighting research is Python; the deployed service is TypeScript.
-  Replaying recorded requests through both keeps them identical, down to rounding.
-- **Serverless and a database without a pooler.** Many short-lived instances share three connections each,
-  so the cache, rate limits and budgets all live in the database rather than in memory.
+- **A free-tier quota.** Some Gemini models allow only 20 requests a day, and one afternoon of
+  testing used a whole day's allowance. We moved every routine call to Flash-Lite, gave each model a
+  budget tracked in the database, and reuse an answer until the odds behind it move. A new idea now
+  costs seven small calls and a repeated one costs none.
+- **Unclear ideas.** At first "food", "money" and "banana dance" each got a confident basket. Telling
+  the model it may ask was not enough: it picked stocks first and then stuck with them. Making it
+  state `clarity` before anything else, and enforcing that in code, fixed it: in our live check, 7 of
+  7 clear ideas got a basket and 12 of 12 unclear ones got a question.
+- **No hindsight in the replay.** To have a track record on day one we replayed eight past Fridays.
+  Each agent saw only the prices and odds known on that Friday, and only the part of its own record
+  that had already ended. We also checked that the models could not simply remember the answer: one
+  model's documented training cutoff and the other's own stated cutoff are before the replay window,
+  and neither knew a recent S&P 500 close.
 
 ## Accomplishments that we're proud of
 
-- Every stock in every answer is tied to a live market, and a wrong number cannot reach the user.
-- The whole path works end to end on live URLs: idea → stocks → weights → saved basket → odds charts → note
-  → audio.
-- The app tells you how it decided (the trace) and proves what it runs on (`/api/built-with`).
-- It survives its own dependencies failing: no AI, no audio or no fresh evidence each have a defined,
-  honest fallback.
+- **An honest track record.** Over 80 replayed decisions the agents were right 51% to 58% of the
+  time and the panel's majority 50%. Every range includes 50%. That is a coin flip, and the product
+  says so on its own page instead of hiding it.
+- **The clarify flow.** The agent says "We don't cover carmakers yet" and offers three ideas it can
+  build, rather than inventing a basket of unrelated large companies.
+- **Cost per idea.** Seven Flash-Lite calls for a new idea, zero for a reused one, with the day's
+  totals shown live. The whole product runs on free tiers.
 
 ## What we learned
 
-- A fixed workflow with a code gate and a code checker beat a clever prompt. Most of the reliability came
-  from what the model is not allowed to do.
-- Evals are cheap and change decisions: ten fixed cases were enough to catch a style problem and to choose
-  a model.
-- Prediction-market odds are a good interface between news and portfolios: a single number people already
-  understand.
-- Budget for quota on day one.
+- **Prediction-market odds are a real-time read on risk, not a forecast of returns.** Hao's event
+  study looked at 61 sharp odds moves on 58 dates between 2023 and 2026. On the day of the move,
+  linked stocks went the predicted way 69% of the time (+59 basis points against the S&P 500, far
+  from what random dates give). Over the following week there was no reliable edge once the
+  sensitivities were estimated without hindsight, and nothing was confirmed on the holdout period.
+  So the product shows odds as what is at stake, and never as a tip.
+- **Make the model commit to a judgement first.** The order of fields in a structured answer changes
+  what the model does.
+- **Measure before you claim.** Eight weeks of correlated decisions cannot tell a skilled agent from
+  a lucky one. Resampling whole weeks gave us ranges wide enough to be honest.
 
 ## What's next
 
-- More tracked markets behind the analyst: today 11 markets carry sensitivities; the research universe
-  already covers 514 stocks.
-- More tickers and sectors; today an idea outside the seven sectors is declined.
-- Tracking how a saved basket would have done as its odds moved.
-- Alerts when the odds behind a saved basket move sharply.
+- Keep scoring live decisions every week, so the track record grows beyond the replay.
+- More than 40 tickers, and funds in the Lab.
+- Let the panel's record feed back: weight an agent's vote by how often it has been right.
+- Alerts when the odds behind a saved basket move.
 
-## Built with
+## Team
 
-Next.js, TypeScript, Vercel, Google Gemini API, Tiger Data (Postgres + TimescaleDB), ElevenLabs,
-Polymarket public APIs, zod, vitest, Python (weighting research). **TODO (frontend teammate): add the
-website's stack.**
+- **Lucas:** backend, the AI agent, the voting panel, the track record, the website.
+- **Hao:** Polymarket weighting research and the weights, event risk.
+- **Shaun:** the framework and the paper-trading Lab.
+- **Kieran:** website design.
+
+_Paper portfolios for research and fun. Not investment advice. Not affiliated with Polymarket or Kalshi._

@@ -4,7 +4,7 @@
 // AI voters on that basket) and POST /api/weights.
 // Not the product UI (that is the frontend teammate's); it only shows what the API returns.
 import { useEffect, useState, type ReactNode } from "react";
-import type { TrackRecord } from "./consoleView";
+import { labBasketUrl, type TrackRecord } from "./consoleView";
 import { PolymarketSection, type Weights } from "./polymarket";
 import { TrackRecordSection } from "./trackRecord";
 
@@ -247,6 +247,8 @@ function BasketCall({
 export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
   const [idea, setIdea] = useState<string>(demoIdeas[0] ?? "");
   const [busy, setBusy] = useState(false);
+  /** The idea the shown basket was made for (the input may have been edited since). */
+  const [ranIdea, setRanIdea] = useState("");
   const [stocks, setStocks] = useState<Step<Stocks>>(IDLE);
   const [votes, setVotes] = useState<Step<Votes>>(IDLE);
   const [weights, setWeights] = useState<Step<Weights>>(IDLE);
@@ -271,6 +273,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
     const wanted = text.trim();
     if (!wanted || busy) return;
     setBusy(true);
+    setRanIdea(wanted);
     setStocks(RUNNING);
     setVotes(IDLE);
     setWeights(IDLE);
@@ -353,7 +356,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
             </button>
           ))}
         </div>
-        <p className="mt-3 rounded-xl bg-warn-soft px-3 py-2 text-sm text-warn">
+        <p className="mt-3 rounded-xl bg-warn-soft px-3 py-2 text-sm text-ink">
           A new idea uses Gemini quota (free tier): 2 calls normally, 4 at most, for the stocks,
           plus 5 Flash-Lite calls for the voting panel. An answer that rests on Polymarket markets
           is reused, for everyone, until one of them moves 3 points (24 hours at most); other
@@ -460,6 +463,17 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
                 );
               })}
             </ul>
+            <p>
+              <a
+                href={labBasketUrl(
+                  stocks.data.stocks.map((s) => s.symbol),
+                  ranIdea,
+                )}
+                className="inline-block rounded-full bg-blue px-4 py-1.5 text-sm font-medium text-surface hover:opacity-90"
+              >
+                Paper-trade this basket →
+              </a>
+            </p>
             <div className="grid gap-1 text-sm">
               <p className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <span className="text-xs font-semibold tracking-[0.18em] text-blue">AI VOTES</span>

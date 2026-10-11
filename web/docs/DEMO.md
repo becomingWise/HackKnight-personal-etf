@@ -1,116 +1,81 @@
 # The 2-minute demo
 
-One story, one idea, six beats. We show only what the product really uses: Gemini, Tiger Data, ElevenLabs
-and Polymarket data.
+One browser tab on **https://prophetf.vercel.app**, eight steps, 120 seconds. Everything shown is
+live. We name only what the product uses: Gemini, Tiger Data, ElevenLabs, and Polymarket and Kalshi
+data.
 
-**The idea to type: `AI chips and Taiwan risk`.** It is kept cached, so it answers at once. Backups:
-`Fed rate cuts and housing`, `Crypto regulation`, `Clean energy after the election`.
-
-> The clicks below assume the website is wired to the backend. **TODO (frontend teammate): replace the
-> "On screen" column with the real screens and buttons.** Until then, the same demo runs from the terminal;
-> see "Plan B" at the end.
+**Type exactly these two ideas:** `car`, then `AI chips and Taiwan risk`. Both are warmed by
+`pnpm demo:warm`, so they answer from the cache.
 
 ## Script
 
-| Time      | On screen                                                                       | Say                                                                                                                                                                                                                                                                                            |
-| --------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0:00–0:15 | The empty start screen                                                          | "Everyone has a market opinion. Turning it into a portfolio means guessing, or trusting an AI that cites nothing. ProphETF turns an idea into a stock basket where every pick shows its evidence: live prediction-market odds."                                                                |
-| 0:15–0:40 | Type **AI chips and Taiwan risk**, submit. The stocks appear with their reasons | "It found live Polymarket markets about this idea, and Gemini picked these stocks. Read one reason: Polymarket gives about eleven percent that China invades Taiwan by 2027, and that is why TSMC is here. That number is live, and our code checked it against the market before you saw it." |
-| 0:40–0:55 | Open the "how this was decided" trace                                           | "This is not a black box. Four steps: an analyst gathers the evidence, a gate checks there is enough of it, Gemini decides, and a checker verifies every ticker, market and percentage. If the evidence is thin, it says so instead of inventing an answer."                                   |
-| 0:55–1:10 | Continue to the weights. Point at one changed weight and its market             | "Then the basket is weighted by how the odds moved this week. _(Read the tilt on screen, for example:)_ the odds of new chip export rules fell, so Nvidia's weight went up. Each tilt lists the market behind it."                                                                             |
-| 1:10–1:30 | Save the basket. Open the odds chart, switch 7 days → 30 days                   | "Save it, and it gets a link. From now on the odds behind it are recorded every minute in Tiger Data. This chart is one TimescaleDB query: thirty days, every market on one time axis, in about seventy milliseconds."                                                                         |
-| 1:30–1:50 | Open the manager's note, press play on the audio briefing (let 5 seconds play)  | "Gemini writes a short manager's note for the basket, and ElevenLabs reads it to you." _(let it play, then talk over it)_                                                                                                                                                                      |
-| 1:50–2:00 | The built-with proof (or the start screen again)                                | "Everything you saw is live: real markets, real odds, numbers a checker verified. An idea in, a basket that shows its evidence out. That is ProphETF."                                                                                                                                         |
+| #   | Time      | Do                                                                                               | Say                                                                                                                                                                                                                              | If Gemini is slow                                                                                            |
+| --- | --------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1   | 0:00–0:10 | The Build page, empty                                                                            | "Everyone has a market opinion. ProphETF turns it into a stock basket backed by live prediction-market odds, and it is honest about what it does not know."                                                                      | Nothing loads here; just start.                                                                              |
+| 2   | 0:10–0:25 | Type `car`, press Enter. The question and three buttons appear                                   | "Watch what it does with a vague idea. It does not force a basket. It says: we don't cover carmakers yet, and offers three ideas it can build. Gemini has to judge the idea before it may pick a single stock."                  | Type `???` instead: the free pre-check answers at once with three ideas. Say "it asks instead of guessing".  |
+| 3   | 0:25–0:45 | Clear the box, type `AI chips and Taiwan risk`, Enter. Point at the three steps, then the basket | "A clear idea. It reads the Polymarket odds, a Gemini agent picks three stocks out of forty, and five more agents vote. Here is the basket: TSMC, Nvidia, AMD, each with its weight."                                            | Click the first example chip, "AI chips and Taiwan risk": the same idea, answered from the cache.            |
+| 4   | 0:45–1:05 | Scroll to **Why these weights**. Point at one row, one market card, one "If yes / If no" line    | "The weights start equal and are tilted by how the odds moved this week. This market, China invading Taiwan, is at eleven percent. And this line is the stress test: how far the basket moves if it happens, and if it doesn't." | Weights and risk do not use Gemini. If the section is empty, say "the odds feed is catching up" and move on. |
+| 5   | 1:05–1:20 | Scroll to **What five AI agents think**. Point at the headline, then one agent's record          | "Five agents with different jobs vote: a growth investor, a risk analyst, a macro analyst, a skeptic and a fit checker. Each gives a probability that this basket beats the S&P 500 next week. And next to each: its record."    | If the panel still says "voting…", go to step 6 now and say "while they vote, here is how they have done".   |
+| 6   | 1:20–1:35 | Click an agent's record (or **Track record** in the header)                                      | "We graded our own AI. Eighty decisions, replayed week by week with no hindsight, scored against the S&P 500. The result: a coin flip. Every range includes fifty percent, and we show it."                                      | This page is a database read, no AI. If it is slow, open `docs/product/desktop-6-track-record.png`.          |
+| 7   | 1:35–1:52 | Browser Back, click **Paper-trade this basket →**. Buy `1000`. Open one event, drag the slider   | "So don't take its word: paper-trade it. One click sends the basket to the Lab. A thousand paper dollars. Now pick an event and move its odds: this is what the basket's history says could happen. No real money anywhere."     | The Lab never calls Gemini. If the hand-off fails, open `/lab/basket?symbols=TSM,NVDA,AMD` directly.         |
+| 8   | 1:52–2:00 | Click **How it works**                                                                           | "One page for how it works: Gemini decides, Tiger Data keeps every odds reading and every call, ElevenLabs reads your saved basket aloud. All live numbers. That is ProphETF."                                                   | The numbers are database counts. If they show a dash, say "and these fill in live" and end on the diagram.   |
 
-### If a judge asks
+**Lines worth saying word for word**
 
-- **"What if Gemini is wrong?"** It can only pick from 40 tickers and only cite markets we handed it. Code
-  rejects anything else and asks for one revision; a wrong percentage cannot reach the screen.
-- **"What if there is no market for my idea?"** Try it: `Underwater basket weaving championships`. It
-  declines in plain words and suggests ideas that work.
-- **"Is this trading?"** No. Paper portfolios; Polymarket is read-only data; nothing is bought.
-- **"How do you stay within a free AI quota?"** Answers are cached, each model has a budget tracked in the
-  database, and when it is spent the app answers from the evidence alone.
-- **"Why TimescaleDB?"** The product is odds over time: a hypertable for ticks, a continuous aggregate for
-  hourly candles, gap-filled queries for the charts. `GET /api/built-with` shows the live numbers.
+- Step 2: "It asks instead of guessing."
+- Step 6: "We graded our own AI: a coin flip, and we show it."
+- Step 7: "No real money anywhere."
+
+**If there are 20 spare seconds** (a recorded video, or a judge who wants more): on the Build page
+press **Save & share**, read one line of the manager's note, press **Listen** and let five seconds of
+the ElevenLabs briefing play. For a live demo, save the basket beforehand and open its `/b/…` page:
+saving a new basket writes a new note, which uses a Gemini model with only 20 requests a day.
+
+## If a judge asks
+
+- **"Is the AI any good at picking?"** We measured it: 51% to 58% right per agent over 80 decisions,
+  the panel 50%. Not distinguishable from a coin flip on eight weeks, and the site says so.
+- **"Then what is the point of the odds?"** They are a live read on risk. Our event study found a real
+  same-day reaction to sharp odds moves (69% in the predicted direction) and no reliable edge for the
+  following week. So we show odds as what is at stake, never as a tip.
+- **"What if I type nonsense?"** Try it. Random keys are stopped for free; a vague or uncovered idea
+  gets one question with options.
+- **"Is this trading?"** No. Paper portfolios; Polymarket and Kalshi are read-only public data, with no
+  keys and no orders.
+- **"How do you stay inside a free AI quota?"** Seven small calls for a new idea, none for a repeated
+  one: an answer is reused until the odds behind it move three points. Today's numbers are on the How
+  it works page.
+- **"Why Tiger Data?"** The product is odds over time: a hypertable for the readings, a continuous
+  aggregate for the hourly view, and the whole track record as plain SQL.
 
 ## Before going on stage
 
-Run these from `/web` about ten minutes before. PowerShell.
-
-1. **Keep the demo ideas warm** (leave it running in its own window):
-
-   ```powershell
-   pnpm demo:warm --loop
-   ```
-
-   All four ideas must show `cached`. It costs no Gemini calls while the odds stand still.
-
-2. **Check the backend and the Gemini budget:**
-
-   ```powershell
-   $h = Invoke-RestMethod https://prophetf.vercel.app/api/health
-   $h.database.ok
-   $h.gemini.models | Format-Table model, usedToday, remainingToday, blockedUntil
-   ```
-
-   `gemini-3.5-flash-lite` or `gemini-3.1-flash-lite` should have budget left. If both are at 0, the cached
-   demo ideas still work; do not type new ideas.
-
-3. **Check the demo idea answers from the cache** (should take well under a second and say `cached: True`):
-
-   ```powershell
-   $r = Invoke-RestMethod -Method Post -Uri https://prophetf.vercel.app/api/stocks -ContentType "application/json" -Body '{"idea":"AI chips and Taiwan risk"}'
-   $r.cached; $r.stocks | Format-Table symbol, name
-   ```
-
-4. **Have a saved basket ready** with its note and audio already made, in case saving is slow on stage. Open
-   its link in a second tab. To make one from the terminal, see Plan B, steps 3 to 5.
-
-5. Sound on, volume tested, for the audio beat.
-
-## Plan B: the same demo from the terminal
-
-If the website is not connected in time, this shows every beat against the live backend.
+Run from `/web`, about ten minutes before. PowerShell.
 
 ```powershell
-$api = "https://prophetf.vercel.app"
-$json = @{ ContentType = "application/json; charset=utf-8"; Method = "Post" }
+# 1. Warm the two ideas of the script and the other example chips, and keep them warm.
+pnpm demo:warm --loop
 
-# 1. Idea → stocks, each with a reason that cites live odds
-$s = Invoke-RestMethod @json -Uri "$api/api/stocks" -Body '{"idea":"AI chips and Taiwan risk"}'
-$s.stocks | Format-List symbol, name, reason
+# 2. Everything green? Look at "ok", the database, and the Flash-Lite calls left today.
+Invoke-RestMethod https://prophetf.vercel.app/api/health | ConvertTo-Json -Depth 5
 
-# 2. How it was decided
-$s.trace | Format-Table step, status, summary
-
-# 3. Weights tilted by the odds moves (equal weights in, tilted weights out)
-$n = $s.stocks.Count
-$holdings = @($s.stocks | ForEach-Object { @{ symbol = $_.symbol; weightPct = [math]::Round(100 / $n, 2) } })
-$holdings[-1].weightPct = [math]::Round(100 - ($holdings[0].weightPct * ($n - 1)), 2)
-$w = Invoke-RestMethod @json -Uri "$api/api/weights" -Body (@{ idea = "AI chips and Taiwan risk"; holdings = $holdings } | ConvertTo-Json -Depth 5)
-$w.holdings | Format-Table symbol, weightPct
-$w.explanation
-
-# 4. Save the basket and get its link
-$b = Invoke-RestMethod @json -Uri "$api/api/baskets" -Body (@{ idea = "AI chips and Taiwan risk"; stocks = $s; weights = $w } | ConvertTo-Json -Depth 8)
-$b.url
-
-# 5. The odds behind it over 30 days, the manager's note, and the audio briefing
-(Invoke-RestMethod "$api/api/baskets/$($b.id)/odds?range=30d").markets | Format-Table question, current, change
-(Invoke-RestMethod -Method Post "$api/api/baskets/$($b.id)/letter").letter
-$a = Invoke-RestMethod -Method Post "$api/api/baskets/$($b.id)/narrate"
-Start-Process $a.audioUrl
-
-# 6. Proof of what it runs on
-(Invoke-RestMethod "$api/api/built-with").tiger.rows
+# 3. The odds tick is running? "lastTickAt" should be within the last few minutes.
+(Invoke-RestMethod https://prophetf.vercel.app/api/built-with).tiger.lastTickAt
 ```
 
-Step 5 writes a new manager's note and a new audio briefing for a new basket. The note uses the Gemini Flash
-models, which have about 16 calls a day each, and the audio spends ElevenLabs characters. Rehearse with one
-basket and reuse its id (both are cached per basket) rather than saving a new one each time.
+Then, in the browser:
 
-## What never to show or say
+1. Open https://prophetf.vercel.app and run both ideas once by hand. Each should answer in about a
+   second.
+2. Open the Lab once (`/lab`), so its files are cached.
+3. Zoom the browser so the basket and "Why these weights" fit without much scrolling.
+4. Leave `pnpm demo:warm --loop` running. Each line should say `reused`. A line that says `new` means
+   the odds moved or the cache expired; that idea is warm again from then on.
 
-Not used, so not mentioned: Snowflake, Solana, Presage, a custom domain. Not offered: trading, real money,
-investment advice.
+**What can still go wrong**
+
+- **The `car` question is cached for only 15 minutes.** The loop refreshes it every 10. Without the
+  loop it costs one Gemini call on stage (about two seconds).
+- **The free daily quota resets at midnight Pacific time.** If `/api/health` shows few Flash-Lite calls
+  left, do not try new ideas before the demo; the two scripted ones cost nothing while they are warm.
+- **No network:** the screenshots of every step are in `docs/product/` and `docs/lab/`.

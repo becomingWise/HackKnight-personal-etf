@@ -1,0 +1,15 @@
+export type Theme = "light" | "dark";
+export const THEME_KEY: string;
+export const DEVICE_DARK: string;
+export const TOGGLE_ID: string;
+export const LAB_DARK_LINK_ID: string;
+export function storedTheme(value: unknown): Theme | null;
+export function resolveTheme(stored: unknown, deviceDark: boolean): Theme;
+export function nextTheme(current: Theme): Theme;
+export function toggleLabel(current: Theme): string;
+export function darkSheetMedia(stored: Theme | null): string;
+export const SUN_PATH: string;
+export const MOON_PATH: string;
+export function themeHeadScript(darkLinkId?: string | null): string;
+export function themeToggleScript(darkLinkId?: string | null): string;
+export const THEME_TOGGLE_HTML: string;

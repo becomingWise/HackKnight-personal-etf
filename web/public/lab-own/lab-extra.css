@@ -1,0 +1,153 @@
+/* What the hosted Lab adds around Shaun's app (ours; the Lab's own styles are ../lab-static/styles.css). */
+.lab-nav {
+  max-width: 1140px;
+  margin: auto;
+  padding: 12px 30px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 28px;
+  font-size: 14px;
+}
+.lab-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.lab-logo span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: #4057db;
+  color: #fff;
+  font-size: 16px;
+}
+.lab-nav nav {
+  display: flex;
+  gap: 4px;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.lab-nav nav a {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-weight: 500;
+  color: var(--muted);
+  text-decoration: none;
+}
+.lab-nav nav a:hover {
+  color: var(--ink);
+}
+.lab-nav nav a[aria-current="page"] {
+  background: #ffffffb0;
+  color: var(--blue);
+}
+/* The light/dark button: the same one as on the other pages, at the right of the header. */
+.theme-toggle {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+}
+.theme-toggle:hover {
+  background: #ffffffb0;
+  color: var(--blue);
+}
+.theme-toggle .sun {
+  display: none;
+}
+.lab-handoff a {
+  color: var(--blue);
+  text-decoration: none;
+}
+.lab-handoff a:hover {
+  text-decoration: underline;
+}
+.lab-handoff {
+  max-width: 980px;
+  margin: 12px auto 0;
+  padding: 12px 16px;
+  border: 1px solid #c5d9ee;
+  border-radius: 12px;
+  background: #ffffffa8;
+  font-size: 15px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.lab-handoff[hidden] {
+  display: none;
+}
+.lab-handoff button {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  min-width: 32px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.lab-footer {
+  max-width: 1040px;
+  margin: auto;
+  padding: 8px 30px 28px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  text-align: center;
+}
+.lab-footer p {
+  margin: 0;
+}
+/* The idea card stays centred with the link above it and the footer below. */
+.idea-page {
+  min-height: calc(100dvh - 150px);
+}
+/* On Vercel the data is the committed snapshot: there is nothing to refresh. */
+#refresh {
+  display: none;
+}
+@media (max-width: 550px) {
+  .lab-nav,
+  .lab-footer {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .lab-handoff {
+    margin-left: 14px;
+    margin-right: 14px;
+  }
+}
+/* On a phone the links take their own row under the logo and the button. */
+@media (max-width: 640px) {
+  .lab-nav nav {
+    order: 3;
+    width: 100%;
+    gap: 2px;
+    margin-left: -6px;
+  }
+  .lab-nav nav a {
+    padding: 6px;
+    font-size: 13px;
+  }
+  .lab-nav .theme-toggle {
+    order: 2;
+  }
+}

@@ -2,7 +2,7 @@
 
 /* Palette carried over from the team's MyETF simulator (css/styles.css at the repo root). */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --bg: #f6f7fb;
   --surface: #ffffff;
   --ink: #202940;
@@ -18,9 +18,28 @@
   --warn-soft: #fff5dc;
 }
 
-/* The same roles on a dark background, for visitors whose system is set to dark. */
+/* The same roles on a dark background. The theme is one choice for the whole site
+   (src/lib/theme/theme.mjs): data-theme on <html> when the visitor chose with the header button,
+   otherwise the device's setting. The two blocks below must stay identical. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1320;
+  --surface: #171c2b;
+  --ink: #e8ebf4;
+  --muted: #9aa3b8;
+  --line: #2b3247;
+  --blue: #7d90ff;
+  --blue-soft: #1f2748;
+  --up: #4fc79f;
+  --up-soft: #133328;
+  --down: #f08a80;
+  --down-soft: #3b1d1a;
+  --warn: #e3b85c;
+  --warn-soft: #3a2f14;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
+    color-scheme: dark;
     --bg: #0f1320;
     --surface: #171c2b;
     --ink: #e8ebf4;
@@ -34,6 +53,25 @@
     --down-soft: #3b1d1a;
     --warn: #e3b85c;
     --warn-soft: #3a2f14;
+  }
+}
+
+/* The header button shows the moon in light and the sun in dark. */
+.theme-toggle .sun {
+  display: none;
+}
+:root[data-theme="dark"] .theme-toggle .moon {
+  display: none;
+}
+:root[data-theme="dark"] .theme-toggle .sun {
+  display: block;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .theme-toggle .moon {
+    display: none;
+  }
+  :root:not([data-theme]) .theme-toggle .sun {
+    display: block;
   }
 }
 
@@ -59,4 +97,14 @@
 body {
   background: var(--bg);
   color: var(--ink);
+}
+
+/* Every link, button and field shows where the keyboard is. */
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+/* A heading that only receives focus from a script (the new result) shows no box. */
+[tabindex="-1"]:focus-visible {
+  outline: none;
 }

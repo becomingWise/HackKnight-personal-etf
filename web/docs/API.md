@@ -16,6 +16,33 @@ Errors on every endpoint use a non-2xx status and this body:
 
 ---
 
+## 0. The website (pages in `/web`) — LIVE
+
+The product UI is part of this app since 2026-10-10 (Lucas owns it). Every page has the same header
+(ProphETF · Build · Paper-trade Lab · Track record · How it works) and the footer disclaimer. Opening a
+page makes **no Gemini and no ElevenLabs call**; those happen only when a visitor submits an idea,
+saves a basket or presses Listen.
+
+| Page                  | What it shows                                                                                                                                                                              | Calls                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `/` (Build)           | Idea box and 4 example ideas; then the basket with tilted weights, "Why these weights" (table, Polymarket cards, "If yes / If no"), the AI panel with each agent's record, and the actions | `POST /api/stocks`, then `POST /api/votes` and `POST /api/weights` together, then `POST /api/risk` with the tilted weights |
+| "Save & share" on `/` | Saves the basket, writes the manager's note once, offers Listen                                                                                                                            | `POST /api/baskets`, `POST /api/baskets/{id}/letter`; Listen: `POST /api/baskets/{id}/narrate`, `GET /api/audio/{id}`      |
+| `/b/{id}`             | The share page of a saved basket: stocks and weights, the odds saved with it, the note if one was written, the briefing if one exists (otherwise a Listen button)                          | Reads the database only                                                                                                    |
+| `/track-record`       | The method in one paragraph, the summary card, agent bars and decisions                                                                                                                    | `GET /api/track-record`                                                                                                    |
+| `/how-it-works`       | The pipeline and one card per technology with live numbers                                                                                                                                 | `GET /api/built-with`, `GET /api/savings`                                                                                  |
+| `/lab`, `/lab/basket` | Shaun's paper-trading Lab (section 1g), with the same header                                                                                                                               | `/api/lab/*`                                                                                                               |
+| `/console`            | The old backend test console, not linked, kept for debugging                                                                                                                               | as before                                                                                                                  |
+
+A `422 needs_clarification` on `/` is shown as the agent's question with one button per option. Every
+other failure is shown in plain words (`plainError` in `web/src/app/productView.ts`); a server message is
+never shown raw. If the votes or the weights fail, the basket is still shown, with equal weights or
+without the panel. Screenshots: `web/docs/product/`.
+
+**Changed for this:** `GET /b/{id}` is now this page, not JSON (the JSON is `GET /api/baskets/{id}`), and
+`GET /api/built-with` has two more counts, `tiger.rows.stock_closes` and `tiger.rows.panel_decisions`.
+
+---
+
 ## 1. `findStocks` — LIVE
 
 `POST /api/stocks` (alias: `POST /api/findstock`, identical behaviour)
@@ -428,6 +455,56 @@ $r.recent | Format-Table date, idea, yesVotes, basketPct, spyPct, pnl, correct
 
 ---
 
+## 1g. The paper-trading Lab — `/lab` and `/api/lab/*` — LIVE
+
+Shaun's Lab (`/experiment` at the repository root, his folder is the source) hosted on Vercel as a
+second page next to the AI page at `/`. `pnpm sync:lab` copies it into `/web` (the frontend to
+`public/lab-static`, the modules the routes run to `src/lib/agent-core/experiment`); the copies are
+committed and a spec fails when they differ. Screenshots: `web/docs/lab/`.
+
+- **Pages:** `/lab` (idea) and `/lab/basket` (basket, event feed, scenarios); `/lab/events` is the
+  Lab's old bookmark. All three serve the same static page, which routes itself.
+- **Data:** the Lab's committed snapshot (`experiment/data/snapshot.json`: adjusted daily prices for
+  34 companies and SPY, 11 Polymarket and 7 Kalshi contracts), bundled and **read-only**. There is
+  no refresh route; the page hides its Refresh button and shows "Data as of <builtAt>".
+- **Paper money never reaches the server.** It lives in the browser tab's `sessionStorage`, as Shaun
+  built it. No real trading, no writes to Polymarket or Kalshi.
+- CORS and errors as everywhere else here (`{ "error": { "code", "message" } }`).
+
+| Endpoint                          | Body / query                                                                 | Answer                                                                                                                                                                                            |
+| --------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/lab/overview`           | none                                                                         | `{ builtAt, note, suggestionMode: "gemini", readOnly: true, stocks: [{ symbol, name, kind, sector, lastClose, eventCount }] }` (34 companies, no funds; `lastClose` is `{ date, close }` or null) |
+| `GET /api/lab/events?symbol=NVDA` | a company ticker                                                             | `{ symbol, builtAt, events: [...] }`, each event with its `fit`; `400 invalid_request` for a fund or unknown ticker                                                                               |
+| `POST /api/lab/analysis`          | `{ "symbols": ["NVDA", "TSM"] }` (1 to 10 unique companies)                  | `{ builtAt, holdings, basketHistory, stockHistories, events, historyReason, providerStatus }`; `400 invalid_request` otherwise                                                                    |
+| `POST /api/lab/stocks`            | `{ "idea": "AI chips", "preferences": ["no banks"] }`, header `X-Session-Id` | `{ summary, stocks: [{ symbol, name }], source: "gemini", preferences }` with **7 to 10 companies**; header `X-Cache` (HIT or MISS)                                                               |
+
+`POST /api/lab/stocks` runs the Lab's own suggestion service on the live stock agent: the Lab's
+prompt and 7 to 10 company range (companies only, no funds), always in Gemini mode (a `mode` in the
+body is ignored; the keyword "preview" mode is for local use). Flash-Lite only, through the same
+per-model budgets as `/api/stocks`, and it counts against the **same per-IP limits** (30 per minute,
+600 per day, shared with `/api/stocks`). The other three routes allow 120 requests per minute per IP.
+An unclear idea is `422 needs_clarification` with `error.options` (2 or 3 ideas) and, when the session
+has some, `error.preferences`; the free pre-check answers nonsense with no Gemini call. Answers are
+cached for 15 minutes in `api_cache` (kind `lab`) per session, idea, preferences and the snapshot's
+event odds. Preferences are sent by the browser with every request and held in memory only.
+
+### The hand-off from the AI page
+
+After a basket, the console at `/` shows **"Paper-trade this basket →"**, a link to
+
+```
+/lab/basket?symbols=NVDA,TSM,AMD&idea=AI%20chips%20and%20Taiwan%20risk
+```
+
+The Lab page loads those symbols directly as its basket (equal weights, $0 paper funds), with **no
+Gemini call**. Any frontend can build the same link.
+
+- Symbols the Lab cannot price, such as the funds TLT, IEF, LQD, HYG, SHY and IBIT, are named in a
+  notice ("Not tradable in the Lab yet: TLT, IBIT.") and the rest are kept.
+- When none is tradable, no basket is loaded: the notice says so and links back to `/`.
+- At most 10 symbols; `idea` is optional (at most 500 characters).
+- The Lab carries the site's header (Build, Paper-trade Lab, Track record, How it works).
+
 ## 1e. `GET /api/savings` — LIVE
 
 What reusing answers saved today. `/api/stocks` and `/api/votes` count every answer they serve: did it
@@ -830,11 +907,11 @@ controller's own error and retry handling keeps working. Expect about 4 to 10 se
 
 ## 3. Saved baskets — LIVE
 
-| Endpoint                | Purpose                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------- |
-| `POST /api/baskets`     | Save a basket; returns it with a short `id` and a share `url`                |
-| `GET /api/baskets/{id}` | Load a saved basket                                                          |
-| `GET /b/{id}`           | The share URL. Returns the same JSON for now; the page is the frontend's job |
+| Endpoint                | Purpose                                                       |
+| ----------------------- | ------------------------------------------------------------- |
+| `POST /api/baskets`     | Save a basket; returns it with a short `id` and a share `url` |
+| `GET /api/baskets/{id}` | Load a saved basket                                           |
+| `GET /b/{id}`           | The share URL: a page (section 0), no longer JSON             |
 
 A saved basket never changes. It keeps the idea, summary, stocks, weights, the cited Polymarket markets and
 the odds observed when it was created.
