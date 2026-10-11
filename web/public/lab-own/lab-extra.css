@@ -50,6 +50,26 @@
   background: #ffffffb0;
   color: var(--blue);
 }
+/* The light/dark button: the same one as on the other pages, at the right of the header. */
+.theme-toggle {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+}
+.theme-toggle:hover {
+  background: #ffffffb0;
+  color: var(--blue);
+}
+.theme-toggle .sun {
+  display: none;
+}
 .lab-handoff a {
   color: var(--blue);
   text-decoration: none;
@@ -113,5 +133,21 @@
   .lab-handoff {
     margin-left: 14px;
     margin-right: 14px;
+  }
+}
+/* On a phone the links take their own row under the logo and the button. */
+@media (max-width: 640px) {
+  .lab-nav nav {
+    order: 3;
+    width: 100%;
+    gap: 2px;
+    margin-left: -6px;
+  }
+  .lab-nav nav a {
+    padding: 6px;
+    font-size: 13px;
+  }
+  .lab-nav .theme-toggle {
+    order: 2;
   }
 }

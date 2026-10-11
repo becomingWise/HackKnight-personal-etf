@@ -10,10 +10,10 @@ export function SiteNav() {
   const pathname = usePathname() ?? "/";
   return (
     <nav aria-label="Main" className="-mx-2 max-w-full overflow-x-auto">
-      <ul className="flex items-center gap-0.5 text-sm font-medium whitespace-nowrap sm:gap-1">
+      <ul className="flex items-center gap-0.5 text-[13px] font-medium whitespace-nowrap sm:gap-1 sm:text-sm">
         {NAV.map((item) => {
           const current = isCurrent(item.href, pathname);
-          const style = `block rounded-full px-2 py-1.5 sm:px-3 ${
+          const style = `block rounded-full px-1.5 py-1.5 sm:px-3 ${
             current ? "bg-blue-soft text-blue" : "text-muted hover:text-ink"
           }`;
           return (

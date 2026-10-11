@@ -4,7 +4,9 @@ import Link from "next/link";
 import { Suspense } from "react";
 import "./globals.css";
 import { DISCLAIMER, PITCH } from "./productView";
+import { themeHeadScript } from "@/lib/theme/theme.mjs";
 import { SiteNav } from "./siteNav";
+import { ThemeToggle } from "./themeToggle";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -26,7 +28,16 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    // The inline script sets data-theme before React hydrates, hence suppressHydrationWarning.
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
+      <head>
+        {/* Applies a saved light/dark choice before the first paint: no flash. */}
+        <script dangerouslySetInnerHTML={{ __html: themeHeadScript() }} />
+      </head>
       <body className="min-h-full flex flex-col font-sans">
         <a
           href="#content"
@@ -35,7 +46,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           Skip to the content
         </a>
         <header className="border-b border-line bg-surface">
-          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-8 gap-y-2 px-5 py-3">
+          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-8 gap-y-1 px-5 py-2">
             <Link href="/" className="flex items-center gap-2 text-xl font-bold tracking-tight">
               <span
                 aria-hidden="true"
@@ -46,9 +57,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               ProphETF
             </Link>
             {/* The current page is read in the browser, so the links stream in. */}
-            <Suspense fallback={<div className="h-8" />}>
-              <SiteNav />
-            </Suspense>
+            {/* On a phone the links take their own row under the logo and the button. */}
+            <div className="order-3 w-full sm:order-2 sm:w-auto">
+              <Suspense fallback={<div className="h-8" />}>
+                <SiteNav />
+              </Suspense>
+            </div>
+            <ThemeToggle className="order-2 ml-auto sm:order-3" />
           </div>
         </header>
         <main id="content" className="mx-auto w-full max-w-6xl flex-1 px-5 py-8 sm:py-10">

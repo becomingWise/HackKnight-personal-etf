@@ -356,7 +356,7 @@ export function Console({ demoIdeas }: { demoIdeas: readonly string[] }) {
             </button>
           ))}
         </div>
-        <p className="mt-3 rounded-xl bg-warn-soft px-3 py-2 text-sm text-warn">
+        <p className="mt-3 rounded-xl bg-warn-soft px-3 py-2 text-sm text-ink">
           A new idea uses Gemini quota (free tier): 2 calls normally, 4 at most, for the stocks,
           plus 5 Flash-Lite calls for the voting panel. An answer that rests on Polymarket markets
           is reused, for everyone, until one of them moves 3 points (24 hours at most); other

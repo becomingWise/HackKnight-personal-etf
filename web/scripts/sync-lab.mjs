@@ -10,6 +10,13 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  DEVICE_DARK,
+  LAB_DARK_LINK_ID,
+  THEME_TOGGLE_HTML,
+  themeHeadScript,
+  themeToggleScript,
+} from "../src/lib/theme/theme.mjs";
 
 export const DISCLAIMER =
   "Paper portfolios for research and fun. Not investment advice. Not affiliated with Polymarket or Kalshi.";
@@ -29,7 +36,11 @@ const LAB_NAV =
     ([href, label]) =>
       `<a href="${href}"${href === "/lab" ? ' aria-current="page"' : ""}>${label}</a>`,
   ).join("") +
-  "</nav></header>" +
+  "</nav>" +
+  // The site's one light/dark button, with its behaviour for this static page.
+  THEME_TOGGLE_HTML +
+  `<script>${themeToggleScript(LAB_DARK_LINK_ID)}</script>` +
+  "</header>" +
   '<div id="lab-handoff" class="lab-handoff" role="status" hidden></div>';
 const LAB_FOOTER = `<footer class="lab-footer"><p id="lab-data-as-of" hidden></p><p>${DISCLAIMER}</p></footer>`;
 
@@ -97,7 +108,11 @@ export const LAB_FILES = [
     edits: [
       [
         'href="/styles.css">',
-        'href="/lab-static/styles.css"><link rel="stylesheet" href="/lab-own/lab-extra.css">',
+        'href="/lab-static/styles.css"><link rel="stylesheet" href="/lab-own/lab-extra.css">' +
+          // The dark palette, on while the device is dark; the script right after it applies a
+          // saved choice before the first paint.
+          `<link id="${LAB_DARK_LINK_ID}" rel="stylesheet" href="/lab-own/lab-dark.css" media="${DEVICE_DARK}">` +
+          `<script>${themeHeadScript(LAB_DARK_LINK_ID)}</script>`,
         1,
       ],
       ['src="/app.js"', 'src="/lab-static/app.js"', 1],
