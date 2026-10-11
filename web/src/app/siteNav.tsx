@@ -9,7 +9,7 @@ import { NAV, isCurrent } from "./productView";
 export function SiteNav() {
   const pathname = usePathname() ?? "/";
   return (
-    <nav aria-label="Main" className="-mx-2 max-w-full overflow-x-auto">
+    <nav aria-label="Main" className="-ml-1.5 max-w-full overflow-x-auto sm:ml-0">
       <ul className="flex items-center gap-0.5 text-[13px] font-medium whitespace-nowrap sm:gap-1 sm:text-sm">
         {NAV.map((item) => {
           const current = isCurrent(item.href, pathname);
