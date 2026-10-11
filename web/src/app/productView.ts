@@ -277,6 +277,8 @@ export function ago(iso: string | null | undefined, now: Date = new Date()): str
 export type BuiltWith = {
   tiger?: {
     rows?: Record<string, number | undefined>;
+    /** Polymarket markets cited by saved baskets: the ones the tick job follows. */
+    trackedMarkets?: number;
     lastTickAt?: string | null;
     timescaledb?: string | null;
     postgres?: string | null;
@@ -296,63 +298,106 @@ export type Savings = {
 export type TechCard = {
   name: string;
   role: string;
+  /** Live numbers or plain facts; a card may have none. */
   stats: { label: string; value: string }[];
 };
+export type TechGroup = { title: string; cards: TechCard[] };
 
 /**
- * One card per technology, with live numbers from GET /api/built-with and GET /api/savings.
- * A number that could not be read is shown as "—", never guessed.
+ * The How it works page's cards in two groups: what the product itself runs on, and what we
+ * built and run it with. Only tools the repository really uses are listed. Live numbers come from
+ * GET /api/built-with and GET /api/savings; one that could not be read is "—", never guessed.
  */
-export function techCards(
+export function techGroups(
   built: BuiltWith | null,
   savings: Savings | null,
   now: Date = new Date(),
-): TechCard[] {
+): TechGroup[] {
   const rows = built?.tiger?.rows ?? {};
   const models = (built?.gemini?.chains?.decide ?? []).filter((m) => m.includes("flash-lite"));
+  const lastTick = ago(built?.tiger?.lastTickAt, now);
   return [
     {
-      name: "Google Gemini",
-      role: "One agent picks the three stocks, five agents vote on them, and a manager's note is written when a basket is saved. An answer is reused until the odds behind it move 3 points.",
-      stats: [
-        { label: "Models", value: models.length ? models.slice(0, 2).join(", ") : "—" },
-        { label: "Gemini calls today", value: count(savings?.geminiCalls) },
+      title: "In the product",
+      cards: [
         {
-          label: "Answers reused today",
-          value: savings ? `${savings.reusedPct}% (${savings.reused} of ${savings.answers})` : "—",
+          name: "Google Gemini",
+          role: "One agent picks the three stocks, five agents vote on them, and a manager's note is written when a basket is saved. An answer is reused until the odds behind it move 3 points.",
+          stats: [
+            { label: "Models", value: models.length ? models.slice(0, 2).join(", ") : "—" },
+            { label: "Gemini calls today", value: count(savings?.geminiCalls) },
+            {
+              label: "Answers reused today",
+              value: savings
+                ? `${savings.reusedPct}% (${savings.reused} of ${savings.answers})`
+                : "—",
+            },
+          ],
+        },
+        {
+          name: "Tiger Data",
+          role: "Postgres with TimescaleDB keeps every odds reading, the stock closes and each panel decision, so charts and the track record are plain SQL.",
+          stats: [
+            { label: "Odds readings (odds_ticks)", value: count(rows.odds_ticks) },
+            { label: "Stock closes (stock_closes)", value: count(rows.stock_closes) },
+            { label: "Panel decisions", value: count(rows.panel_decisions) },
+            { label: "Latest odds reading", value: lastTick },
+          ],
+        },
+        {
+          name: "Polymarket and Kalshi data",
+          role: "Public prediction-market odds, read-only. No keys, no accounts and no orders: the odds show what is at stake, not which way to bet.",
+          stats: [
+            { label: "Markets tracked", value: count(built?.tiger?.trackedMarkets) },
+            { label: "Access", value: "Read-only, no keys" },
+          ],
+        },
+        {
+          name: "Stock prices",
+          role: "Daily closing prices from Yahoo Finance, loaded with Hao's Python code. They score every panel decision against the S&P 500.",
+          stats: [
+            { label: "Source", value: "Yahoo Finance" },
+            { label: "Daily closes stored", value: count(rows.stock_closes) },
+          ],
         },
       ],
     },
     {
-      name: "Tiger Data",
-      role: "Postgres with TimescaleDB keeps every odds reading, the stock closes and each panel decision, so charts and the track record are plain SQL.",
-      stats: [
-        { label: "Odds readings (odds_ticks)", value: count(rows.odds_ticks) },
-        { label: "Stock closes (stock_closes)", value: count(rows.stock_closes) },
-        { label: "Panel decisions", value: count(rows.panel_decisions) },
-        { label: "Latest odds reading", value: ago(built?.tiger?.lastTickAt, now) },
-      ],
-    },
-    {
-      name: "ElevenLabs",
-      role: "Reads a saved basket's manager's note aloud. A briefing is made once, when someone presses Listen.",
-      stats: [
-        { label: "Briefings made", value: count(built?.elevenlabs?.briefings) },
+      title: "How we built and run it",
+      cards: [
         {
-          label: "Audio stored",
-          value:
-            typeof built?.elevenlabs?.audioSeconds === "number"
-              ? `${Math.round(built.elevenlabs.audioSeconds / 60)} min`
-              : "—",
+          name: "Claude Code",
+          role: "Wrote and tested the backend, the stock agent, the voting panel and this website, working from Lucas's specifications.",
+          stats: [],
         },
-      ],
-    },
-    {
-      name: "Polymarket and Kalshi data",
-      role: "Public prediction-market odds, read-only. No keys, no accounts and no orders: the odds show what is at stake, not which way to bet.",
-      stats: [
-        { label: "Polymarket markets stored", value: count(rows.markets) },
-        { label: "Access", value: "Read-only, no keys" },
+        {
+          name: "Vercel",
+          role: "Hosts the website and the API as one Next.js app, deployed from the command line.",
+          stats: [],
+        },
+        {
+          name: "cron-job.org",
+          role: "Calls our odds job every minute, which stores one reading per tracked market in Tiger Data. The time below is the newest reading it wrote.",
+          stats: [
+            { label: "Job", value: "/api/jobs/tick, every minute" },
+            { label: "Last tick", value: lastTick },
+          ],
+        },
+        {
+          name: "GitHub and GitHub Actions",
+          role: "The repository, and the tests of every part run on each pull request.",
+          stats: [],
+        },
+        {
+          name: "Next.js and TypeScript",
+          role: "The website and the API routes. The stock agent itself is plain JavaScript, shared with a local server.",
+          stats: [],
+        },
+        {
+          name: "Python",
+          role: "Hao's research (the event study and the backtests) and the weighting method. The live weights are a TypeScript port, kept identical by a parity test.",
+          stats: [],
+        },
       ],
     },
   ];

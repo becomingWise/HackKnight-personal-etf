@@ -155,6 +155,31 @@ The tests of the agent and of the teammates' code run at the repository root: `n
 `npx vercel --prod --yes` from `/web`. Add each environment variable once with
 `npx vercel env add NAME production`.
 
+## Built with
+
+**In the product**
+
+| Technology                 | What it does here                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------- |
+| Google Gemini              | The stock agent, the five-agent voting panel and the manager's note                   |
+| Tiger Data                 | Postgres + TimescaleDB for odds readings, stock closes, panel decisions and all state |
+| Polymarket and Kalshi data | Read-only public odds, no keys                                                        |
+| Stock prices               | Daily closes from Yahoo Finance, loaded with Hao's Python code (`pnpm track:daily`)   |
+| ElevenLabs                 | The audio briefing of a saved basket (Listen on `/b/{id}`)                            |
+
+**How we built and run it**
+
+| Tool                      | What for                                                                 |
+| ------------------------- | ------------------------------------------------------------------------ |
+| Claude Code               | Wrote and tested the backend, the agent, the panel and the website       |
+| Vercel                    | Hosting for the website and the API, deployed from the CLI               |
+| cron-job.org              | Calls `/api/jobs/tick` every minute                                      |
+| GitHub and GitHub Actions | The repository, and CI that runs every part's tests on each pull request |
+| Next.js and TypeScript    | The website and the API routes                                           |
+| Python                    | Hao's research and the weighting method (`/backend`)                     |
+
+The How it works page shows the same two groups with live numbers (ElevenLabs has no card there).
+
 ## Google Gemini
 
 Every AI answer comes from the Gemini API, on the free tier: plain REST from the stock agent, the `@google/genai` SDK for the panel and the manager's note.

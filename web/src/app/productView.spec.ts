@@ -20,7 +20,7 @@ import {
   sharePath,
   spyCallText,
   stockVoteText,
-  techCards,
+  techGroups,
   weightText,
   weightsNote,
   type Weights,
@@ -242,58 +242,100 @@ describe("how it works", () => {
     expect(ago("2026-10-11T00:00:00Z", now)).toBe("—");
   });
 
-  it("fills one card per technology from the live numbers", () => {
-    const cards = techCards(
-      {
-        tiger: {
-          rows: { odds_ticks: 27134, stock_closes: 9000, panel_decisions: 90, markets: 211 },
-          lastTickAt: "2026-10-10T11:58:00Z",
-        },
-        gemini: {
-          chains: {
-            decide: ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
-          },
-        },
-        elevenlabs: { briefings: 2, audioSeconds: 115 },
+  const built = {
+    tiger: {
+      rows: { odds_ticks: 27134, stock_closes: 9000, panel_decisions: 90, markets: 211 },
+      trackedMarkets: 12,
+      lastTickAt: "2026-10-10T11:58:00Z",
+    },
+    gemini: {
+      chains: {
+        decide: ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
       },
-      {
-        day: "2026-10-10",
-        answers: 42,
-        newAnswers: 31,
-        reused: 11,
-        reusedPct: 26.2,
-        geminiCalls: 437,
-      },
-      now,
-    );
-    expect(cards.map((card) => card.name)).toEqual([
-      "Google Gemini",
-      "Tiger Data",
-      "ElevenLabs",
-      "Polymarket and Kalshi data",
+    },
+    elevenlabs: { briefings: 2, audioSeconds: 115 },
+  };
+  const savings = {
+    day: "2026-10-10",
+    answers: 42,
+    newAnswers: 31,
+    reused: 11,
+    reusedPct: 26.2,
+    geminiCalls: 437,
+  };
+
+  it("groups the cards: in the product, and how we built and run it", () => {
+    const groups = techGroups(built, savings, now);
+    expect(groups.map((group) => [group.title, group.cards.map((card) => card.name)])).toEqual([
+      [
+        "In the product",
+        ["Google Gemini", "Tiger Data", "Polymarket and Kalshi data", "Stock prices"],
+      ],
+      [
+        "How we built and run it",
+        [
+          "Claude Code",
+          "Vercel",
+          "cron-job.org",
+          "GitHub and GitHub Actions",
+          "Next.js and TypeScript",
+          "Python",
+        ],
+      ],
     ]);
-    const stats = Object.fromEntries(
-      cards.flatMap((card) => card.stats.map((stat) => [stat.label, stat.value])),
-    );
-    expect(stats).toMatchObject({
+    // ElevenLabs has no card (Listen on a saved basket still uses it), and no tool is listed
+    // that we have not confirmed.
+    const text = JSON.stringify(groups);
+    expect(text).not.toMatch(/ElevenLabs|Codex|Snowflake|Solana|Presage/i);
+    for (const card of groups.flatMap((group) => group.cards)) {
+      expect(card.role.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("fills the cards from the live numbers", () => {
+    const cards = techGroups(built, savings, now).flatMap((group) => group.cards);
+    const stats = (name: string) =>
+      Object.fromEntries(
+        cards.find((card) => card.name === name)!.stats.map((stat) => [stat.label, stat.value]),
+      );
+    expect(stats("Google Gemini")).toEqual({
       Models: "gemini-3.5-flash-lite, gemini-3.1-flash-lite",
       "Gemini calls today": "437",
       "Answers reused today": "26.2% (11 of 42)",
+    });
+    expect(stats("Tiger Data")).toEqual({
       "Odds readings (odds_ticks)": "27,134",
       "Stock closes (stock_closes)": "9,000",
       "Panel decisions": "90",
       "Latest odds reading": "2 minutes ago",
-      "Briefings made": "2",
-      "Audio stored": "2 min",
+    });
+    expect(stats("Polymarket and Kalshi data")).toEqual({
+      "Markets tracked": "12",
       Access: "Read-only, no keys",
+    });
+    expect(stats("Stock prices")).toEqual({
+      Source: "Yahoo Finance",
+      "Daily closes stored": "9,000",
+    });
+    // The cron card's proof is the newest tick in Tiger.
+    expect(stats("cron-job.org")).toEqual({
+      Job: "/api/jobs/tick, every minute",
+      "Last tick": "2 minutes ago",
     });
   });
 
   it("shows a dash, never a guess, when the numbers cannot be read", () => {
-    const stats = techCards(null, null, now).flatMap((card) => card.stats);
-    expect(stats.find((stat) => stat.label === "Gemini calls today")?.value).toBe("—");
-    expect(stats.find((stat) => stat.label === "Odds readings (odds_ticks)")?.value).toBe("—");
-    expect(stats.find((stat) => stat.label === "Briefings made")?.value).toBe("—");
+    const stats = techGroups(null, null, now).flatMap((group) =>
+      group.cards.flatMap((card) => card.stats),
+    );
+    for (const label of [
+      "Gemini calls today",
+      "Odds readings (odds_ticks)",
+      "Markets tracked",
+      "Last tick",
+    ]) {
+      expect(stats.find((stat) => stat.label === label)?.value).toBe("—");
+    }
     expect(stats.some((stat) => /undefined|NaN|null/.test(stat.value))).toBe(false);
   });
 

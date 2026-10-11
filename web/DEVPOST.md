@@ -4,8 +4,13 @@
 
 **Live:** https://prophetf.vercel.app · **Code:** https://github.com/becomingWise/HackKnight-personal-etf
 
-**Built with:** Google Gemini API, Tiger Data (Postgres + TimescaleDB), ElevenLabs, Polymarket and
-Kalshi public data, Next.js, TypeScript, Vercel.
+**Built with**
+
+- **In the product:** Google Gemini API, Tiger Data (Postgres + TimescaleDB), Polymarket and Kalshi
+  public data (read-only, no keys), daily stock closes from Yahoo Finance, and ElevenLabs for the
+  audio briefing of a saved basket.
+- **How we built and run it:** Claude Code, Vercel, cron-job.org, GitHub and GitHub Actions, Next.js
+  and TypeScript, Python.
 
 ---
 
