@@ -1,105 +1,116 @@
-// Pre-computes the demo ideas and keeps them cached on the deployed backend.
+// Warms the demo: runs each example idea of the Build page through the same calls the page makes
+// (POST /api/stocks, then /api/votes, /api/weights and /api/risk), so that on stage the answers
+// come from the cache.
 //
-//   pnpm demo:warm            warm all 4 ideas once (about 1 minute), then exit
-//   pnpm demo:warm --loop     warm all 4, then refresh one idea every 3 minutes until Ctrl+C
-//   pnpm demo:warm --status   only show what is cached
-//   pnpm demo:warm --loop http://localhost:3000     against a local server
+//   pnpm demo:warm                          the four example ideas and the "car" question, once
+//   pnpm demo:warm --loop                   again every 10 minutes until Ctrl+C
+//   pnpm demo:warm http://localhost:3000    against a local server
 //
-// Reads CRON_SECRET from .env.local. A refresh costs no Gemini request while the odds an answer
-// cites have not moved by more than a point; otherwise one or two on the lighter model. The loop
-// stays far below one request per minute.
+// Cost: an idea that is already cached costs no Gemini call (the line says "reused"). A new one
+// costs 2 Flash-Lite calls for the pick and 5 for the panel; the "car" question costs 1.
+// How long an answer stays warm: up to 24 hours while the Polymarket odds it cites stay within
+// 3 points; an answer that cites no market 15 minutes (the panel 30), and so does the question.
+// Needs no secret: it only uses the public API, like a visitor.
+import { EXAMPLE_IDEAS, equalWeights } from "../src/app/productView";
+
 const args = process.argv.slice(2);
 const base = (args.find((a) => a.startsWith("http")) ?? "https://prophetf.vercel.app").replace(
   /\/+$/,
   "",
 );
 const loop = args.includes("--loop");
-const statusOnly = args.includes("--status");
-const secret = process.env.CRON_SECRET;
-if (!secret) {
-  console.error("CRON_SECRET is not set (expected in web/.env.local).");
-  process.exit(1);
-}
-
-type Idea = { idea: string; cached: boolean; secondsLeft: number };
-type Report = {
-  result: string;
-  idea: string;
-  source: string | null;
-  symbols: string[];
-  weights: string | null;
-  ms: number;
-  ideas: Idea[];
-};
+/** The clarify step of the demo script (docs/DEMO.md). */
+const QUESTION_IDEA = "car";
+const LOOP_MINUTES = 10;
+// Spaced out so a cold run stays inside Gemini's per-minute quota (15 requests per model).
+const PAUSE_MS = 20_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const stamp = () => new Date().toLocaleTimeString();
 
-async function call(method: "GET" | "POST", query = ""): Promise<Report & { ok: boolean }> {
-  const res = await fetch(`${base}/api/jobs/warm${query}`, {
-    method,
-    headers: { Authorization: `Bearer ${secret}` },
+type Answer = { status: number; cache: string | null; ms: number; body: unknown };
+
+async function call(path: string, body: unknown): Promise<Answer> {
+  const started = Date.now();
+  const response = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Session-Id": "demo-warm" },
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(58_000),
   });
-  if (res.status === 401) throw new Error("401: CRON_SECRET does not match the server's.");
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return res.json();
+  return {
+    status: response.status,
+    cache: response.headers.get("X-Cache"),
+    ms: Date.now() - started,
+    body: await response.json().catch(() => null),
+  };
 }
 
-function printStatus(ideas: Idea[]) {
-  for (const i of ideas) {
-    const left = i.cached
-      ? `cached, ${Math.floor(i.secondsLeft / 60)} min ${i.secondsLeft % 60} s left`
-      : "NOT CACHED";
-    console.log(`    ${i.cached ? "✓" : "✗"} ${i.idea.padEnd(34)} ${left}`);
+const how = (answer: Answer) =>
+  answer.status !== 200
+    ? `FAILED (${answer.status})`
+    : answer.cache === "HIT"
+      ? "reused"
+      : answer.cache === "MISS"
+        ? "new"
+        : "ok";
+
+/** Warms one idea. Returns true when a Gemini call was needed, so the next idea waits a little. */
+async function warm(idea: string): Promise<boolean> {
+  try {
+    const picked = await call("/api/stocks", { idea });
+    const error = (picked.body as { error?: { code?: string; message?: string } } | null)?.error;
+    if (picked.status === 422 && error?.code === "needs_clarification") {
+      const options = (picked.body as { error: { options?: string[] } }).error.options ?? [];
+      console.log(`${stamp()}  "${idea}"  asks: ${error.message}  [${options.join(" | ")}]`);
+      return true;
+    }
+    const stocks = (picked.body as { stocks?: { symbol: string; name: string }[] } | null)?.stocks;
+    if (picked.status !== 200 || !stocks?.length) {
+      console.log(`${stamp()}  "${idea}"  stocks FAILED (${picked.status} ${error?.code ?? ""})`);
+      return true;
+    }
+    const holdings = equalWeights(stocks.map((stock) => stock.symbol));
+    const [votes, weights] = await Promise.all([
+      call("/api/votes", { idea, stocks }),
+      call("/api/weights", { idea, holdings }),
+    ]);
+    const tilted = (weights.body as { holdings?: unknown } | null)?.holdings ?? holdings;
+    const risk = await call("/api/risk", { holdings: tilted });
+    console.log(
+      `${stamp()}  "${idea}"  ${stocks.map((stock) => stock.symbol).join(", ")}` +
+        `  stocks ${how(picked)}, votes ${how(votes)}, weights ${how(weights)}, risk ${how(risk)}` +
+        `  [${((picked.ms + Math.max(votes.ms, weights.ms)) / 1000).toFixed(1)} s]`,
+    );
+    return picked.cache !== "HIT" || votes.cache !== "HIT";
+  } catch (err) {
+    console.log(
+      `${stamp()}  "${idea}"  request failed: ${err instanceof Error ? err.message : err}`,
+    );
+    return true;
   }
 }
 
-async function warm(query: string) {
-  try {
-    const r = await call("POST", query);
-    const what =
-      r.result === "refreshed"
-        ? `refreshed → ${r.symbols.join(", ")} (weights ${r.weights ?? "not cached"})`
-        : r.result === "unchanged"
-          ? `odds unchanged, kept without a Gemini call → ${r.symbols.join(", ")}`
-          : r.result === "kept"
-            ? `Gemini unavailable, kept the previous answer → ${r.symbols.join(", ")}`
-            : `FAILED (${r.source ?? "no answer"}), nothing cached for this idea`;
-    console.log(`${stamp()}  "${r.idea}"  ${what}  [${(r.ms / 1000).toFixed(1)} s]`);
-    return r;
-  } catch (err) {
-    console.log(`${stamp()}  request failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
+async function round() {
+  const ideas = [...EXAMPLE_IDEAS, QUESTION_IDEA];
+  for (const [index, idea] of ideas.entries()) {
+    const spent = await warm(idea);
+    if (spent && index < ideas.length - 1) await sleep(PAUSE_MS);
   }
 }
 
 // Ends by returning rather than process.exit: exiting right after a fetch crashes Node on Windows.
 async function main() {
-  console.log(`Demo cache on ${base}`);
-  if (statusOnly) {
-    printStatus((await call("GET")).ideas);
-    return;
-  }
-
-  // All four, spaced out so the burst stays inside Gemini's per-minute quota.
-  let last: Report | null = null;
-  for (let i = 0; i < 4; i++) {
-    last = (await warm(`?idea=${i}`)) ?? last;
-    if (i < 3) await sleep(12_000);
-  }
-  if (last) printStatus(last.ideas);
-
+  console.log(`Warming the demo on ${base}`);
+  await round();
   if (!loop) {
-    console.log("Done. Answers stay cached for 15 minutes; use --loop to keep them warm.");
+    console.log('Done. "reused" = answered from the cache, no Gemini call. Use --loop on stage.');
     return;
   }
-
-  console.log("Keeping warm: one refresh every 3 minutes (each idea every 12). Ctrl+C to stop.");
+  console.log(`Keeping warm: every ${LOOP_MINUTES} minutes. Ctrl+C to stop.`);
   for (;;) {
-    await sleep(180_000);
-    const r = await warm("");
-    if (r) printStatus(r.ideas);
+    await sleep(LOOP_MINUTES * 60_000);
+    await round();
   }
 }
 
